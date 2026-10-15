@@ -1,0 +1,10 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.zebrabi/zebra-bi",
+  "title": "Zebra BI",
+  "description": "Draw business data as interactive IBCS-style Zebra BI charts and tables.",
+  "version": "1.0.0",
+  "websiteUrl": "https://zebra-ai.com/",
+  "repository": { "url": "https://github.com/zebrabi/mcp", "source": "github" },
+  "remotes": [{ "type": "streamable-http", "url": "https://test.zebra-ai.com/mcp" }]
+}

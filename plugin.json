@@ -1,0 +1,41 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "zebra-bi",
+  "version": "1.0.0",
+  "description": "Draw business data as interactive IBCS-style Zebra BI charts and tables, with skills for charting figures and explaining variances.",
+  "author": {
+    "name": "Zebra BI",
+    "url": "https://zebrabi.com"
+  },
+  "homepage": "https://zebra-ai.com/",
+  "repository": "https://github.com/zebrabi/mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "charts",
+    "ibcs",
+    "variance",
+    "analytics",
+    "visualization"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Zebra BI",
+        "shortDescription": "IBCS charts from your numbers",
+        "longDescription": "Zebra BI draws business data as interactive IBCS-style charts and tables, inline in the conversation. Give it actuals with a previous year, previous month, plan or forecast, and it draws the variances, with good and bad differences marked. Time periods are drawn as charts, other categories as tables with inline charts.",
+        "developerName": "Zebra BI",
+        "category": "Productivity",
+        "websiteURL": "https://zebra-ai.com/",
+        "privacyPolicyURL": "https://zebra-ai.com/privacy-policy/",
+        "termsOfServiceURL": "https://zebra-ai.com/terms-of-service/",
+        "defaultPrompt": [
+          "Chart monthly sales against last year: Jan 42 vs 38, Feb 45 vs 44, Mar 51 vs 47.",
+          "Compare actual costs with budget: rent 12 vs 12, staff 58 vs 52, travel 9 vs 6.",
+          "Chart actual against plan by region: North 120 vs 100, South 80 vs 95, West 140 vs 130."
+        ],
+        "logo": "./assets/icon.png",
+        "composerIcon": "./assets/icon.png"
+      }
+    }
+  }
+}
