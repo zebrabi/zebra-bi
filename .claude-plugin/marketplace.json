@@ -1,0 +1,15 @@
+{
+  "name": "zebrabi",
+  "description": "Zebra BI plugins for AI assistants.",
+  "owner": {
+    "name": "Zebra BI",
+    "url": "https://zebrabi.com"
+  },
+  "plugins": [
+    {
+      "name": "zebra-bi",
+      "source": "./",
+      "description": "Interactive IBCS-style Zebra BI charts and tables in your AI assistant."
+    }
+  ]
+}

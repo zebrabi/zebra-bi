@@ -1,0 +1,16 @@
+{
+  "name": "zebra-bi",
+  "displayName": "Zebra BI",
+  "version": "1.0.0",
+  "description": "Draw business data as interactive IBCS-style Zebra BI charts and tables, with skills for charting figures and explaining variances.",
+  "author": { "name": "Zebra BI", "url": "https://zebrabi.com" },
+  "homepage": "https://zebra-ai.com/",
+  "repository": "https://github.com/zebrabi/mcp",
+  "license": "Apache-2.0",
+  "keywords": ["charts", "ibcs", "variance", "analytics", "visualization"],
+  "icon": "./assets/icon.png",
+  "documentationUrl": "https://github.com/zebrabi/mcp#readme",
+  "supportUrl": "https://help.zebrabi.com/",
+  "privacyPolicyUrl": "https://zebra-ai.com/privacy-policy/",
+  "termsOfServiceUrl": "https://zebra-ai.com/terms-of-service/"
+}
