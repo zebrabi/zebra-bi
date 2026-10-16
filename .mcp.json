@@ -1,5 +1,5 @@
 {
   "mcpServers": {
-    "zebra-bi": { "type": "http", "url": "https://test.zebra-ai.com/mcp" }
+    "zebra-bi": { "type": "http", "url": "https://app.zebra-ai.com/mcp" }
   }
 }

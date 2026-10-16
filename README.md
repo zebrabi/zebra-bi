@@ -11,7 +11,7 @@ The server has one tool, `render_visual`. The assistant sends it aggregated figu
 
 ## Install
 
-The server URL is `https://test.zebra-ai.com/mcp`, the staging server, until the production server is live.
+The server URL is `https://app.zebra-ai.com/mcp`.
 
 1. **Claude Code**: `/plugin marketplace add zebrabi/mcp`, then `/plugin install zebra-bi@zebrabi`. Installs the server and the skills.
 2. **VS Code**: run "Chat: Install Plugin From Source" and enter `https://github.com/zebrabi/mcp`. Installs the server and the skills.
@@ -31,6 +31,8 @@ The server URL is `https://test.zebra-ai.com/mcp`, the staging server, until the
 ## Versions
 
 Every release bumps `version` in `.claude-plugin/plugin.json`, `plugin.json` and `server.json`, because third-party marketplaces do not update plugins automatically. The version matches the one the server reports. CI checks the three manifests carry the same version and the same server URL.
+
+Pushing a `v<version>` tag runs `release.yml`. It checks that the tag, the three manifests and the live server all carry one version, publishes `server.json` to the MCP Registry, and creates a GitHub release with the plugin ZIP. Publishing needs the `mcp-registry-publish` environment with an `MCP_PRIVATE_KEY` secret, the Ed25519 key whose public half is in the `zebrabi.com` DNS TXT record.
 
 ## License
 

@@ -6,5 +6,5 @@
   "version": "1.0.0",
   "websiteUrl": "https://zebra-ai.com/",
   "repository": { "url": "https://github.com/zebrabi/mcp", "source": "github" },
-  "remotes": [{ "type": "streamable-http", "url": "https://test.zebra-ai.com/mcp" }]
+  "remotes": [{ "type": "streamable-http", "url": "https://app.zebra-ai.com/mcp" }]
 }
