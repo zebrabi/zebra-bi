@@ -1,7 +1,7 @@
 {
   "name": "zebra-bi",
   "displayName": "Zebra BI",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "description": "The Zebra BI MCP with skills: interactive IBCS-style charts and tables of your business data, variance explanations, and data stories you can export as a PDF or as PowerPoint and Excel files with live Zebra BI visuals.",
   "author": { "name": "Zebra BI", "url": "https://zebrabi.com" },
   "homepage": "https://zebra-ai.com/",

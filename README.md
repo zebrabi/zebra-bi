@@ -40,7 +40,7 @@ The MCP URL is `https://app.zebra-ai.com/mcp`.
 3. **claude.ai, Claude Desktop and Cowork**: add the MCP URL as a custom connector under Settings > Connectors. This adds the MCP only.
 4. **ChatGPT**: in developer mode, add the MCP URL with "Add custom MCP server". This adds the MCP only.
 
-**Where the charts draw.** Claude Desktop chat and claude.ai show the visual inline. The Claude Code desktop tab shows it only when the MCP is also added as a connector in the Claude Desktop app (step 3); with both present, the Desktop connector is the one that draws the charts. The Claude Code terminal cannot show MCP Apps and prints the chart data instead.
+**Where the charts draw.** Claude Desktop chat and claude.ai show the visual inline. The Claude Code desktop tab draws it only through the MCP added as a connector in the Claude Desktop app (step 3). The plugin's own copy, which Claude Code loads too, returns the chart's data, so the skills use the connector when both are there. The Claude Code terminal cannot show MCP Apps and prints the chart data instead.
 
 **Data stories and files.** `data-story` works wherever the MCP is connected. The `.zebra/` folder, the PDF and the Office files need Claude Code, `python3` (standard library only) and Google Chrome, Microsoft Edge or Chromium. In Claude chat or Cowork, `story-pdf` and `story-office` hand over the story as JSON instead of building a file. Readers need the Zebra BI Charts or Tables for Office add-in, and its licence, to see the Office visuals live.
 
