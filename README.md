@@ -1,8 +1,8 @@
-# Zebra BI MCP server and plugin
+# Zebra BI MCP and plugin
 
-The Zebra BI MCP server draws business data as interactive IBCS-style charts and tables, inline in the conversation. This repository packages it with skills as one plugin, for AI assistants such as Claude, ChatGPT and GitHub Copilot Chat, and for coding agents such as Claude Code, Codex and Copilot CLI. The plugin comes in Claude's format and in Agent Plugins, the format VS Code, Copilot CLI, ChatGPT and Codex read. Any other MCP client can connect to the server on its own.
+The Zebra BI MCP draws business data as interactive IBCS-style charts and tables, inline in the conversation. This repository packages it with skills as one plugin, for AI assistants such as Claude, ChatGPT and GitHub Copilot Chat, and for coding agents such as Claude Code, Codex and Copilot CLI. The plugin comes in Claude's format and in Agent Plugins, the format VS Code, Copilot CLI, ChatGPT and Codex read. Any other MCP client can connect to the Zebra BI MCP on its own.
 
-The server has one tool, `render_visual`. Your assistant or agent sends it aggregated figures, such as actuals with a previous year, plan or forecast, and Zebra BI draws the variances. Hosts that support MCP Apps show the interactive visual; the others show a text summary of what was drawn.
+The MCP has one tool, `render_visual`. Your assistant or agent sends it aggregated figures, such as actuals with a previous year, plan or forecast, and Zebra BI draws the variances. Hosts that support MCP Apps show the interactive visual; the others show a text summary of what was drawn.
 
 The skills add three things on top of the tool:
 
@@ -33,25 +33,25 @@ In Claude Code the skills run as `/zebra-bi:<skill>`, for example:
 
 ## Install
 
-The server URL is `https://app.zebra-ai.com/mcp`.
+The MCP URL is `https://app.zebra-ai.com/mcp`.
 
-1. **Claude Code**: `/plugin marketplace add zebrabi/zebra-bi`, then `/plugin install zebra-bi@zebrabi`. Installs the server and the skills.
-2. **VS Code**: run "Chat: Install Plugin From Source" and enter `https://github.com/zebrabi/zebra-bi`. Installs the server and the skills.
-3. **claude.ai, Claude Desktop and Cowork**: add the server URL as a custom connector under Settings > Connectors. This adds the server only.
-4. **ChatGPT**: in developer mode, add the server URL as a custom MCP server. This adds the server only.
+1. **Claude Code**: `/plugin marketplace add zebrabi/zebra-bi`, then `/plugin install zebra-bi@zebrabi`. Installs the MCP and the skills.
+2. **VS Code**: run "Chat: Install Plugin From Source" and enter `https://github.com/zebrabi/zebra-bi`. Installs the MCP and the skills.
+3. **claude.ai, Claude Desktop and Cowork**: add the MCP URL as a custom connector under Settings > Connectors. This adds the MCP only.
+4. **ChatGPT**: in developer mode, add the MCP URL with "Add custom MCP server". This adds the MCP only.
 
-**Where the charts draw.** Claude Desktop chat and claude.ai show the visual inline. The Claude Code desktop tab shows it only when the server is also added as a connector in the Claude Desktop app (step 3); with both present, the Desktop connector is the one that draws the charts. The Claude Code terminal cannot show MCP Apps and prints the chart data instead.
+**Where the charts draw.** Claude Desktop chat and claude.ai show the visual inline. The Claude Code desktop tab shows it only when the MCP is also added as a connector in the Claude Desktop app (step 3); with both present, the Desktop connector is the one that draws the charts. The Claude Code terminal cannot show MCP Apps and prints the chart data instead.
 
-**Data stories and files.** `data-story` works wherever the server is connected. The `.zebra/` folder, the PDF and the Office files need Claude Code, `python3` (standard library only) and Google Chrome, Microsoft Edge or Chromium. In Claude chat or Cowork, `story-pdf` and `story-office` hand over the story as JSON instead of building a file. Readers need the Zebra BI Charts or Tables for Office add-in, and its licence, to see the Office visuals live.
+**Data stories and files.** `data-story` works wherever the MCP is connected. The `.zebra/` folder, the PDF and the Office files need Claude Code, `python3` (standard library only) and Google Chrome, Microsoft Edge or Chromium. In Claude chat or Cowork, `story-pdf` and `story-office` hand over the story as JSON instead of building a file. Readers need the Zebra BI Charts or Tables for Office add-in, and its licence, to see the Office visuals live.
 
 ## What this plugin sends and runs
 
-- **The server.** The skills call `render_visual` once per chart. Each call sends the chart's arguments: the category and period labels, the aggregated values per scenario and the titles. The labels are your data's own values, so a chart by customer or employee sends those names; leave out anything that should not leave your machine. The source file is never sent. A chart that fails to render is reported to Zebra's error monitoring together with the arguments that were sent.
-- **`story-pdf` and `story-office`.** Their Python scripts send the same chart arguments to the same server over HTTPS and print `Sending <n> chart(s) to <endpoint>` first. A chart whose arguments did not change is reused from `.zebra/stories/<story>/visuals/`. Once a day they download the chart renderer (the `ui://` page `render_visual` names in `tools/list`) and cache it in `$CLAUDE_PLUGIN_DATA`. The plugin sends no telemetry.
+- **The MCP.** The skills call `render_visual` once per chart. Each call sends the chart's arguments: the category and period labels, the aggregated values per scenario and the titles. The labels are your data's own values, so a chart by customer or employee sends those names; leave out anything that should not leave your machine. The source file is never sent. A chart that fails to render is reported to Zebra's error monitoring together with the arguments that were sent.
+- **`story-pdf` and `story-office`.** Their Python scripts send the same chart arguments to the same MCP over HTTPS and print `Sending <n> chart(s) to <endpoint>` first. A chart whose arguments did not change is reused from `.zebra/stories/<story>/visuals/`. Once a day they download the chart renderer (the `ui://` page `render_visual` names in `tools/list`) and cache it in `$CLAUDE_PLUGIN_DATA`. The plugin sends no telemetry.
 - **A local browser.** `story-pdf`, `story-office` and the `story-brand` preview start Chrome, Edge or Chromium headless, with a throwaway profile and a remote-debugging port bound to 127.0.0.1. The browser closes when the file is done.
 - **A web font, if a brand sets one.** With `fonts.web_css` set, the headless browser loads that stylesheet while it builds the PDF. The default brand sets none.
 - **What is written.** Files under `.zebra/` in your working folder (sources, stories, brand, and the PDF, PowerPoint and Excel files) and the renderer cache.
-- **Sign-in.** The scripts store no credentials and do not sign in. If the server asks for sign-in, a build stops with `Zebra BI needs sign-in` and writes no file.
+- **Sign-in.** The scripts store no credentials and do not sign in. If the MCP asks for sign-in, a build stops with `Zebra BI needs sign-in` and writes no file.
 
 Privacy policy: https://zebra-ai.com/privacy-policy/
 
@@ -70,9 +70,9 @@ Privacy policy: https://zebra-ai.com/privacy-policy/
 
 ## Versions
 
-The plugin and the server carry separate versions. Every plugin release bumps `version` in `.claude-plugin/plugin.json` and `plugin.json`, because third-party marketplaces do not update plugins automatically; CI checks the two match and that every manifest carries the same server URL. `server.json` carries the version the server reports.
+The plugin and the MCP carry separate versions. Every plugin release bumps `version` in `.claude-plugin/plugin.json` and `plugin.json`, because third-party marketplaces do not update plugins automatically; CI checks the two match and that every manifest carries the same MCP URL. `server.json` carries the version the MCP reports.
 
-Pushing a `v<version>` tag runs `release.yml`. It checks that the tag matches the plugin version and that the live server reports the `server.json` version, publishes `server.json` to the MCP Registry when that version is new, and creates a GitHub release with the plugin ZIP. Publishing needs the `mcp-registry-publish` environment with an `MCP_PRIVATE_KEY` secret, the Ed25519 key whose public half is in the `zebrabi.com` DNS TXT record.
+Pushing a `v<version>` tag runs `release.yml`. It checks that the tag matches the plugin version and that the live MCP reports the `server.json` version, publishes `server.json` to the MCP Registry when that version is new, and creates a GitHub release with the plugin ZIP. Publishing needs the `mcp-registry-publish` environment with an `MCP_PRIVATE_KEY` secret, the Ed25519 key whose public half is in the `zebrabi.com` DNS TXT record.
 
 ## License
 

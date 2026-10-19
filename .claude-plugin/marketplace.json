@@ -1,6 +1,6 @@
 {
   "name": "zebrabi",
-  "description": "The Zebra BI MCP server and skills, for AI assistants, coding agents and any MCP client.",
+  "description": "The Zebra BI MCP and skills, for AI assistants, coding agents and any MCP client.",
   "owner": {
     "name": "Zebra BI",
     "url": "https://zebrabi.com"
@@ -9,7 +9,7 @@
     {
       "name": "zebra-bi",
       "source": "./",
-      "description": "The Zebra BI MCP server with skills: interactive IBCS-style charts and tables, and data stories you can share as a PDF or as PowerPoint and Excel files."
+      "description": "The Zebra BI MCP with skills: interactive IBCS-style charts and tables, and data stories you can share as a PDF or as PowerPoint and Excel files."
     }
   ]
 }
