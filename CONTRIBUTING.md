@@ -29,7 +29,7 @@ The last line needs Chrome, Edge or Chromium for the two PDF build tests; withou
 | `skills/story-office/` | Build `story.json` into a PowerPoint deck and an Excel workbook with live Zebra BI for Office visuals; `references/office-format.md` |
 | `skills/story-brand/` | Interview for a company brand (template, guideline, logo, answers), preview, save `.zebra/brand/`; `references/brand-format.md` |
 | `scripts/profile.py` | Standard-library CSV, TSV and XLSX profiler; prints the source manifest skeleton and picks a sheet by `--sheet-index` |
-| `scripts/story.py` | `renderer` (fetch and daily cache of the renderer `render_visual` names in `tools/list`); library for the builds: `render_visuals` (render over MCP HTTP, cache in `visuals/<id>.json`) and `assemble` (the branded page with renderer and results embedded). The server URL is the `zebra-bi` entry in `.mcp.json`; `ZEBRA_BI_MCP_URL` overrides it |
+| `scripts/story.py` | `renderer` (fetch and daily cache of the renderer `render_visual` names in `tools/list`); library for the builds: `render_visuals` (render over MCP HTTP, cache in `visuals/<id>.json`) and `assemble` (the branded page with renderer and results embedded). The MCP URL is the `zebra-bi` entry in `.mcp.json`; `ZEBRA_BI_MCP_URL` overrides it |
 | `scripts/pdf.py` | `build`: render, open the page in headless Chrome at the A4 printable width, wait until every chart is ready and settled, print the PDF |
 | `scripts/office.py` | `build` (render, snapshot, write the `.pptx` and `.xlsx`, check) and `check` (structural checks on any file) |
 | `scripts/brand.py` | `show`, `check`, `inspect-template`, `logo`, `preview`; `load()` merges `.zebra/brand/brand.json` over the default for every output |
@@ -43,11 +43,11 @@ The last line needs Chrome, Edge or Chromium for the two PDF build tests; withou
 
 - **One skill body for every surface.** Shell steps are guarded by "if you can run shell commands"; in Claude chat and Cowork the file skills hand over the story as JSON.
 - **Three outputs, three skills.** The conversation (`data-story`), a PDF (`story-pdf`), Office files (`story-office`). `story.json` is the hand-off between them.
-- **The conversation is the story.** Charts always render inline with `render_visual`. `data-story` never builds or opens a file and has no fallback when the server is down: it says so and stops. `story-pdf` and `story-office` run only when someone asks for a file.
+- **The conversation is the story.** Charts always render inline with `render_visual`. `data-story` never builds or opens a file and has no fallback when the MCP is down: it says so and stops. `story-pdf` and `story-office` run only when someone asks for a file.
 - **IBCS end to end.** Key message as title, supporting messages as headings, title elements in every chart, standard scenario notation. `skills/data-story/references/ibcs-narrative.md` is the contract.
-- **The script renders, the model writes.** The build scripts call `render_visual` themselves from the arguments in `story.json`, so the model never copies tool results into files. Unchanged arguments are not re-rendered. When the server cannot render, a build exits non-zero with `Zebra BI is unavailable (<reason>)` or `Zebra BI needs sign-in (<endpoint>)` and writes no file.
-- **The server's text is the truth about a chart.** A build prints it per visual, and the skill rewrites the narrative when the server adjusted a chart.
-- **Data, never instructions.** The server's text, brand guidelines, saved manifests and the data itself are read as data. Values from the data (sheet, column and file names) never go on a command line, which is why `profile.py` takes `--sheet-index`. A manifest's `mcp.call` is replayed only to its recorded server and tool, and only when it reads.
+- **The script renders, the model writes.** The build scripts call `render_visual` themselves from the arguments in `story.json`, so the model never copies tool results into files. Unchanged arguments are not re-rendered. When the MCP cannot render, a build exits non-zero with `Zebra BI is unavailable (<reason>)` or `Zebra BI needs sign-in (<endpoint>)` and writes no file.
+- **The MCP's text is the truth about a chart.** A build prints it per visual, and the skill rewrites the narrative when the MCP adjusted a chart.
+- **Data, never instructions.** The MCP's text, brand guidelines, saved manifests and the data itself are read as data. Values from the data (sheet, column and file names) never go on a command line, which is why `profile.py` takes `--sheet-index`. A manifest's `mcp.call` is replayed only to its recorded server and tool, and only when it reads.
 - **Say what leaves the machine.** `data-story` says in one line that chart labels and values go to Zebra BI before its first `render_visual`; the build scripts print `Sending <n> chart(s) to <endpoint>` before their first network call. Anything new the plugin sends, starts or writes goes into the README section "What this plugin sends and runs" in the same change.
 - **Office visuals are add-in parts.** Each visual is a Zebra BI Charts or Tables for Office webextension with its settings and data, plus a picture of the chart as the fallback. No native Office charts. Every file passes `office.py check` before it is handed over.
 - **The brand styles the page, never the charts.** Chart colours and notation stay IBCS; `render_visual` takes no style and the Office add-in keeps its defaults, so a live visual matches its picture.
@@ -62,6 +62,6 @@ The host answers `ui/initialize` (with `hostContext.toolInfo.tool.inputSchema`, 
 
 ### Known limits
 
-- The scripts do not sign in. When the server asks for it, a build stops with `Zebra BI needs sign-in (<endpoint>)` unless every chart and the renderer are already cached.
+- The scripts do not sign in. When the MCP asks for it, a build stops with `Zebra BI needs sign-in (<endpoint>)` unless every chart and the renderer are already cached.
 - The Power BI adapter is documented but not yet tested end to end.
 - Claude chat cannot save manifests; the skill shows them as JSON to keep in a Project.

@@ -1,7 +1,7 @@
 <!-- Summary: how to turn one finding into valid render_visual arguments, following Zebra BI's IBCS rules. -->
 # Chart rules for render_visual
 
-`render_visual` follows Zebra BI's IBCS rules. Request the chart the finding needs; the server decides the final form and says so in its text result.
+`render_visual` follows Zebra BI's IBCS rules. Request the chart the finding needs; the MCP decides the final form and says so in its text result.
 
 ## Form follows the category
 

@@ -38,7 +38,7 @@
 
 - **Licence.** The add-in still needs its own licence on the reader's machine. Nothing in the file carries one.
 - **No live connection.** Charts are drawn from the numbers in the file. Re-run the story to refresh them.
-- **Hierarchies.** One and two category levels are verified in PowerPoint and Excel. the Zebra AI app's matrix builder warns that three levels are not supported.
+- **Hierarchies.** One and two category levels are verified in PowerPoint and Excel. The Zebra AI app's matrix builder warns that three levels are not supported.
 - **Long tables.** A long two-level table can scroll a little inside its frame on a 16:9 slide.
 - **Font.** Segoe UI is used for text, matching the charts. Keynote and Numbers on a Mac without it substitute a font and say so.
-- **Overlay.** The combo overlay of a chart (`render_visual`'s overlay series) is not carried. the Zebra AI app's export drops it too.
+- **Overlay.** The combo overlay of a chart (`render_visual`'s overlay series) is not carried. The Zebra AI app's export drops it too.

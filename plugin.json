@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "zebra-bi",
-  "version": "1.1.6",
-  "description": "Draw business data as interactive IBCS-style Zebra BI charts and tables, with skills for charting figures, explaining variances, telling data stories, and exporting them as a PDF or as PowerPoint and Excel files with live Zebra BI visuals.",
+  "version": "1.1.7",
+  "description": "The Zebra BI MCP with skills: interactive IBCS-style charts and tables of your business data, variance explanations, and data stories you can export as a PDF or as PowerPoint and Excel files with live Zebra BI visuals.",
   "author": {
     "name": "Zebra BI",
     "url": "https://zebrabi.com"
@@ -26,7 +26,7 @@
       "interface": {
         "displayName": "Zebra BI",
         "shortDescription": "IBCS charts from your numbers",
-        "longDescription": "Zebra BI draws business data as interactive IBCS-style charts and tables, inline in the conversation. Give it actuals with a previous year, previous month, plan or forecast, and it draws the variances, with good and bad differences marked. Time periods are drawn as charts, other categories as tables with inline charts.",
+        "longDescription": "Zebra BI draws business data as interactive IBCS-style charts and tables, inline in the conversation. Give it actuals with a previous year, previous month, plan or forecast, and it draws the variances, with good and bad differences marked. Time periods are drawn as charts, other categories as tables with inline charts. Hand it a dataset and its skills tell a data story: one key message, the findings that prove it, and a Zebra BI chart under each one.",
         "developerName": "Zebra BI",
         "category": "Productivity",
         "websiteURL": "https://zebra-ai.com/",

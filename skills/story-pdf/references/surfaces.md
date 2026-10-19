@@ -11,7 +11,7 @@ On Windows, Claude Desktop chat can show the text result without the chart. Ment
 
 ## How the PDF gets its charts
 
-A conversation is not a file you can send. `pdf.py` lays the story out as one A4 page (`assets/story-template.html`) that embeds the server's own renderer (the `ui://` page that `render_visual` names in its `_meta.ui.resourceUri`) once per chart, which keeps every chart identical to the one in the conversation. Headless Chrome, Edge or Chromium opens that page from disk at the A4 printable width (680 CSS px), plays the MCP Apps host for each chart, waits until all of them have drawn and held their size, and prints the PDF. Chart labels and values stay text in the PDF.
+A conversation is not a file you can send. `pdf.py` lays the story out as one A4 page (`assets/story-template.html`) that embeds the MCP's own renderer (the `ui://` page that `render_visual` names in its `_meta.ui.resourceUri`) once per chart, which keeps every chart identical to the one in the conversation. Headless Chrome, Edge or Chromium opens that page from disk at the A4 printable width (680 CSS px), plays the MCP Apps host for each chart, waits until all of them have drawn and held their size, and prints the PDF. Chart labels and values stay text in the PDF.
 
 The page loads the renderer from a blob URL made from the embedded copy. The iframe sandbox keeps `allow-same-origin`, because an opaque-origin sandbox breaks the renderer's storage access and the chart never draws.
 
@@ -24,7 +24,7 @@ The renderer is an MCP Apps client talking JSON-RPC 2.0 over `postMessage`:
 3. App sends `ui/notifications/size-changed` as it lays out; the host sets the iframe height. The first size change after the tool result sets `data-status="ready"` on the iframe, and a reload of the chart removes it. A chart below the fold draws only once it is scrolled into view, so `pdf.py` scrolls to each chart in turn. A render is settled when no size change arrives for a second.
 4. Every other request is answered with an empty result so the app never blocks.
 
-Not offered by this host: fullscreen (needs `availableDisplayModes`), tool calls back to the server (`serverTools`), link opening and downloads.
+Not offered by this host: fullscreen (needs `availableDisplayModes`), tool calls back to the MCP (`serverTools`), link opening and downloads.
 
 ## Renderer cache
 

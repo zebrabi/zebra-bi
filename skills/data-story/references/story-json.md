@@ -34,4 +34,4 @@ One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it
 | `visuals` keys | lowercase letters, digits, dashes |
 | `visuals.<id>.args` | exactly what `render_visual` takes; see `chart-rules.md` |
 
-What a build adds next to it: `visuals/<id>.json` (the server's result plus a hash of the arguments, so unchanged visuals are not re-rendered), `<slug>.pdf` from `story-pdf`, and `snapshots/<id>.png`, `<slug>.pptx` and `<slug>.xlsx` from `story-office`.
+What a build adds next to it: `visuals/<id>.json` (the MCP's result plus a hash of the arguments, so unchanged visuals are not re-rendered), `<slug>.pdf` from `story-pdf`, and `snapshots/<id>.png`, `<slug>.pptx` and `<slug>.xlsx` from `story-office`.
