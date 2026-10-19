@@ -63,5 +63,4 @@ The host answers `ui/initialize` (with `hostContext.toolInfo.tool.inputSchema`, 
 ### Known limits
 
 - The scripts do not sign in. When the MCP asks for it, a build stops with `Zebra BI needs sign-in (<endpoint>)` unless every chart and the renderer are already cached.
-- The Power BI adapter is documented but not yet tested end to end.
 - Claude chat cannot save manifests; the skill shows them as JSON to keep in a Project.

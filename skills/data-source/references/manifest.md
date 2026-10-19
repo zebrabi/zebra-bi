@@ -10,7 +10,7 @@ One JSON file per source at `.zebra/sources/<name>.json`. `profile.py` writes th
 | `name` | lowercase, dashes; the handle used by `story.json` |
 | `kind` | `file`, `sharepoint` or `mcp` |
 | `rows` | data rows, header excluded |
-| `columns[]` | `{name, role, ...}`; role is `date` (with `date_order`), `period` (`month-name` or `year`; month names need a year before they become an ISO time axis), `measure` (min/max/sum), `category` (distinct count, examples), `id` (named like a key, such as `OrderID`, `Code`, `ZIP`, or over 50 whole, non-negative, almost all distinct numbers in a column not named like an amount such as `Actual` or `Revenue`), `text` or `empty` |
+| `columns[]` | `{name, role, ...}`; role is `date` (with `date_order`), `period` (`yearmonth` for `2026-01`, `quarter` for `2026-Q1`, `year`, or `month-name`; month names need a year before they become an ISO time axis), `measure` (min/max/sum), `category` (distinct count, examples), `id` (named like a key, such as `OrderID`, `Code`, `ZIP`, or like a sort column, such as `LineOrder`, `Rank` or `Index`, or over 50 whole, non-negative, almost all distinct numbers in a column not named like an amount such as `Actual` or `Revenue`), `text` or `empty` |
 | `date_columns`, `measures` | shortcuts derived from `columns` |
 | `profiled_at` | when the profile ran |
 | `confirmed` | decisions a person made: `{ "date_order": "day-first", "main_measure": "Sales", "currency": "USD", "decided": "2026-10-08" }` |

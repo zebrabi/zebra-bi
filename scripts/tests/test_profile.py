@@ -289,3 +289,25 @@ class Limits(unittest.TestCase):
                  '<worksheet xmlns="%s"><sheetData/></worksheet>' % M).encode("utf-16")
         path = raw_workbook(os.path.join(self.tmp, "utf16.xlsx"), sheet)
         self.assertIn("not UTF-8", self.exit_message(PR.read_xlsx, path))
+
+
+class Periods(unittest.TestCase):
+    """Months as YYYY-MM and quarters are periods, and sort columns are never summed (Power BI exports carry both)."""
+
+    def test_year_month_and_quarter_are_periods(self):
+        months = ["2026-%02d" % m for m in range(1, 10)]
+        self.assertEqual(PR.classify("YearMonth", months)["period"], "yearmonth")
+        self.assertEqual(PR.classify("Quarter", ["2025-Q1", "2025-Q2", "2025Q3"])["period"], "quarter")
+        self.assertNotEqual(PR.classify("Code", ["2026-13", "2026-14"]).get("role"), "period")
+
+    def test_sort_columns_are_ids(self):
+        order = [str(i) for i in range(1, 12)] * 9
+        for name in ("LineOrder", "Sort Order", "Rank", "line_index"):
+            with self.subTest(name=name):
+                self.assertEqual(PR.classify(name, order)["role"], "id")
+
+    def test_amounts_stay_measures(self):
+        for name in ("Revenue", "Order Quantity", "AC"):
+            with self.subTest(name=name):
+                self.assertEqual(PR.classify(name, ["120", "95", "130", "88"])["role"], "measure")
+

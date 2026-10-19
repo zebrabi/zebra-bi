@@ -263,9 +263,13 @@ def date_order(values):
     return "ambiguous"
 
 
+SORT_NAME = re.compile(r"([a-z]{2,}order|^sort|rank|position|seq|sequence|index)$")  # a bare "Order" can be a count of orders
+
+
 def named_id(name):
+    """Named like a key (OrderID, Code, ZIP) or like a sort column (LineOrder, Rank, Index): never summed."""
     n = name.lower()
-    return n.endswith(("id", "_id", "code")) or "postal" in n or "zip" in n
+    return n.endswith(("id", "_id", "code")) or "postal" in n or "zip" in n or bool(SORT_NAME.search(re.sub(r"[^a-z0-9]", "", n)))
 
 
 def looks_like_key(name, nums):
@@ -290,6 +294,10 @@ def classify(name, values):
                 "note": "month names without a year; map to ISO YYYY-MM for a time axis once the year is known"}
     if all(re.fullmatch(r"\s*(19|20)\d\d\s*", v) for v in s):
         return {"name": name, "role": "period", "period": "year"}
+    if all(re.fullmatch(r"\s*(19|20)\d\d-(0[1-9]|1[0-2])\s*", v) for v in s):
+        return {"name": name, "role": "period", "period": "yearmonth"}
+    if all(re.fullmatch(r"\s*(19|20)\d\d-?Q[1-4]\s*", v, re.I) for v in s):
+        return {"name": name, "role": "period", "period": "quarter"}
     if sum(bool(NUM_RE.match(v)) for v in s) > 0.95 * len(s):
         nums = [float(str(v).replace(",", "")) for v in vals if NUM_RE.match(str(v))]
         role = "id" if named_id(name) or looks_like_key(name, nums) else "measure"
