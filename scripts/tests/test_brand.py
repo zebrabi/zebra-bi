@@ -297,7 +297,7 @@ class Templates(unittest.TestCase):
                      b'<rect style="fill:url(https://example.com/x.svg#p)" width="1" height="1"/>',
                      b'<style>@import url(https://example.com/a.css);</style>'):
             with self.subTest(body=body):
-                with self.assertRaisesRegex(ValueError, "outside the file|imports a stylesheet"):
+                with self.assertRaisesRegex(ValueError, "outside the file|from elsewhere"):
                     T.from_template(self._with({"ppt/media/logo.svg": self.SVG % body}))
 
     def test_template_svg_with_event_handlers_or_html_is_refused(self):
@@ -310,8 +310,34 @@ class Templates(unittest.TestCase):
     def test_template_svg_declaring_entities_is_refused(self):
         svg = (b'<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/hosts">]>'
                + self.SVG % b"<text>&x;</text>")
-        with self.assertRaisesRegex(ValueError, "entities or an inline DTD"):
+        with self.assertRaisesRegex(ValueError, "declares entities"):
             T.from_template(self._with({"ppt/media/logo.svg": svg}))
+
+    def test_svg_check_bypasses_are_refused(self):
+        """Ways around a byte-level check: another encoding, a namespace prefix, an external DTD, a link set by
+        animation, a CSS picture without url(), and the SVG 1.2 script element."""
+        utf16 = (b'<?xml version="1.0" encoding="UTF-16"?>' + self.SVG % b"<script>alert(1)</script>").decode().encode("utf-16")
+        cases = {
+            "UTF-16": utf16,
+            "prefixed script": self.SVG % b'<svg:script xmlns:svg="http://www.w3.org/2000/svg">alert(1)</svg:script>',
+            "prefixed foreignObject": self.SVG % b'<x:foreignObject xmlns:x="http://www.w3.org/2000/svg"/>',
+            "SYSTEM DOCTYPE": b'<!DOCTYPE svg SYSTEM "https://example.com/evil.dtd">' + self.SVG % b"",
+            "declared encoding": b'<?xml version="1.0" encoding="UTF-7"?>' + self.SVG % b"",
+            "animated link": self.SVG % b'<a><animate attributeName="href" values="https://example.com/"/><text>x</text></a>',
+            "image-set": self.SVG % b'<rect style="fill:image-set(\'https://example.com/a.png\' 1x)"/>',
+            "handler element": self.SVG % b'<handler type="text/ecmascript">alert(1)</handler>',
+        }
+        for label, svg in cases.items():
+            with self.subTest(label):
+                self.assertIsNotNone(X.svg_problem(svg), label)
+                with self.assertRaises(ValueError):
+                    T.from_template(self._with({"ppt/media/logo.svg": svg}))
+
+    def test_utf16_kept_part_with_a_doctype_is_refused(self):
+        evil = ('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE p [<!ENTITY x "y">]>'
+                '<p:presentationPr xmlns:p="x">&x;</p:presentationPr>').encode("utf-16")
+        with self.assertRaisesRegex(ValueError, "not UTF-8"):
+            T.from_template(self._replacing("ppt/presProps.xml", evil))
 
     def test_svg_with_the_public_svg_doctype_is_kept(self):
         """Illustrator writes the public SVG 1.1 DOCTYPE into every export; it declares nothing."""

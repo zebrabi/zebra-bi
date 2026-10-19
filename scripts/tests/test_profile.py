@@ -283,3 +283,9 @@ class Limits(unittest.TestCase):
                  '<row r="2"><c><v>5</v></c><c><v>6</v></c></row></sheetData></worksheet>' % M).encode()
         _, rows = PR.read_xlsx(raw_workbook(os.path.join(self.tmp, "noref.xlsx"), sheet))
         self.assertEqual(rows, [["Name", "Actual"], ["5", "6"]])
+
+    def test_utf16_part_is_refused(self):
+        sheet = ('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE w [<!ENTITY x "y">]>'
+                 '<worksheet xmlns="%s"><sheetData/></worksheet>' % M).encode("utf-16")
+        path = raw_workbook(os.path.join(self.tmp, "utf16.xlsx"), sheet)
+        self.assertIn("not UTF-8", self.exit_message(PR.read_xlsx, path))

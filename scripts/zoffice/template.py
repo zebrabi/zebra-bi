@@ -70,8 +70,9 @@ def _media_ok(name, data):
 
 
 def _parse(raw, name):
-    if X.declares_doctype(raw):
-        raise ValueError("%s declares a DOCTYPE or ENTITY; refusing to read it" % name)
+    problem = X.xml_problem(raw)
+    if problem:
+        raise ValueError("%s %s; refusing to read it" % (name, problem))
     return ET.fromstring(raw)
 
 
@@ -325,9 +326,9 @@ def from_template(path):
                 raise ValueError("%s: the picture %s %s; remove it from the template or replace it with a PNG"
                                  % (os.path.basename(path), n, problem))
             b.defaults[n.rsplit(".", 1)[-1].lower()] = MEDIA_TYPES[n.rsplit(".", 1)[-1].lower()]  # never the template's own label
-        elif X.declares_doctype(data):  # kept parts are copied whether or not they are parsed here
-            raise ValueError("%s: %s declares a DOCTYPE or ENTITY; save the template again from PowerPoint"
-                             % (os.path.basename(path), n))
+        elif X.xml_problem(data):  # kept parts are copied whether or not they are parsed here
+            raise ValueError("%s: %s %s; save the template again from PowerPoint"
+                             % (os.path.basename(path), n, X.xml_problem(data)))
         elif n.endswith(".xml"):
             declared = overrides.get("/" + n)
             if declared not in PART_TYPES:

@@ -46,35 +46,72 @@ def compact(obj):
 
 
 DECLARATION = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
+# Encodings in which every ASCII character is the same single byte, so the byte-level checks below see
+# exactly what a parser will see. Office, Excel and SVG editors write UTF-8.
+_ASCII_SAFE = {"utf-8", "utf8", "us-ascii", "ascii", "iso-8859-1", "latin1", "latin-1", "windows-1252", "cp1252"}
+_XML_ENCODING = re.compile(rb"""\A(?:\xef\xbb\xbf)?\s*<\?xml[^>]*?encoding\s*=\s*["']([A-Za-z0-9._-]+)["']""", re.I)
 # Inside an SVG a reference may point into the file itself (#id) or carry a picture inline; anything else
 # reaches out when the SVG is drawn.
 _REF = re.compile(rb"""(?:\bhref|\bsrc)\s*=\s*(["'])\s*(.*?)\1|url\(\s*(["']?)\s*([^"')\s]*)""", re.I | re.S)
 _LOCAL = re.compile(rb"#|data:image/(png|jpe?g|gif|webp)[;,]", re.I)
-# A DOCTYPE with an internal subset ([...]) can declare entities; the bare public SVG 1.1 DOCTYPE that
-# Illustrator and other editors write cannot, and no renderer fetches its DTD, so that one is allowed.
-_SVG_DTD = re.compile(rb"<!\s*ENTITY|<!\s*DOCTYPE[^>\[]*\[", re.I)
+# The only DOCTYPEs an SVG may carry: the public SVG 1.0 and 1.1 ones editors such as Illustrator write.
+# They declare nothing and point at the W3C's own DTDs; any other DOCTYPE (a SYSTEM one, an internal
+# subset) can declare entities and is refused.
+_SVG_DOCTYPE = re.compile(
+    rb'<!DOCTYPE\s+svg\s+PUBLIC\s+"(?:'
+    rb'-//W3C//DTD SVG 1\.1//EN"\s+"http://www\.w3\.org/Graphics/SVG/1\.1/DTD/svg11\.dtd'
+    rb'|-//W3C//DTD SVG 1\.1 (?:Tiny|Basic)//EN"\s+"http://www\.w3\.org/Graphics/SVG/1\.1/DTD/svg11-(?:tiny|basic)\.dtd'
+    rb'|-//W3C//DTD SVG (?:1\.0|20010904)//EN"\s+"http://www\.w3\.org/TR/2001/REC-SVG-20010904/DTD/svg10\.dtd'
+    rb')"\s*>')
+# Elements that run code or pull in other documents; a namespace prefix (svg:script) does not hide them.
+_ACTIVE = re.compile(rb"<\s*(?:[a-z0-9_.-]+:)?(script|foreignobject|iframe|object|embed|handler|listener)\b", re.I)
 
 
-def declares_doctype(data):
-    """XML that declares a DOCTYPE or an entity. No part a deck, workbook or picture needs does, so such a
-    part is refused rather than parsed (no entity expansion, no external entities, no dependency)."""
-    return bool(DECLARATION.search(data))
+def encoding_problem(data):
+    """Why XML is not in an ASCII-compatible encoding (UTF-16 or UTF-32 by BOM, NUL bytes or its declaration),
+    or None. In such XML a byte search for "<!DOCTYPE" or "<script" finds nothing, so it is refused."""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in data:
+        return "is not UTF-8 (it is UTF-16 or UTF-32)"
+    m = _XML_ENCODING.match(data)
+    if m and m.group(1).decode("ascii").lower() not in _ASCII_SAFE:
+        return "declares the %s encoding instead of UTF-8" % m.group(1).decode("ascii")
+    return None
+
+
+def xml_problem(data):
+    """Why an XML part must not be read or copied, or None. No part a deck, workbook or picture needs declares
+    a DOCTYPE or an entity, so such a part is refused rather than parsed (no entity expansion, no external
+    entities, no dependency)."""
+    enc = encoding_problem(data)
+    if enc:
+        return enc
+    if DECLARATION.search(data):
+        return "declares a DOCTYPE or ENTITY"
+    return None
 
 
 def svg_problem(data):
-    """Why an SVG must not travel in a deck or story page, or None when it is a plain picture: scripts,
-    event handlers, embedded HTML, declarations, or references to anything outside the file."""
+    """Why an SVG must not travel in a deck or story page, or None when it is a plain picture: another
+    encoding, declarations, scripts, event handlers, embedded documents, or references outside the file."""
+    enc = encoding_problem(data)
+    if enc:
+        return enc
+    if re.search(rb"<!\s*ENTITY", data, re.I):
+        return "declares entities"
+    allowed = {m.start() for m in _SVG_DOCTYPE.finditer(data)}
+    if any(m.start() not in allowed for m in re.finditer(rb"<!\s*DOCTYPE", data, re.I)):
+        return "declares a DOCTYPE other than the public SVG one"
     low = data.lower()
-    if _SVG_DTD.search(data):
-        return "declares entities or an inline DTD"
-    if b"<script" in low:
-        return "carries a script"
-    if b"<foreignobject" in low:
-        return "embeds HTML (foreignObject)"
-    if re.search(rb"[\s/\"']on[a-z]+\s*=", low):
+    m = _ACTIVE.search(low)
+    if m:
+        return {b"script": "carries a script", b"foreignobject": "embeds HTML (foreignObject)"}.get(
+            m.group(1), "embeds an active element (%s)" % m.group(1).decode("ascii"))
+    if re.search(rb"[\s/\"']([a-z0-9_.-]+:)?on[a-z]+\s*=", low):
         return "carries event handlers (on... attributes)"
-    if b"@import" in low:
-        return "imports a stylesheet from elsewhere"
+    if re.search(rb"""attributename\s*=\s*["']\s*([a-z0-9_.-]+:)?href""", low):
+        return "animates a link, which can point outside the file"
+    if b"@import" in low or b"image-set(" in low:
+        return "loads a stylesheet or picture from elsewhere"
     for m in _REF.finditer(data):
         ref = (m.group(2) if m.group(2) is not None else m.group(4)) or b""
         if ref and not _LOCAL.match(ref):

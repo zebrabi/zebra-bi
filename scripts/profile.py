@@ -71,6 +71,14 @@ def read_csv(path):
 
 
 DECLARATION = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
+XML_ENCODING = re.compile(rb"""\A(?:\xef\xbb\xbf)?\s*<\?xml[^>]*?encoding\s*=\s*["']([A-Za-z0-9._-]+)["']""", re.I)
+
+
+def _foreign_encoding(head):
+    """An XML declaration naming an encoding in which ASCII is not one byte per character."""
+    m = XML_ENCODING.match(head)
+    return bool(m) and m.group(1).decode("ascii").lower() not in ("utf-8", "utf8", "us-ascii", "ascii", "iso-8859-1",
+                                                                  "latin1", "latin-1", "windows-1252", "cp1252")
 
 
 def _checked(z, name):
@@ -84,12 +92,15 @@ def _checked(z, name):
     if info.file_size > 1 << 20 and info.file_size > MAX_RATIO * max(info.compress_size, 1):
         sys.exit("refusing %s: it unpacks to %d times its packed size, which a real workbook does not"
                  % (name, info.file_size // max(info.compress_size, 1)))
-    tail = b""
+    tail, first = b"", True
     with z.open(name) as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
+            # Excel writes UTF-8. In UTF-16 or UTF-32 the byte search below would find nothing, so those are refused.
+            if b"\x00" in chunk or first and (chunk.startswith((b"\xff\xfe", b"\xfe\xff")) or _foreign_encoding(chunk)):
+                sys.exit("refusing %s: workbook part is not UTF-8" % name)
             if DECLARATION.search(tail + chunk):
                 sys.exit("refusing %s: workbook part declares a DOCTYPE or ENTITY" % name)
-            tail = chunk[-16:]
+            tail, first = chunk[-16:], False
 
 
 def _xml(z, name):
