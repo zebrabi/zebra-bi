@@ -14,19 +14,25 @@ def _read(path):
 
 
 class Chrome:
-    def __init__(self, binary, profile, timeout=30):
-        self.proc = subprocess.Popen(
-            [binary, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check",
-             "--remote-debugging-port=0", "--remote-allow-origins=http://127.0.0.1", "--user-data-dir=" + profile, "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=POSIX)  # its own process group, so close() can stop the helpers too
-        port_file = os.path.join(profile, "DevToolsActivePort")
-        deadline = time.time() + timeout
-        while not (os.path.exists(port_file) and _read(port_file).strip()):
-            if time.time() > deadline or self.proc.poll() is not None:
-                self.close()
+    def __init__(self, binary, profile, timeout=45):
+        # A slow or busy machine can miss the first start, so there is one retry in a fresh profile next to it.
+        for attempt, prof in enumerate((profile, profile + "-retry")):
+            self.proc = subprocess.Popen(
+                [binary, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check",
+                 "--remote-debugging-port=0", "--remote-allow-origins=http://127.0.0.1", "--user-data-dir=" + prof, "about:blank"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=POSIX)  # its own process group, so close() can stop the helpers too
+            port_file = os.path.join(prof, "DevToolsActivePort")
+            deadline = time.time() + timeout
+            while not (os.path.exists(port_file) and _read(port_file).strip()):
+                if time.time() > deadline or self.proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+            else:
+                break
+            self.close()
+            if attempt:
                 raise RuntimeError("headless Chrome did not start")
-            time.sleep(0.1)
         self.port = int(_read(port_file).split()[0])
         with urllib.request.urlopen("http://127.0.0.1:%d/json/list" % self.port, timeout=10) as r:
             targets = json.load(r)

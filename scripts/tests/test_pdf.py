@@ -147,3 +147,23 @@ class Build(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChromeStart(unittest.TestCase):
+    """A browser that does not come up is tried once more in a fresh profile, then reported."""
+
+    def test_failed_start_is_retried_once_then_reported(self):
+        from zoffice import cdp
+        tmp = tempfile.mkdtemp()
+        try:
+            fake = os.path.join(tmp, "fake-chrome")
+            with open(fake, "w") as f:
+                f.write('#!/bin/sh\necho run >> "$(dirname "$0")/runs"\nexit 1\n')
+            os.chmod(fake, 0o755)
+            with self.assertRaisesRegex(RuntimeError, "did not start"):
+                cdp.Chrome(fake, os.path.join(tmp, "profile"), timeout=5)
+            with open(os.path.join(tmp, "runs")) as f:
+                self.assertEqual(f.read().split(), ["run", "run"])
+        finally:
+            shutil.rmtree(tmp)
+
