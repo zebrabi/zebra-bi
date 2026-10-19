@@ -326,6 +326,16 @@ class Templates(unittest.TestCase):
             "animated link": self.SVG % b'<a><animate attributeName="href" values="https://example.com/"/><text>x</text></a>',
             "image-set": self.SVG % b'<rect style="fill:image-set(\'https://example.com/a.png\' 1x)"/>',
             "handler element": self.SVG % b'<handler type="text/ecmascript">alert(1)</handler>',
+            # What a parser sees, not what the bytes say: CDATA is joined, references and CSS escapes decoded.
+            "CDATA-split @import": self.SVG % b'<style><![CDATA[@im]]><![CDATA[port "https://example.com/a.css";]]></style>',
+            "entity @import": self.SVG % b'<style>@&#105;mport "https://example.com/a.css";</style>',
+            "CSS-escaped url": self.SVG % b'<rect style="fill:u\\72l(https://example.com/p.svg#x)" width="1" height="1"/>',
+            "entity attributeName": self.SVG % b'<a><animate attributeName="&#104;ref" values="https://example.com/"/></a>',
+            "entity href": self.SVG % b'<image href="&#104;ttps://example.com/p.png" width="1" height="1"/>',
+            "xml:base": self.SVG % b'<g xml:base="https://example.com/"><use href="#a"/></g>',
+            "xml-stylesheet": b'<?xml-stylesheet type="text/css" href="https://example.com/a.css"?>' + self.SVG % b"",
+            "presentation attribute": self.SVG % b'<rect fill="url(https://example.com/p.svg#g)" width="1" height="1"/>',
+            "not well-formed": self.SVG % b"<rect>",
         }
         for label, svg in cases.items():
             with self.subTest(label):

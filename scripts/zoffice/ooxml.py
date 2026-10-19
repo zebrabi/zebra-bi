@@ -4,6 +4,7 @@ The add-in references, property names and the double-encoded data property follo
 PowerPoint and Excel export.
 """
 import datetime as dt, json, os, re, struct, uuid, zipfile
+import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape, quoteattr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -50,10 +51,6 @@ DECLARATION = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
 # exactly what a parser will see. Office, Excel and SVG editors write UTF-8.
 _ASCII_SAFE = {"utf-8", "utf8", "us-ascii", "ascii", "iso-8859-1", "latin1", "latin-1", "windows-1252", "cp1252"}
 _XML_ENCODING = re.compile(rb"""\A(?:\xef\xbb\xbf)?\s*<\?xml[^>]*?encoding\s*=\s*["']([A-Za-z0-9._-]+)["']""", re.I)
-# Inside an SVG a reference may point into the file itself (#id) or carry a picture inline; anything else
-# reaches out when the SVG is drawn.
-_REF = re.compile(rb"""(?:\bhref|\bsrc)\s*=\s*(["'])\s*(.*?)\1|url\(\s*(["']?)\s*([^"')\s]*)""", re.I | re.S)
-_LOCAL = re.compile(rb"#|data:image/(png|jpe?g|gif|webp)[;,]", re.I)
 # The only DOCTYPEs an SVG may carry: the public SVG 1.0 and 1.1 ones editors such as Illustrator write.
 # They declare nothing and point at the W3C's own DTDs; any other DOCTYPE (a SYSTEM one, an internal
 # subset) can declare entities and is refused.
@@ -63,8 +60,6 @@ _SVG_DOCTYPE = re.compile(
     rb'|-//W3C//DTD SVG 1\.1 (?:Tiny|Basic)//EN"\s+"http://www\.w3\.org/Graphics/SVG/1\.1/DTD/svg11-(?:tiny|basic)\.dtd'
     rb'|-//W3C//DTD SVG (?:1\.0|20010904)//EN"\s+"http://www\.w3\.org/TR/2001/REC-SVG-20010904/DTD/svg10\.dtd'
     rb')"\s*>')
-# Elements that run code or pull in other documents; a namespace prefix (svg:script) does not hide them.
-_ACTIVE = re.compile(rb"<\s*(?:[a-z0-9_.-]+:)?(script|foreignobject|iframe|object|embed|handler|listener)\b", re.I)
 
 
 def encoding_problem(data):
@@ -90,9 +85,44 @@ def xml_problem(data):
     return None
 
 
+# What an SVG may refer to: a place in the file itself (#id) or a picture carried inline.
+_LOCAL = re.compile(r"\s*(#|data:image/(png|jpe?g|gif|webp)[;,])", re.I)
+# Elements that run code or pull in other documents, by local name, whatever their namespace prefix.
+_ACTIVE = {"script", "foreignobject", "iframe", "object", "embed", "handler", "listener"}
+_XML_NS = "{http://www.w3.org/XML/1998/namespace}"
+_CSS_COMMENT = re.compile(r"/\*.*?(\*/|\Z)", re.S)
+_CSS_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})[ \t\r\n\f]?|\\(.)", re.S)
+_CSS_URL = re.compile(r"url\(\s*([\"']?)(.*?)\1\s*\)", re.I | re.S)
+
+
+def _css_problem(css):
+    """Why CSS text (a style element or any attribute value) reaches outside the file, read the way a CSS parser
+    reads it: comments dropped first, then escapes such as \72 decoded."""
+    def unescape(m):
+        if m.group(1):
+            n = int(m.group(1), 16)
+            return chr(n) if 0 < n <= 0x10FFFF else "�"
+        return m.group(2)
+    text = _CSS_ESCAPE.sub(unescape, _CSS_COMMENT.sub(" ", css)).lower()
+    if "@import" in text:
+        return "imports a stylesheet from elsewhere"
+    if "image-set(" in text or re.search(r"\bsrc\(", text):
+        return "loads a picture from elsewhere"
+    urls = _CSS_URL.findall(text)
+    if text.count("url(") != len(urls):
+        return "has a url() this check cannot read"
+    for _, ref in urls:
+        if not _LOCAL.match(ref):
+            return "refers to %s outside the file" % ref.strip()[:80]
+    return None
+
+
 def svg_problem(data):
-    """Why an SVG must not travel in a deck or story page, or None when it is a plain picture: another
-    encoding, declarations, scripts, event handlers, embedded documents, or references outside the file."""
+    """Why an SVG must not travel in a deck or story page, or None when it is a plain picture. The bytes are
+    checked for what a parser would act on before building a tree (another encoding, entities, a DOCTYPE
+    other than the public SVG one, a stylesheet processing instruction). Everything else is checked on the
+    parsed tree, where CDATA is joined and character references are decoded exactly as PowerPoint or a
+    browser sees them: active elements, event handlers, xml:base, links, animated links and CSS."""
     enc = encoding_problem(data)
     if enc:
         return enc
@@ -101,21 +131,36 @@ def svg_problem(data):
     allowed = {m.start() for m in _SVG_DOCTYPE.finditer(data)}
     if any(m.start() not in allowed for m in re.finditer(rb"<!\s*DOCTYPE", data, re.I)):
         return "declares a DOCTYPE other than the public SVG one"
-    low = data.lower()
-    m = _ACTIVE.search(low)
-    if m:
-        return {b"script": "carries a script", b"foreignobject": "embeds HTML (foreignObject)"}.get(
-            m.group(1), "embeds an active element (%s)" % m.group(1).decode("ascii"))
-    if re.search(rb"[\s/\"']([a-z0-9_.-]+:)?on[a-z]+\s*=", low):
-        return "carries event handlers (on... attributes)"
-    if re.search(rb"""attributename\s*=\s*["']\s*([a-z0-9_.-]+:)?href""", low):
-        return "animates a link, which can point outside the file"
-    if b"@import" in low or b"image-set(" in low:
-        return "loads a stylesheet or picture from elsewhere"
-    for m in _REF.finditer(data):
-        ref = (m.group(2) if m.group(2) is not None else m.group(4)) or b""
-        if ref and not _LOCAL.match(ref):
-            return "refers to %s outside the file" % ref[:80].decode("utf-8", "replace")
+    if re.search(rb"<\?\s*xml-stylesheet", data, re.I):
+        return "loads a stylesheet from elsewhere (xml-stylesheet)"
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        return "is not well-formed XML"
+    for el in root.iter():
+        if not isinstance(el.tag, str):
+            continue
+        name = el.tag.rsplit("}", 1)[-1].lower()
+        if name in _ACTIVE:
+            return {"script": "carries a script", "foreignobject": "embeds HTML (foreignObject)"}.get(
+                name, "embeds an active element (%s)" % name)
+        if name == "style":
+            problem = _css_problem(el.text or "")
+            if problem:
+                return problem
+        for key, value in el.attrib.items():
+            if key == _XML_NS + "base":
+                return "sets xml:base, which can turn a link inside the file into one outside it"
+            local = key.rsplit("}", 1)[-1].lower()
+            if local.startswith("on"):
+                return "carries event handlers (on... attributes)"
+            if local in ("href", "src") and not _LOCAL.match(value):
+                return "refers to %s outside the file" % value.strip()[:80]
+            if local == "attributename" and value.strip().rsplit(":", 1)[-1].lower() in ("href", "src"):
+                return "animates a link, which can point outside the file"
+            problem = _css_problem(value)
+            if problem:
+                return problem
     return None
 
 
