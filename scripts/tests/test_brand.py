@@ -307,6 +307,21 @@ class Templates(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, reason):
                     T.from_template(self._with({"ppt/media/logo.svg": self.SVG % body}))
 
+    def test_template_svg_declaring_entities_is_refused(self):
+        svg = (b'<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/hosts">]>'
+               + self.SVG % b"<text>&x;</text>")
+        with self.assertRaisesRegex(ValueError, "entities or an inline DTD"):
+            T.from_template(self._with({"ppt/media/logo.svg": svg}))
+
+    def test_svg_with_the_public_svg_doctype_is_kept(self):
+        """Illustrator writes the public SVG 1.1 DOCTYPE into every export; it declares nothing."""
+        svg = (b'<?xml version="1.0" encoding="utf-8"?>\n<!-- Generator: Adobe Illustrator -->\n'
+               b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n'
+               + self.SVG % b'<path d="M0,0h10v10z"/>')
+        self.assertIsNone(X.svg_problem(svg))
+        b = T.from_template(self._with({"ppt/media/logo.svg": svg}))
+        self.assertIn("ppt/media/logo.svg", b.parts)
+
     def test_template_plain_svg_is_kept(self):
         body = (b'<defs><linearGradient id="g"><stop offset="0"/></linearGradient></defs>'
                 b'<rect fill="url(#g)" width="10" height="10"/><use xlink:href="#g"/>'

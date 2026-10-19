@@ -50,6 +50,9 @@ DECLARATION = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
 # reaches out when the SVG is drawn.
 _REF = re.compile(rb"""(?:\bhref|\bsrc)\s*=\s*(["'])\s*(.*?)\1|url\(\s*(["']?)\s*([^"')\s]*)""", re.I | re.S)
 _LOCAL = re.compile(rb"#|data:image/(png|jpe?g|gif|webp)[;,]", re.I)
+# A DOCTYPE with an internal subset ([...]) can declare entities; the bare public SVG 1.1 DOCTYPE that
+# Illustrator and other editors write cannot, and no renderer fetches its DTD, so that one is allowed.
+_SVG_DTD = re.compile(rb"<!\s*ENTITY|<!\s*DOCTYPE[^>\[]*\[", re.I)
 
 
 def declares_doctype(data):
@@ -62,8 +65,8 @@ def svg_problem(data):
     """Why an SVG must not travel in a deck or story page, or None when it is a plain picture: scripts,
     event handlers, embedded HTML, declarations, or references to anything outside the file."""
     low = data.lower()
-    if declares_doctype(data):
-        return "declares a DOCTYPE or entities"
+    if _SVG_DTD.search(data):
+        return "declares entities or an inline DTD"
     if b"<script" in low:
         return "carries a script"
     if b"<foreignobject" in low:
