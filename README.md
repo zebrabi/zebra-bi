@@ -1,13 +1,13 @@
-# Zebra BI for AI assistants
+# Zebra BI MCP server and plugin
 
-Zebra BI draws business data as interactive IBCS-style charts and tables, inline in the conversation. This repository packages the Zebra BI MCP server with the skills that teach the assistant how to use it, as a plugin for Claude and for GitHub Copilot in VS Code, in the Agent Plugins format that ChatGPT and Codex also read.
+The Zebra BI MCP server draws business data as interactive IBCS-style charts and tables, inline in the conversation. This repository packages it with skills as one plugin, for AI assistants such as Claude, ChatGPT and GitHub Copilot Chat, and for coding agents such as Claude Code, Codex and Copilot CLI. The plugin comes in Claude's format and in Agent Plugins, the format VS Code, Copilot CLI, ChatGPT and Codex read. Any other MCP client can connect to the server on its own.
 
-The server has one tool, `render_visual`. The assistant sends it aggregated figures, such as actuals with a previous year, plan or forecast, and Zebra BI draws the variances. Hosts that support MCP Apps show the interactive visual; the others show a text summary of what was drawn.
+The server has one tool, `render_visual`. Your assistant or agent sends it aggregated figures, such as actuals with a previous year, plan or forecast, and Zebra BI draws the variances. Hosts that support MCP Apps show the interactive visual; the others show a text summary of what was drawn.
 
 The skills add three things on top of the tool:
 
 1. **Charts and variances.** When and how to show business figures as a Zebra BI visual, and how to explain actuals against previous year, previous month, plan or forecast.
-2. **Data stories.** Hand the assistant a dataset and get back the story a controller would tell: one key message, the three to five findings that prove it, and a Zebra BI chart under each one. Every number comes from a computation on your data, and the story never adds a cause the data does not show.
+2. **Data stories.** Hand your assistant or agent a dataset and get back the story a controller would tell: one key message, the three to five findings that prove it, and a Zebra BI chart under each one. Every number comes from a computation on your data, and the story never adds a cause the data does not show.
 3. **Files to share.** One A4 PDF of a story, or a PowerPoint deck and an Excel workbook with live Zebra BI for Office visuals, in your company's brand. Made only when someone asks for a file.
 
 ## Skills
