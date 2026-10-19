@@ -47,7 +47,7 @@ A company brand (set with the `story-brand` skill) can set spelling, form of add
 
 ## CHECK
 
-- Every number in text matches the chart under it, from the same computation.
+- Every number in text matches its chart, from the same computation.
 - Compare like with like: full periods only, or label partial periods ("YTD Sep").
 - Same scale for charts that are compared side by side; say so when a chart ranks by % instead of absolute.
 

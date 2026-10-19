@@ -1,7 +1,7 @@
 <!-- Summary: the story.json format that data-story writes and the story-pdf and story-office builds read. -->
 # story.json
 
-One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it after telling the story in the conversation; `story-pdf` builds it into a shareable `<slug>.pdf` and `story-office` into a deck and a workbook; a later refresh re-runs it against new data. `title` is the key message and each section `heading` a supporting message (see `ibcs-narrative.md`).
+One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it while it tells the story in the conversation; `story-pdf` builds it into a shareable `<slug>.pdf` and `story-office` into a deck and a workbook; a later refresh re-runs it against new data. `title` is the key message and each section `heading` a supporting message (see `ibcs-narrative.md`).
 
 ```json
 {

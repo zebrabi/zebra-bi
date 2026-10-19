@@ -7,7 +7,7 @@ The MCP has one tool, `render_visual`. Your assistant or agent sends it aggregat
 The skills add three things on top of the tool:
 
 1. **Charts and variances.** When and how to show business figures as a Zebra BI visual, and how to explain actuals against previous year, previous month, plan or forecast.
-2. **Data stories.** Hand your assistant or agent a dataset and get back the story a controller would tell: one key message, the three to five findings that prove it, and a Zebra BI chart under each one. Every number comes from a computation on your data, and the story never adds a cause the data does not show.
+2. **Data stories.** Hand your assistant or agent a dataset and get back the story a controller would tell: one key message, the three to five findings that prove it, and a Zebra BI chart for each one. Every number comes from a computation on your data, and the story never adds a cause the data does not show.
 3. **Files to share.** One A4 PDF of a story, or a PowerPoint deck and an Excel workbook with live Zebra BI for Office visuals, in your company's brand. Made only when someone asks for a file.
 
 ## Skills
@@ -17,7 +17,7 @@ The skills add three things on top of the tool:
 | `chart-from-data` | When to show findings as a visual, and how to shape the data for `render_visual`. |
 | `variance-analysis` | How to explain actuals against previous year, previous month, plan or forecast, and show the variances. |
 | `data-source` | Finds a dataset (local CSV or Excel, Excel in SharePoint or OneDrive, a Power BI semantic model) and remembers it in `.zebra/sources/`, so the file, sheet, date format or query is never asked twice. |
-| `data-story` | Analyses the data and tells an IBCS story in the conversation, with a Zebra BI chart under every supporting message. In Claude Code it also saves the story in `.zebra/stories/`. |
+| `data-story` | Analyses the data and tells an IBCS story in the conversation, with a Zebra BI chart for every supporting message. In Claude Code it also saves the story in `.zebra/stories/`. |
 | `story-pdf` | Turns a saved story into one A4 PDF: the key message and KPIs, each supporting message with its chart, page numbers. Chart labels and values stay text. Claude Code only. |
 | `story-office` | Writes a saved story as a PowerPoint deck and an Excel workbook. Each chart is a live Zebra BI for Office visual where the Charts or Tables add-in is installed, and a picture of the chart for everyone else. Claude Code only. |
 | `story-brand` | Sets the look and voice of story files: colours, fonts, logo, credit line, your PowerPoint template and its layouts, and the tone of the writing. The charts keep their IBCS colours whatever the brand. |
