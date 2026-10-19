@@ -3,7 +3,7 @@
 The add-in references, property names and the double-encoded data property follow the Zebra AI app's
 PowerPoint and Excel export.
 """
-import datetime as dt, json, os, struct, uuid, zipfile
+import datetime as dt, json, os, re, struct, uuid, zipfile
 from xml.sax.saxutils import escape, quoteattr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +43,40 @@ def attr(value):
 
 def compact(obj):
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
+
+DECLARATION = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
+# Inside an SVG a reference may point into the file itself (#id) or carry a picture inline; anything else
+# reaches out when the SVG is drawn.
+_REF = re.compile(rb"""(?:\bhref|\bsrc)\s*=\s*(["'])\s*(.*?)\1|url\(\s*(["']?)\s*([^"')\s]*)""", re.I | re.S)
+_LOCAL = re.compile(rb"#|data:image/(png|jpe?g|gif|webp)[;,]", re.I)
+
+
+def declares_doctype(data):
+    """XML that declares a DOCTYPE or an entity. No part a deck, workbook or picture needs does, so such a
+    part is refused rather than parsed (no entity expansion, no external entities, no dependency)."""
+    return bool(DECLARATION.search(data))
+
+
+def svg_problem(data):
+    """Why an SVG must not travel in a deck or story page, or None when it is a plain picture: scripts,
+    event handlers, embedded HTML, declarations, or references to anything outside the file."""
+    low = data.lower()
+    if declares_doctype(data):
+        return "declares a DOCTYPE or entities"
+    if b"<script" in low:
+        return "carries a script"
+    if b"<foreignobject" in low:
+        return "embeds HTML (foreignObject)"
+    if re.search(rb"[\s/\"']on[a-z]+\s*=", low):
+        return "carries event handlers (on... attributes)"
+    if b"@import" in low:
+        return "imports a stylesheet from elsewhere"
+    for m in _REF.finditer(data):
+        ref = (m.group(2) if m.group(2) is not None else m.group(4)) or b""
+        if ref and not _LOCAL.match(ref):
+            return "refers to %s outside the file" % ref[:80].decode("utf-8", "replace")
+    return None
 
 
 def double_encoded(obj):

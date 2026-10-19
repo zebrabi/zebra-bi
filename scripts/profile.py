@@ -19,6 +19,12 @@ import csv, datetime as dt, hashlib, io, json, os, re, sys, zipfile
 import xml.etree.ElementTree as ET
 
 SAMPLE = 5000
+# Limits for a file the user points at. A story profiles aggregated or exported data, so anything past these is
+# a bigger job than this profiler (or a crafted workbook): it stops with one line instead of filling memory.
+MAX_FILE = 100 * 1024 * 1024    # bytes on disk, CSV or XLSX
+MAX_PART = 100 * 1024 * 1024    # unpacked bytes of one workbook part
+MAX_RATIO = 100                 # unpacked / packed size of a part over 1 MB; real sheets stay far below
+MAX_ROWS = 1000000
 ENCODINGS = ["utf-8-sig", "utf-8", "cp1252", "latin-1"]
 DATE_RE = re.compile(r"^\s*(\d{1,4})[/.-](\d{1,2})[/.-](\d{1,4})\s*$")
 NUM_RE = re.compile(r"^\s*-?[\d,]*\.?\d+([eE][-+]?\d+)?\s*$")
@@ -55,20 +61,59 @@ def read_csv(path):
         delim = dialect.delimiter
     except csv.Error:
         delim = ","
-    rows = list(csv.reader(io.StringIO(text), delimiter=delim))
-    rows = [r for r in rows if any(c.strip() for c in r)]
+    rows = []
+    for r in csv.reader(io.StringIO(text), delimiter=delim):
+        if any(c.strip() for c in r):
+            rows.append(r)
+            if len(rows) > MAX_ROWS:
+                sys.exit("refusing %s: more than %d rows; aggregate the data or export the range you need first" % (path, MAX_ROWS))
     return {"encoding": enc, "delimiter": delim}, rows
 
 
+DECLARATION = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
+
+
+def _checked(z, name):
+    """Size and declaration checks on one part of an untrusted workbook, before anything parses it.
+    XLSX parts never need a DOCTYPE, so a part that declares one is refused: that rules out entity
+    expansion and external entities without a dependency such as defusedxml."""
+    info = z.getinfo(name)
+    if info.file_size > MAX_PART:
+        sys.exit("refusing %s: it unpacks to %d MB, over the %d MB this profiler reads; export the range you need as CSV"
+                 % (name, info.file_size >> 20, MAX_PART >> 20))
+    if info.file_size > 1 << 20 and info.file_size > MAX_RATIO * max(info.compress_size, 1):
+        sys.exit("refusing %s: it unpacks to %d times its packed size, which a real workbook does not"
+                 % (name, info.file_size // max(info.compress_size, 1)))
+    tail = b""
+    with z.open(name) as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            if DECLARATION.search(tail + chunk):
+                sys.exit("refusing %s: workbook part declares a DOCTYPE or ENTITY" % name)
+            tail = chunk[-16:]
+
+
 def _xml(z, name):
-    """Parse one part of an untrusted workbook. XLSX parts never need a DOCTYPE,
-    so refuse any part that declares one: that rules out entity expansion and
-    external entities without a dependency such as defusedxml."""
-    data = z.read(name)
-    head = data[:4096].upper()
-    if b"<!DOCTYPE" in head or b"<!ENTITY" in data.upper():
-        sys.exit("refusing %s: workbook part declares a DOCTYPE or ENTITY" % name)
-    return ET.fromstring(data)
+    """Parse one small part (workbook, relationships, styles) after the checks."""
+    _checked(z, name)
+    return ET.fromstring(z.read(name))
+
+
+def _stream(z, name, tag):
+    """Yield each `tag` element of a large part (a sheet, the shared strings) after the checks, dropping it
+    once the caller is done, so memory holds one row at a time instead of the whole parsed part."""
+    _checked(z, name)
+    with z.open(name) as f:
+        parent = None
+        for event, el in ET.iterparse(f, events=("start", "end")):
+            if event == "start":
+                if parent is None and el.tag != tag:
+                    parent = el if el.tag.endswith(("}sheetData", "}sst")) else None
+                continue
+            if el.tag == tag:
+                yield el
+                el.clear()
+                if parent is not None and len(parent) and parent[-1] is el:
+                    del parent[-1]
 
 
 def _col_index(ref):
@@ -152,26 +197,35 @@ def read_xlsx(path, sheet=None, index=None):
     chosen = sheets[_pick_sheet(names, sheet, index)]
     shared = []
     if "xl/sharedStrings.xml" in z.namelist():
-        for si in _xml(z, "xl/sharedStrings.xml").findall("m:si", ns):
+        for si in _stream(z, "xl/sharedStrings.xml", "{%s}si" % ns["m"]):
             shared.append("".join(t.text or "" for t in si.iter("{%s}t" % ns["m"])))
     p = _part(chosen[1])
+    if p not in z.namelist():
+        sys.exit("refusing %s: the workbook lists sheet %s but has no part for it" % (path, json.dumps(chosen[0], ensure_ascii=False)))
     rows = []
-    for row in _xml(z, p).iter("{%s}row" % ns["m"]):
-        vals = {}
+    for row in _stream(z, p, "{%s}row" % ns["m"]):
+        vals, col = {}, -1
         for c in row.findall("m:c", ns):
             v = c.find("m:v", ns)
             t = c.get("t")
             if t == "s" and v is not None:
-                val = shared[int(v.text)]
+                try:
+                    val = shared[int(v.text)]
+                except (TypeError, ValueError, IndexError):
+                    sys.exit("refusing %s: a cell refers to shared string %r, which the workbook does not have" % (p, v.text))
             elif t == "inlineStr":
                 val = "".join(x.text or "" for x in c.iter("{%s}t" % ns["m"]))
             else:
                 val = v.text if v is not None else ""
                 if t in (None, "n") and c.get("s") in date_xf:
                     val = _serial_to_iso(val, base) or val
-            vals[_col_index(c.get("r"))] = val
+            ref = c.get("r") or ""
+            col = _col_index(ref) if re.match(r"[A-Z]+", ref) else col + 1  # a cell without r= follows the one before
+            vals[col] = val
         if vals:
             rows.append([vals.get(i, "") for i in range(max(vals) + 1)])
+            if len(rows) > MAX_ROWS:
+                sys.exit("refusing %s: more than %d rows; aggregate the data or export the range you need first" % (path, MAX_ROWS))
     return {"sheet": chosen[0], "sheets": names}, rows
 
 
@@ -259,6 +313,13 @@ def main(argv):
         name = re.sub(r"[^a-z0-9]+", "-", os.path.splitext(os.path.basename(path))[0].lower()).strip("-") or "source"
     elif not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
         sys.exit("--name takes lowercase letters, digits and dashes (for example sales-2025), got " + json.dumps(name, ensure_ascii=False))
+    try:
+        size = os.path.getsize(path)
+    except OSError as e:
+        sys.exit("cannot read %s: %s" % (path, e.strerror))
+    if size > MAX_FILE:
+        sys.exit("refusing %s: %d MB, over the %d MB this profiler reads; aggregate the data or export the range you need first"
+                 % (path, size >> 20, MAX_FILE >> 20))
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xlsm"):
         read, rows = read_xlsx(path, sheet, index)

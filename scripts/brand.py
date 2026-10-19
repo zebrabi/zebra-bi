@@ -11,7 +11,7 @@ The default lives in assets/brand/default/brand.json. A company brand is .zebra/
 its logo and template; it is merged over the default, so missing keys fall back. $ZEBRA_BI_BRAND
 points at another brand folder (the brand skill's preview uses it). Standard library only.
 """
-import base64, colorsys, copy, json, os, re, shutil, subprocess, sys, tempfile, time
+import base64, colorsys, copy, json, os, re, shutil, subprocess, sys, tempfile, time, urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -154,6 +154,15 @@ def check(brand):
         elif fam.lower() not in COMMON_FONTS:
             warnings.append("font %r (%s) does not ship with Office or macOS; machines without it substitute a font. "
                             "Embed it in the template or keep a common fallback." % (fam, role))
+    css = (brand.get("fonts") or {}).get("web_css")
+    if css not in (None, ""):
+        host = urllib.parse.urlsplit(str(css)).hostname if str(css).startswith("https://") else None
+        if not host:
+            errors.append("fonts.web_css must be an https:// stylesheet address or null, got %r" % css)
+        else:
+            warnings.append("fonts.web_css loads a stylesheet from %s each time a PDF is built, plus the font files it "
+                            "names: the build then needs the network, and %s sees each request. null keeps the build offline."
+                            % (host, host))
     logo = brand.get("logo") or {}
     if logo.get("placement") not in ("cover", "none", None):
         errors.append("logo.placement must be 'cover' or 'none'")
@@ -163,6 +172,10 @@ def check(brand):
             errors.append("logo file %s does not exist" % p)
         elif p and os.path.getsize(p) > 1024 * 1024:
             warnings.append("logo %s is over 1 MB; every deck and page carries it" % os.path.basename(p))
+        elif p and key == "svg":
+            problem = X.svg_problem(X.read(p, "rb"))
+            if problem:
+                errors.append("logo %s %s; export a plain SVG or use a PNG" % (os.path.basename(p), problem))
     if logo.get("png") and os.path.isfile(logo["png"]):
         try:
             X.png_size(logo["png"])
@@ -206,8 +219,9 @@ def store_logo(src, bdir):
     if ext != ".svg":
         raise ValueError("a logo must be .svg or .png, got %s" % ext)
     raw = X.read(src, "rb")
-    if b"<!ENTITY" in raw or b"<script" in raw.lower():
-        raise ValueError("the SVG declares entities or scripts; export a plain SVG")
+    problem = X.svg_problem(raw)
+    if problem:
+        raise ValueError("the SVG logo %s; export a plain SVG or use a PNG" % problem)
     shutil.copyfile(src, os.path.join(bdir, "logo.svg"))
     from zoffice import cdp, snapshot as SN
     binary = SN.find_chrome()

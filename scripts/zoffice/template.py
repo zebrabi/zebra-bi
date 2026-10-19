@@ -63,14 +63,14 @@ def _media_ok(name, data):
         return len(data) > 44 and data[40:44] == b" EMF"
     if ext == "wmf":
         return head.startswith((b"\xd7\xcd\xc6\x9a", b"\x01\x00\x09\x00", b"\x02\x00\x09\x00"))
-    if ext == "svg":
+    if ext == "svg":  # what it may contain is checked by X.svg_problem
         text = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
-        return text.startswith(b"<") and b"<svg" in data[:65536].lower() and b"<!entity" not in data.lower()
+        return text.startswith(b"<") and b"<svg" in data[:65536].lower()
     return ext in ("fntdata", "odttf")  # embedded fonts are obfuscated by design; only reachable as fonts
 
 
 def _parse(raw, name):
-    if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
+    if X.declares_doctype(raw):
         raise ValueError("%s declares a DOCTYPE or ENTITY; refusing to read it" % name)
     return ET.fromstring(raw)
 
@@ -320,7 +320,14 @@ def from_template(path):
         if n.startswith(("ppt/media/", "ppt/fonts/")):
             if not _media_ok(n, data):
                 raise ValueError("%s: %s is not the file type its name says; remove it from the template" % (os.path.basename(path), n))
+            problem = X.svg_problem(data) if n.lower().endswith(".svg") else None
+            if problem:  # every picture in ppt/media is copied, used or not, so each one is checked
+                raise ValueError("%s: the picture %s %s; remove it from the template or replace it with a PNG"
+                                 % (os.path.basename(path), n, problem))
             b.defaults[n.rsplit(".", 1)[-1].lower()] = MEDIA_TYPES[n.rsplit(".", 1)[-1].lower()]  # never the template's own label
+        elif X.declares_doctype(data):  # kept parts are copied whether or not they are parsed here
+            raise ValueError("%s: %s declares a DOCTYPE or ENTITY; save the template again from PowerPoint"
+                             % (os.path.basename(path), n))
         elif n.endswith(".xml"):
             declared = overrides.get("/" + n)
             if declared not in PART_TYPES:

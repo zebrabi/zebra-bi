@@ -208,3 +208,78 @@ class SheetChoice(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def raw_workbook(path, sheet_xml, shared=("Name",), compress=zipfile.ZIP_DEFLATED):
+    """A one-sheet workbook whose sheet part is exactly `sheet_xml` (bytes)."""
+    rels = ('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="%s/worksheet" Target="worksheets/sheet1.xml"/></Relationships>' % R)
+    with zipfile.ZipFile(path, "w", compression=compress) as z:
+        z.writestr("xl/workbook.xml", '<workbook xmlns="%s" xmlns:r="%s"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>' % (M, R))
+        z.writestr("xl/_rels/workbook.xml.rels", rels)
+        z.writestr("xl/sharedStrings.xml", '<sst xmlns="%s">%s</sst>' % (M, "".join("<si><t>%s</t></si>" % s for s in shared)))
+        z.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return path
+
+
+class Limits(unittest.TestCase):
+    """A file the user points at can be huge or crafted; the profiler stops with one line instead of filling memory."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.saved = PR.MAX_FILE, PR.MAX_PART, PR.MAX_ROWS
+
+    def tearDown(self):
+        PR.MAX_FILE, PR.MAX_PART, PR.MAX_ROWS = self.saved
+        shutil.rmtree(self.tmp)
+
+    def exit_message(self, fn, *a):
+        with self.assertRaises(SystemExit) as cm:
+            fn(*a)
+        return str(cm.exception.code)
+
+    def test_workbook_that_unpacks_far_beyond_its_size_is_refused(self):
+        rows = "".join('<row r="%d"><c r="A%d"><v>1</v></c></row>' % (i, i) for i in range(1, 2))
+        sheet = ('<worksheet xmlns="%s"><sheetData>%s%s</sheetData></worksheet>'
+                 % (M, rows, "<row/>" * 600000)).encode()  # ~3.6 MB of XML that packs to a few KB
+        path = raw_workbook(os.path.join(self.tmp, "bomb.xlsx"), sheet)
+        self.assertLess(os.path.getsize(path), 100000)
+        self.assertIn("times its packed size", self.exit_message(PR.read_xlsx, path))
+
+    def test_part_over_the_size_cap_is_refused(self):
+        PR.MAX_PART = 2000
+        path = workbook(os.path.join(self.tmp, "book.xlsx"), ["Month", "Actual"], [[(i, 0), (i * 10, 0)] for i in range(200)])
+        self.assertIn("unpacks to", self.exit_message(PR.read_xlsx, path))
+
+    def test_file_over_the_size_cap_is_refused(self):
+        PR.MAX_FILE = 100
+        path = os.path.join(self.tmp, "big.csv")
+        with open(path, "w") as f:
+            f.write("Month,Actual\n" + "".join("2026-%02d,%d\n" % (i % 12 + 1, i) for i in range(100)))
+        self.assertIn("this profiler reads", self.exit_message(PR.main, [path]))
+
+    def test_rows_over_the_cap_are_refused(self):
+        PR.MAX_ROWS = 10
+        book = workbook(os.path.join(self.tmp, "book.xlsx"), ["Month", "Actual"], [[(i, 0), (i, 0)] for i in range(20)])
+        self.assertIn("more than 10 rows", self.exit_message(PR.read_xlsx, book))
+        csv_path = os.path.join(self.tmp, "rows.csv")
+        with open(csv_path, "w") as f:
+            f.write("Month,Actual\n" + "".join("2026-01,%d\n" % i for i in range(20)))
+        self.assertIn("more than 10 rows", self.exit_message(PR.read_csv, csv_path))
+
+    def test_doctype_past_the_first_4kb_is_refused(self):
+        sheet = ('<?xml version="1.0"?><!--%s--><!DOCTYPE worksheet [<!ELEMENT worksheet ANY>]>'
+                 '<worksheet xmlns="%s"><sheetData/></worksheet>' % ("x" * 5000, M)).encode()
+        path = raw_workbook(os.path.join(self.tmp, "late.xlsx"), sheet)
+        self.assertIn("DOCTYPE", self.exit_message(PR.read_xlsx, path))
+
+    def test_missing_shared_string_is_a_clear_error(self):
+        sheet = ('<worksheet xmlns="%s"><sheetData><row r="1"><c r="A1" t="s"><v>7</v></c></row></sheetData></worksheet>' % M).encode()
+        path = raw_workbook(os.path.join(self.tmp, "idx.xlsx"), sheet)
+        self.assertIn("shared string '7'", self.exit_message(PR.read_xlsx, path))
+
+    def test_cell_without_a_reference_follows_the_one_before(self):
+        sheet = ('<worksheet xmlns="%s"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c t="inlineStr"><is><t>Actual</t></is></c></row>'
+                 '<row r="2"><c><v>5</v></c><c><v>6</v></c></row></sheetData></worksheet>' % M).encode()
+        _, rows = PR.read_xlsx(raw_workbook(os.path.join(self.tmp, "noref.xlsx"), sheet))
+        self.assertEqual(rows, [["Name", "Actual"], ["5", "6"]])

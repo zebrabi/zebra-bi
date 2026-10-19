@@ -29,7 +29,7 @@ A company brand at `.zebra/brand/brand.json` is merged over the default at `asse
 | `colors.paper`, `surface` | page background, light fills | |
 | `colors.accent` | KPI rules and other marks; `null` draws them in ink | a warning when close in hue to the charts' variance green `#7ACA00`, red `#FF0000` or highlight blue `#0070C0` |
 | `fonts.headline/body` | PDF, workbook; the default deck's theme | a company template's own theme fonts decide its deck; uncommon fonts get a substitution warning |
-| `fonts.web_css` | PDF only | an `https://` stylesheet (e.g. Google Fonts), loaded when the PDF is built and embedded in it; `null` keeps the build offline |
+| `fonts.web_css` | PDF only | an `https://` stylesheet (e.g. Google Fonts), loaded with its font files each time a PDF is built and embedded in it; `brand.py check` warns and names the host, and refuses anything but `https://`; `null` keeps the build offline |
 | `kicker` | the label above the key message (page, cover, Story sheet) when the story has no `kicker` of its own | default `null`: each story labels itself with its reporting unit and period |
 | `logo.file` / `logo.svg` | `file` (PNG) on the cover and in Office; `svg` in the PDF | `brand.py logo` stores both; `placement` is `cover` or `none` |
 | `credit` | footer of page, cover and Story sheet | default "Charts by Zebra BI"; removing it gives a warning |
