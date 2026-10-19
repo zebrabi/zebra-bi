@@ -3,7 +3,9 @@
 Enough for snapshots: launch headless Chrome on a private profile, open one page target, send
 commands and read their results. Events are skipped.
 """
-import base64, json, os, socket, struct, subprocess, time, urllib.request
+import base64, json, os, signal, socket, struct, subprocess, time, urllib.request
+
+POSIX = os.name == "posix"
 
 
 def _read(path):
@@ -16,7 +18,8 @@ class Chrome:
         self.proc = subprocess.Popen(
             [binary, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check",
              "--remote-debugging-port=0", "--remote-allow-origins=http://127.0.0.1", "--user-data-dir=" + profile, "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=POSIX)  # its own process group, so close() can stop the helpers too
         port_file = os.path.join(profile, "DevToolsActivePort")
         deadline = time.time() + timeout
         while not (os.path.exists(port_file) and _read(port_file).strip()):
@@ -101,7 +104,22 @@ class Chrome:
         except Exception:
             pass
         try:
-            self.proc.terminate()
+            if POSIX:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+            else:
+                self.proc.terminate()
             self.proc.wait(timeout=5)
         except Exception:
             self.proc.kill()
+        if POSIX:
+            # Chrome's helper processes can outlive the browser for a moment and keep writing into the profile,
+            # so a caller deleting it right away fails ("Directory not empty"). Wait for the whole group.
+            deadline = time.time() + 5
+            while True:
+                try:
+                    os.killpg(self.proc.pid, 0 if time.time() < deadline else signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    break
+                if time.time() >= deadline:
+                    break
+                time.sleep(0.05)
