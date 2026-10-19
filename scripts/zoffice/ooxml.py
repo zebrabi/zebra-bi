@@ -63,13 +63,23 @@ _SVG_DOCTYPE = re.compile(
 
 
 def encoding_problem(data):
-    """Why XML is not in an ASCII-compatible encoding (UTF-16 or UTF-32 by BOM, NUL bytes or its declaration),
-    or None. In such XML a byte search for "<!DOCTYPE" or "<script" finds nothing, so it is refused."""
+    """Why XML is not plain UTF-8 (or a declared single-byte Latin encoding), or None. In UTF-16, UTF-32,
+    EBCDIC or invalid UTF-8 a byte search for "<!DOCTYPE" or "<script" can miss what a parser reads, so such
+    XML is refused: it must start with "<" (after an optional UTF-8 BOM and whitespace) and decode cleanly."""
     if data.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in data:
         return "is not UTF-8 (it is UTF-16 or UTF-32)"
+    body = data[3:] if data.startswith(b"\xef\xbb\xbf") else data
+    if not body.lstrip(b" \t\r\n").startswith(b"<"):
+        return "does not start like UTF-8 XML"
     m = _XML_ENCODING.match(data)
-    if m and m.group(1).decode("ascii").lower() not in _ASCII_SAFE:
+    declared = m.group(1).decode("ascii").lower() if m else "utf-8"
+    if declared not in _ASCII_SAFE:
         return "declares the %s encoding instead of UTF-8" % m.group(1).decode("ascii")
+    if declared in ("utf-8", "utf8", "us-ascii", "ascii"):
+        try:
+            body.decode("utf-8")
+        except UnicodeDecodeError:
+            return "is not valid UTF-8"
     return None
 
 
@@ -88,7 +98,8 @@ def xml_problem(data):
 # What an SVG may refer to: a place in the file itself (#id) or a picture carried inline.
 _LOCAL = re.compile(r"\s*(#|data:image/(png|jpe?g|gif|webp)[;,])", re.I)
 # Elements that run code or pull in other documents, by local name, whatever their namespace prefix.
-_ACTIVE = {"script", "foreignobject", "iframe", "object", "embed", "handler", "listener"}
+_ACTIVE = {"script", "foreignobject", "iframe", "object", "embed", "handler", "listener", "meta"}
+_SVG_ROOT = "{http://www.w3.org/2000/svg}svg"
 _XML_NS = "{http://www.w3.org/XML/1998/namespace}"
 _CSS_COMMENT = re.compile(r"/\*.*?(\*/|\Z)", re.S)
 _CSS_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})[ \t\r\n\f]?|\\(.)", re.S)
@@ -96,24 +107,26 @@ _CSS_URL = re.compile(r"url\(\s*([\"']?)(.*?)\1\s*\)", re.I | re.S)
 
 
 def _css_problem(css):
-    """Why CSS text (a style element or any attribute value) reaches outside the file, read the way a CSS parser
-    reads it: comments dropped first, then escapes such as \72 decoded."""
+    """Why CSS text (a style element or any attribute value) reaches outside the file, with escapes such as \72
+    decoded. It is read twice, with comments dropped and with them kept, because CSS drops comments between
+    tokens but keeps them inside an unquoted url(...): url(/**/#x) is a path, not a place in the file.
+    Anything either reading flags is refused."""
     def unescape(m):
         if m.group(1):
             n = int(m.group(1), 16)
             return chr(n) if 0 < n <= 0x10FFFF else "�"
         return m.group(2)
-    text = _CSS_ESCAPE.sub(unescape, _CSS_COMMENT.sub(" ", css)).lower()
-    if "@import" in text:
-        return "imports a stylesheet from elsewhere"
-    if "image-set(" in text or re.search(r"\bsrc\(", text):
-        return "loads a picture from elsewhere"
-    urls = _CSS_URL.findall(text)
-    if text.count("url(") != len(urls):
-        return "has a url() this check cannot read"
-    for _, ref in urls:
-        if not _LOCAL.match(ref):
-            return "refers to %s outside the file" % ref.strip()[:80]
+    for text in (_CSS_ESCAPE.sub(unescape, _CSS_COMMENT.sub(" ", css)).lower(), _CSS_ESCAPE.sub(unescape, css).lower()):
+        if "@import" in text:
+            return "imports a stylesheet from elsewhere"
+        if "image-set(" in text or re.search(r"\bsrc\(", text):
+            return "loads a picture from elsewhere"
+        urls = _CSS_URL.findall(text)
+        if text.count("url(") != len(urls):
+            return "has a url() this check cannot read"
+        for _, ref in urls:
+            if not _LOCAL.match(ref):
+                return "refers to %s outside the file" % ref.strip()[:80]
     return None
 
 
@@ -137,6 +150,8 @@ def svg_problem(data):
         root = ET.fromstring(data)
     except ET.ParseError:
         return "is not well-formed XML"
+    if root.tag != _SVG_ROOT:
+        return "is not an SVG (its root element is not svg in the SVG namespace)"
     for el in root.iter():
         if not isinstance(el.tag, str):
             continue

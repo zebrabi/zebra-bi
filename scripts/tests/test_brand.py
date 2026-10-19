@@ -336,12 +336,30 @@ class Templates(unittest.TestCase):
             "xml-stylesheet": b'<?xml-stylesheet type="text/css" href="https://example.com/a.css"?>' + self.SVG % b"",
             "presentation attribute": self.SVG % b'<rect fill="url(https://example.com/p.svg#g)" width="1" height="1"/>',
             "not well-formed": self.SVG % b"<rect>",
+            # CSS keeps comments inside an unquoted url(): this is the path /**/, fetched, not a place in the file.
+            "comment inside url()": self.SVG % b'<rect style="fill:url(/**/#x)" width="1" height="1"/>',
+            "not an SVG root": b'<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>',
+            "meta refresh": self.SVG % b'<meta http-equiv="refresh" content="0;url=https://example.com/"/>',
+            "invalid UTF-8": self.SVG % b"<text>\xff\xfe</text>",
+            "EBCDIC": "<?xml version='1.0'?><svg/>".encode("cp037"),
         }
         for label, svg in cases.items():
             with self.subTest(label):
                 self.assertIsNotNone(X.svg_problem(svg), label)
                 with self.assertRaises(ValueError):
                     T.from_template(self._with({"ppt/media/logo.svg": svg}))
+
+    def test_kept_part_in_another_encoding_is_refused(self):
+        """A part PowerPoint parses but this code only scans: EBCDIC or broken UTF-8 could hide a DOCTYPE."""
+        ebcdic = '<?xml version="1.0" encoding="IBM037"?><!DOCTYPE p [<!ENTITY x "y">]><p>&x;</p>'.encode("cp037")
+        for data, reason in ((ebcdic, "does not start like UTF-8 XML"), (b"<p>\xc3\x28</p>", "not valid UTF-8")):
+            with self.subTest(reason=reason):
+                with self.assertRaisesRegex(ValueError, reason):
+                    T.from_template(self._replacing("ppt/presProps.xml", data))
+
+    def test_latin1_declared_svg_with_high_bytes_is_kept(self):
+        svg = b'<?xml version="1.0" encoding="iso-8859-1"?>' + self.SVG % b"<title>Caf\xe9</title>"
+        self.assertIsNone(X.svg_problem(svg))
 
     def test_utf16_kept_part_with_a_doctype_is_refused(self):
         evil = ('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE p [<!ENTITY x "y">]>'
