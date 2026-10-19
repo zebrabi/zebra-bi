@@ -1,6 +1,6 @@
 ---
 name: variance-analysis
-description: Explain how actual business results differ from previous year, previous month, plan or forecast, and show the variances as a Zebra BI chart with render_visual. Use when the user asks why results are above or below budget, how this period compares with last year, which items drove a gap, or for a variance or budget-versus-actual review.
+description: Explain how actual business results differ from previous year, previous month, plan or forecast, and show the variances as a Zebra BI chart with render_visual. Use when the user asks why results are above or below budget, how this period compares with last year, which items drove a gap, or for a variance or budget-versus-actual review. For a month-end close or a review of a data file or saved source across several charts, the data-story skill tells the whole story with this method.
 license: Apache-2.0
 ---
 

@@ -1,0 +1,29 @@
+{
+  "name": "Editorial (default)",
+  "version": 1,
+  "colors": {
+    "ink": "#242424",
+    "muted": "#616161",
+    "hairline": "#E0E0E0",
+    "paper": "#FFFFFF",
+    "surface": "#FAFAFA",
+    "accent": null
+  },
+  "fonts": {
+    "headline": {"family": "Segoe UI Semibold", "fallback": "'Segoe UI', system-ui, -apple-system, sans-serif"},
+    "body": {"family": "Segoe UI", "fallback": "system-ui, -apple-system, sans-serif"},
+    "web_css": null
+  },
+  "kicker": null,
+  "logo": {"file": null, "placement": "cover"},
+  "credit": "Charts by Zebra BI",
+  "deck": {"template": null, "layouts": {"title": null, "content": null, "closing": null}},
+  "voice": {
+    "language": "en-US",
+    "address": "neutral",
+    "notes": [],
+    "avoid_words": [],
+    "sample": null
+  },
+  "confirmed": {}
+}

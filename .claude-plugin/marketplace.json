@@ -9,7 +9,7 @@
     {
       "name": "zebra-bi",
       "source": "./",
-      "description": "Interactive IBCS-style Zebra BI charts and tables in your AI assistant."
+      "description": "Interactive IBCS-style Zebra BI charts and tables in your AI assistant, with data stories you can share as a PDF or as PowerPoint and Excel files."
     }
   ]
 }

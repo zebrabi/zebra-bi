@@ -5,6 +5,6 @@
   "description": "Draw business data as interactive IBCS-style Zebra BI charts and tables.",
   "version": "1.0.0",
   "websiteUrl": "https://zebra-ai.com/",
-  "repository": { "url": "https://github.com/zebrabi/mcp", "source": "github" },
+  "repository": { "url": "https://github.com/zebrabi/zebra-bi", "source": "github" },
   "remotes": [{ "type": "streamable-http", "url": "https://app.zebra-ai.com/mcp" }]
 }
