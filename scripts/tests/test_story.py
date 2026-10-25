@@ -2,9 +2,10 @@
 
 The fake server listens on 127.0.0.1 only and picks its behaviour from the URL path
 (ZEBRA_BI_MCP_URL=http://127.0.0.1:<port>/<mode>): well-formed answers, malformed ones,
-HTTP errors, a redirect and an oversize body.
+HTTP errors, a redirect and an oversize body. Mode "authed" wants a Bearer token and the
+server also plays the authorization server (metadata, registration, token, revocation).
 """
-import contextlib, hashlib, http.server, io, json, os, re, shutil, sys, tempfile, threading, unittest
+import base64, contextlib, hashlib, http.server, io, json, os, re, shutil, stat, sys, tempfile, threading, time, unittest, urllib.parse, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -15,6 +16,8 @@ import story as S  # noqa: E402
 RENDERER = "<!doctype html><html><body>fake renderer<script>/* answers ui/initialize */</script></body></html>"
 ADVERTISED = "ui://zebra-bi/visual-v9.html"  # what the fake server's tools/list names; not the built-in fallback
 HITS = []
+AUTHS = []  # the Authorization header of every MCP call
+OAUTH = {}  # what the fake authorization server saw
 
 
 def read(path, mode="r"):
@@ -41,11 +44,46 @@ class Fake(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        base = "http://127.0.0.1:%d" % self.server.server_address[1]
+        if self.path == "/.well-known/oauth-protected-resource/authed":
+            return self.send(200, json.dumps({"resource": base + "/authed", "authorization_servers": [base]}))
+        if self.path == "/.well-known/oauth-authorization-server":
+            return self.send(200, json.dumps({
+                "issuer": base, "authorization_endpoint": base + "/oauth/authorize", "token_endpoint": base + "/oauth/token",
+                "registration_endpoint": base + "/oauth/register", "revocation_endpoint": base + "/oauth/revoke",
+                "code_challenge_methods_supported": ["S256"]}))
         self.send(405, '{"error":{"message":"Method Not Allowed"}}')
+
+    def oauth(self, mode, body):
+        """The fake authorization server: registration, the code and refresh grants, revocation."""
+        if mode == "oauth/register":
+            reg = json.loads(body)
+            OAUTH["redirect_uris"] = reg["redirect_uris"]
+            return self.send(201, json.dumps({"client_id": "cid-1", **reg}))
+        form = dict(urllib.parse.parse_qsl(body.decode()))
+        OAUTH.setdefault("posts", []).append((mode, form))
+        if mode == "oauth/revoke":
+            return self.send(200, "{}")
+        if form.get("grant_type") == "refresh_token":
+            if form.get("refresh_token") != "refresh-1":
+                return self.send(400, '{"error":"invalid_grant"}')
+            return self.send(200, json.dumps({"access_token": "good", "token_type": "Bearer", "expires_in": 3600}))
+        verifier_ok = OAUTH.get("challenge") == base64.urlsafe_b64encode(
+            hashlib.sha256(form.get("code_verifier", "").encode()).digest()).rstrip(b"=").decode()
+        if form.get("code") != "code-1" or not verifier_ok or form.get("redirect_uri") not in OAUTH.get("redirect_uris", []):
+            return self.send(400, '{"error":"invalid_grant","error_description":"bad code or verifier"}')
+        return self.send(200, json.dumps({"access_token": "good", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "refresh-1"}))
 
     def do_POST(self):
         mode = self.path.strip("/")
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if mode.startswith("oauth/"):
+            return self.oauth(mode, body)
+        AUTHS.append(self.headers.get("Authorization"))
+        if mode == "authed" and self.headers.get("Authorization") != "Bearer good":
+            base = "http://127.0.0.1:%d" % self.server.server_address[1]
+            return self.send(401, '{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Sign in to use Zebra BI visuals."}}',
+                             headers=[("WWW-Authenticate", 'Bearer resource_metadata="%s/.well-known/oauth-protected-resource/authed"' % base)])
         method = json.loads(body).get("method")
         HITS.append((mode, method))
         ok = lambda res: json.dumps({"jsonrpc": "2.0", "id": 1, "result": res})
@@ -119,8 +157,11 @@ STORY = {"title": "{{FOOTER}} grew", "source": {"label": "test"}, "visuals": {"v
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self.saved = S.ENDPOINT, S.CACHE, getattr(S, "MAX_BYTES", None)
+        self.saved = S.ENDPOINT, S.CACHE, getattr(S, "MAX_BYTES", None), S.AUTH
         S.CACHE = os.path.join(self.tmp, "cache", "renderer")
+        S.AUTH = os.path.join(self.tmp, "cache", "auth.json")  # never the real token store
+        del AUTHS[:]
+        OAUTH.clear()
         self.story_dir = os.path.join(self.tmp, "story")
         os.makedirs(self.story_dir)
         with open(os.path.join(self.story_dir, "story.json"), "w") as f:
@@ -131,6 +172,7 @@ class Base(unittest.TestCase):
         S.ENDPOINT, S.CACHE = self.saved[:2]
         if self.saved[2] is not None:
             S.MAX_BYTES = self.saved[2]
+        S.AUTH = self.saved[3]
         shutil.rmtree(self.tmp)
 
     def mode(self, m):
@@ -418,6 +460,115 @@ class Page(Base):  # items 16, 17, 18
         self.assertIn("URL.createObjectURL(new Blob(", t)
         self.assertNotIn("visual.html'", t)  # no sibling renderer copy: the page is only opened from disk
 
+
+
+class SignIn(Base):  # sign-in: the MCP authorization flow against the fake server, and the kept token
+    def browser(self, deny=False, state=None):
+        """A stand-in for the user's browser: answers the authorization request on the loopback redirect."""
+        def open_url(url):
+            q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+            OAUTH["challenge"], OAUTH["authorize"] = q["code_challenge"], q
+            answer = {"error": "access_denied"} if deny else {"code": "code-1"}
+            answer["state"] = state or q["state"]
+
+            def visit():
+                time.sleep(0.2)
+                try:
+                    urllib.request.urlopen(q["redirect_uri"] + "?" + urllib.parse.urlencode(answer), timeout=5).read()
+                except Exception:
+                    pass
+                if state:  # a forged answer is refused; then the real one arrives
+                    urllib.request.urlopen(q["redirect_uri"] + "?" + urllib.parse.urlencode({"code": "code-1", "state": q["state"]}), timeout=5).read()
+            threading.Thread(target=visit, daemon=True).start()
+        return open_url
+
+    def sign_in(self, **kw):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            S.sign_in(open_url=self.browser(**kw))
+        del AUTHS[:]  # the unauthenticated discovery probe
+        return out.getvalue()
+
+    def test_build_without_sign_in_names_the_command(self):
+        self.mode("authed")
+        msg = self.exit_message(self.render)
+        self.assertTrue(msg.startswith("Zebra BI needs sign-in (%s)" % (BASE + "authed")), msg)
+        self.assertIn("sign-in`, then build again", msg)
+        self.assertEqual(AUTHS, [None])
+
+    def test_sign_in_keeps_a_token_that_builds_use(self):
+        self.mode("authed")
+        out = self.sign_in()
+        self.assertIn("Signed in to Zebra BI", out)
+        self.assertNotIn("good", out)  # the token is never printed
+        q = OAUTH["authorize"]
+        self.assertEqual((q["code_challenge_method"], q["resource"], q["client_id"]), ("S256", BASE + "authed", "cid-1"))
+        self.assertTrue(q["redirect_uri"].startswith("http://127.0.0.1:"))
+        self.assertEqual(stat.S_IMODE(os.stat(S.AUTH).st_mode), 0o600)
+        entry = json.loads(read(S.AUTH))[BASE + "authed"]
+        self.assertEqual((entry["access_token"], entry["refresh_token"]), ("good", "refresh-1"))
+        out, res = self.render()
+        self.assertIn("[v1] The chart is fine.", out)
+        self.assertEqual(AUTHS[-1], "Bearer good")
+
+    def test_token_goes_only_to_its_own_endpoint(self):
+        self.mode("authed")
+        self.sign_in()
+        self.mode("ok")
+        self.render()
+        self.assertEqual(AUTHS, [None])
+
+    def test_expired_token_is_refreshed_once(self):
+        self.mode("authed")
+        self.sign_in()
+        data = json.loads(read(S.AUTH))
+        data[BASE + "authed"].update(access_token="stale", expires_at=int(time.time()) - 10)
+        S.save_auth(data)
+        self.render()
+        self.assertEqual(AUTHS[-1], "Bearer good")
+        self.assertEqual(OAUTH["posts"][-1][1]["grant_type"], "refresh_token")
+        self.assertEqual(json.loads(read(S.AUTH))[BASE + "authed"]["access_token"], "good")
+
+    def test_expired_token_without_refresh_needs_sign_in(self):
+        self.mode("authed")
+        self.sign_in()
+        data = json.loads(read(S.AUTH))
+        data[BASE + "authed"].update(access_token="stale", expires_at=int(time.time()) - 10)
+        del data[BASE + "authed"]["refresh_token"]
+        S.save_auth(data)
+        msg = self.exit_message(self.render)
+        self.assertTrue(msg.startswith("Zebra BI needs sign-in ("), msg)
+        self.assertEqual(AUTHS, [None])
+
+    def test_denied_sign_in_saves_nothing(self):
+        self.mode("authed")
+        msg = self.exit_message(lambda: self.sign_in(deny=True))
+        self.assertIn("refused (access_denied)", msg)
+        self.assertFalse(os.path.exists(S.AUTH))
+
+    def test_answer_with_another_state_is_ignored(self):
+        self.mode("authed")
+        out = self.sign_in(state="forged")
+        self.assertIn("Signed in to Zebra BI", out)
+
+    def test_sign_out_revokes_and_forgets(self):
+        self.mode("authed")
+        self.sign_in()
+        with contextlib.redirect_stdout(io.StringIO()):
+            S.sign_out()
+        self.assertEqual(OAUTH["posts"][-1], ("oauth/revoke", {"token": "good", "client_id": "cid-1"}))
+        self.assertEqual(json.loads(read(S.AUTH)), {})
+        msg = self.exit_message(self.render)
+        self.assertTrue(msg.startswith("Zebra BI needs sign-in ("), msg)
+
+    def test_symlinked_token_store_is_not_read(self):
+        other = os.path.join(self.tmp, "elsewhere.json")
+        with open(other, "w") as f:
+            json.dump({BASE + "authed": {"access_token": "good"}}, f)
+        os.makedirs(os.path.dirname(S.AUTH), exist_ok=True)
+        os.symlink(other, S.AUTH)
+        self.mode("authed")
+        self.assertIsNone(S.token())
 
 
 class Kicker(unittest.TestCase):  # the label above the key message: story first, then brand, else none

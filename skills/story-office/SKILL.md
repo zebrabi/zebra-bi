@@ -37,7 +37,7 @@ If a printed text shows the MCP changed a chart, fix `story.json` and build agai
 If the build stops with one of these lines, say so in one line and stop. No file was written, and the model does not write one by hand.
 
 - `Zebra BI is unavailable (<reason>)`: the MCP is down or answered with an error. Give the reason; try again later, or check `ZEBRA_BI_MCP_URL` when it is set.
-- `Zebra BI needs sign-in (<endpoint>)`: the MCP asks for sign-in, which the scripts do not do, so the file cannot be built yet.
+- `Zebra BI needs sign-in (<endpoint>)`: the scripts have no valid Zebra BI sign-in. Run `python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/story.py sign-in` (allow up to 5 minutes): it opens the sign-in page in the user's browser, so tell them to sign in there. When it prints `Signed in to Zebra BI`, build again. If sign-in fails or times out, say so in one line and stop.
 
 A file that fails its checks is renamed `.failed` and the command exits 1. Do not hand it over; report the printed errors. `python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/office.py check <file>` re-runs the checks on any file.
 

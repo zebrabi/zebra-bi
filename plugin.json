@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "zebra-bi",
-  "version": "1.1.15",
+  "version": "1.1.16",
   "description": "The Zebra BI MCP with skills: interactive IBCS-style charts and tables of your business data, variance explanations, and data stories you can export as a PDF or as PowerPoint and Excel files with live Zebra BI visuals.",
   "author": {
     "name": "Zebra BI",

@@ -36,7 +36,7 @@ The PDF wears the brand from `.zebra/brand/` (set with the `story-brand` skill),
 If the build stops with one of these lines, say so in one line and stop. No file was written, and the model does not write one by hand.
 
 - `Zebra BI is unavailable (<reason>)`: the MCP is down or answered with an error. Give the reason; try again later, or check `ZEBRA_BI_MCP_URL` when it is set.
-- `Zebra BI needs sign-in (<endpoint>)`: the MCP asks for sign-in, which the scripts do not do, so the file cannot be built yet.
+- `Zebra BI needs sign-in (<endpoint>)`: the scripts have no valid Zebra BI sign-in. Run `python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/story.py sign-in` (allow up to 5 minutes): it opens the sign-in page in the user's browser, so tell them to sign in there. When it prints `Signed in to Zebra BI`, build again. If sign-in fails or times out, say so in one line and stop.
 - `The PDF needs Google Chrome, Microsoft Edge or Chromium ...`: none was found; install one or set `ZEBRA_BI_CHROME` to its path.
 - `Chart <id> did not draw in the browser ...`: build once more; if it repeats, report it with the chart id.
 

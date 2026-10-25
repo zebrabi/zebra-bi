@@ -51,7 +51,7 @@ The MCP URL is `https://app.zebra-ai.com/mcp`.
 - **A local browser.** `story-pdf`, `story-office` and the `story-brand` preview start Chrome, Edge or Chromium headless, with a throwaway profile and a remote-debugging port bound to 127.0.0.1. The browser closes when the file is done.
 - **A web font, if a brand sets one.** With `fonts.web_css` set, the headless browser loads that stylesheet while it builds the PDF. The default brand sets none.
 - **What is written.** Files under `.zebra/` in your working folder (sources, stories, brand, and the PDF, PowerPoint and Excel files) and the renderer cache.
-- **Sign-in.** The scripts store no credentials and do not sign in. If the MCP asks for sign-in, a build stops with `Zebra BI needs sign-in` and writes no file.
+- **Sign-in.** The MCP asks for sign-in, and the scripts sign in on their own, apart from the connector: `python3 -I scripts/story.py sign-in` opens the Zebra BI sign-in page in your browser (OAuth with PKCE, answered on a 127.0.0.1 port) and keeps the token in `auth.json` next to the renderer cache, readable only by you. The token is sent only to the MCP it was issued for. Without a valid token a build stops with `Zebra BI needs sign-in` and writes no file. `story.py sign-out` revokes and forgets it.
 
 Privacy policy: https://zebra-ai.com/privacy-policy/
 

@@ -2,6 +2,8 @@
 """story.py: render the visuals of a Zebra BI data story and lay out its page.
 
   python3 -I story.py renderer [--refresh]   fetch/cache the chart renderer, print its path
+  python3 -I story.py sign-in                sign in to Zebra BI in the browser, keep the token
+  python3 -I story.py sign-out               forget (and revoke) the kept token
 
 Library for pdf.py and office.py. Standard library only. The Zebra BI server
 is the `zebra-bi` URL in the plugin's .mcp.json, so the scripts and the
@@ -21,11 +23,19 @@ own text for each one (it lists every adjustment the server made).
 `assemble` returns the branded story page with the renderer and every
 chart's result embedded, which pdf.py prints.
 
+Sign-in follows the MCP authorization spec: `sign-in` reads the server's
+protected-resource and authorization-server metadata, registers a public
+client, opens the browser for an authorization-code grant with PKCE (S256)
+and a loopback redirect on 127.0.0.1, and keeps the token in auth.json next
+to the renderer cache (0600). The token is kept per endpoint and sent only
+to that endpoint, as `Authorization: Bearer`. When it has expired and no
+refresh token was issued, the next call needs `sign-in` again.
+
 When the server cannot be used, a build stops with one line and writes no
 file: "Zebra BI is unavailable (<reason>)" or "Zebra BI needs sign-in
 (<endpoint>)". A build whose visuals are all cached needs no server.
 """
-import base64, datetime as dt, hashlib, html, http.client, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
+import base64, datetime as dt, hashlib, html, http.client, http.server, json, os, re, secrets, sys, time, urllib.error, urllib.parse, urllib.request, webbrowser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "..", "assets", "story-template.html")
@@ -48,6 +58,9 @@ def plugin_endpoint():
 ENDPOINT = os.environ.get("ZEBRA_BI_MCP_URL") or plugin_endpoint()
 RENDERER_URI = "ui://zebra-bi/visual-v1.html"  # used only when tools/list names no renderer
 CACHE = os.path.join(os.environ.get("CLAUDE_PLUGIN_DATA") or os.path.expanduser("~/.cache/zebra-bi"), "renderer")
+AUTH = os.path.join(os.path.dirname(CACHE), "auth.json")
+SIGN_IN_WAIT = 300  # seconds the browser sign-in may take
+SIGN_IN_CMD = "python3 -I %s sign-in" % os.path.abspath(__file__)
 MAX_AGE = 24 * 3600
 MAX_BYTES = 32 * 1024 * 1024  # one response
 MAX_RENDERER = 20 * 1024 * 1024
@@ -76,12 +89,12 @@ def clean(text, cap=2000):
     return text[:cap] + "..." if len(text) > cap else text
 
 
-def write_atomic(path, data):
+def write_atomic(path, data, mode=0o666):
     """Write to a temp file in the same folder, then rename over path, so a crash never leaves half a file."""
     if isinstance(data, str):
         data = data.encode("utf-8", "replace")
     tmp = os.path.join(os.path.dirname(path), ".%s.%s.tmp" % (os.path.basename(path), os.urandom(4).hex()))
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
@@ -92,13 +105,17 @@ def write_atomic(path, data):
         raise
 
 
-def check_endpoint():
+def safe_url(url):
+    """True for an https:// URL, or http:// on 127.0.0.1 or localhost."""
     try:
-        u = urllib.parse.urlsplit(ENDPOINT)
-        ok = u.scheme == "https" and u.hostname or u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")
-    except ValueError:
-        ok = False
-    if not ok:
+        u = urllib.parse.urlsplit(url)
+        return bool(u.scheme == "https" and u.hostname or u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost"))
+    except (ValueError, AttributeError):
+        return False
+
+
+def check_endpoint():
+    if not safe_url(ENDPOINT):
         sys.exit("ZEBRA_BI_MCP_URL must be an https:// address, or http:// on 127.0.0.1 or localhost; got %r" % ENDPOINT)
 
 
@@ -133,8 +150,11 @@ def messages(text):
 def rpc(method, params, timeout=90):
     check_endpoint()
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
-    req = urllib.request.Request(ENDPOINT, data=body, method="POST", headers={
-        "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    tok = token()
+    if tok:
+        headers["Authorization"] = "Bearer " + tok
+    req = urllib.request.Request(ENDPOINT, data=body, method="POST", headers=headers)
     try:
         with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as resp:
             ctype, raw = resp.headers.get("Content-Type") or "no content type", capped(resp)
@@ -172,8 +192,254 @@ def rpc(method, params, timeout=90):
 def stop(e):
     """The one line a build ends with when the server cannot be used."""
     if isinstance(e, SignIn):
-        sys.exit("Zebra BI needs sign-in (%s). The scripts do not sign in, so nothing was built." % ENDPOINT)
+        sys.exit("Zebra BI needs sign-in (%s). Nothing was built; run `%s`, then build again." % (ENDPOINT, SIGN_IN_CMD))
     sys.exit("Zebra BI is unavailable (%s). Nothing was built; try again when the server is back." % e)
+
+
+# Sign-in: the MCP authorization flow (OAuth 2.1 authorization code + PKCE, loopback redirect).
+
+class NoFollow(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        fp.close()
+        raise Unavailable("%s redirects to %s" % (clean(req.full_url), clean(newurl)))
+
+
+def http_json(url, body=None, form=False, timeout=30):
+    """GET url (body None) or POST body as JSON or a form; the JSON answer. Raises Unavailable."""
+    if not safe_url(url):
+        raise Unavailable("refusing %r: not https:// or loopback http://" % clean(url))
+    data, headers = None, {"Accept": "application/json"}
+    if body is not None:
+        data = (urllib.parse.urlencode(body) if form else json.dumps(body)).encode()
+        headers["Content-Type"] = "application/x-www-form-urlencoded" if form else "application/json"
+    req = urllib.request.Request(url, data=data, method="POST" if data else "GET", headers=headers)
+    try:
+        with urllib.request.build_opener(NoFollow).open(req, timeout=timeout) as resp:
+            raw = resp.read(1 << 20)
+    except urllib.error.HTTPError as e:
+        with e:
+            detail = e.read(4096).decode("utf-8", "replace")
+        try:
+            err = json.loads(detail)
+            detail = err.get("error_description") or err.get("error") or detail
+        except (ValueError, AttributeError):
+            pass
+        raise Unavailable("%s answered %d: %s" % (clean(url), e.code, clean(detail, 300)))
+    except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
+        raise Unavailable("cannot reach %s: %s" % (clean(url), clean(getattr(e, "reason", e))))
+    try:
+        res = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise Unavailable("%s did not answer with JSON" % clean(url))
+    if not isinstance(res, dict):
+        raise Unavailable("%s did not answer with a JSON object" % clean(url))
+    return res
+
+
+def well_known(url, name):
+    """The RFC 8414 / 9728 well-known address of url: /.well-known/<name> inserted before its path."""
+    u = urllib.parse.urlsplit(url)
+    path = u.path.rstrip("/")
+    return urllib.parse.urlunsplit((u.scheme, u.netloc, "/.well-known/%s%s" % (name, path), "", ""))
+
+
+def discover():
+    """(authorization server metadata, resource) for ENDPOINT. Raises Unavailable."""
+    check_endpoint()
+    rm_urls = []
+    probe = urllib.request.Request(ENDPOINT, method="POST", data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}',
+                                   headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+    try:
+        urllib.request.build_opener(NoFollow).open(probe, timeout=30).close()
+    except urllib.error.HTTPError as e:
+        with e:
+            m = re.search(r'resource_metadata="([^"]+)"', e.headers.get("WWW-Authenticate") or "")
+        if m:
+            rm_urls.append(m.group(1))
+    except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
+        raise Unavailable("cannot reach %s: %s" % (ENDPOINT, clean(getattr(e, "reason", e))))
+    rm_urls += [well_known(ENDPOINT, "oauth-protected-resource"), well_known(ENDPOINT.rsplit("/", 1)[0] + "/", "oauth-protected-resource")]
+    rm, last = None, None
+    for url in dict.fromkeys(rm_urls):
+        try:
+            rm = http_json(url)
+            break
+        except Unavailable as e:
+            last = e
+    if not rm:
+        raise Unavailable("no protected-resource metadata for %s (%s)" % (ENDPOINT, last))
+    servers = rm.get("authorization_servers")
+    if not (isinstance(servers, list) and servers and isinstance(servers[0], str)):
+        raise Unavailable("%s names no authorization server" % ENDPOINT)
+    issuer = servers[0]
+    meta, last = None, None
+    for name in ("oauth-authorization-server", "openid-configuration"):
+        try:
+            meta = http_json(well_known(issuer, name))
+            break
+        except Unavailable as e:
+            last = e
+    if not meta:
+        raise Unavailable("no metadata for the authorization server %s (%s)" % (clean(issuer), last))
+    for key in ("authorization_endpoint", "token_endpoint"):
+        if not safe_url(meta.get(key)):
+            raise Unavailable("the authorization server %s has no usable %s" % (clean(issuer), key))
+    if "S256" not in (meta.get("code_challenge_methods_supported") or []):
+        raise Unavailable("the authorization server %s does not offer PKCE with S256" % clean(issuer))
+    meta.setdefault("issuer", issuer)
+    resource = rm.get("resource") if isinstance(rm.get("resource"), str) else ENDPOINT
+    return meta, resource
+
+
+def load_auth():
+    """Every kept sign-in, {endpoint: entry}; {} when there is none or the file is not a plain file."""
+    if os.path.islink(AUTH):
+        return {}
+    try:
+        with open(AUTH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_auth(data):
+    os.makedirs(os.path.dirname(AUTH), mode=0o700, exist_ok=True)
+    write_atomic(AUTH, json.dumps(data, indent=2), mode=0o600)
+    os.chmod(AUTH, 0o600)
+
+
+def keep(entry, tok):
+    """entry updated with a token-endpoint answer (access token, expiry, refresh token)."""
+    if not isinstance(tok.get("access_token"), str) or not tok["access_token"]:
+        raise Unavailable("the token endpoint sent no access_token")
+    entry["access_token"] = tok["access_token"]
+    life = tok.get("expires_in")
+    entry["expires_at"] = int(time.time() + life) if isinstance(life, (int, float)) and life > 0 else None
+    if isinstance(tok.get("refresh_token"), str):
+        entry["refresh_token"] = tok["refresh_token"]
+    return entry
+
+
+def token():
+    """The access token kept for ENDPOINT while it is valid, refreshed once if a refresh token was issued; else None."""
+    data = load_auth()
+    entry = data.get(ENDPOINT)
+    if not (isinstance(entry, dict) and isinstance(entry.get("access_token"), str)):
+        return None
+    if not entry.get("expires_at") or time.time() < entry["expires_at"] - 60:
+        return entry["access_token"]
+    if not entry.get("refresh_token"):
+        return None
+    try:
+        tok = http_json(entry["token_endpoint"], {"grant_type": "refresh_token", "refresh_token": entry["refresh_token"],
+                                                  "client_id": entry["client_id"], "resource": entry.get("resource", ENDPOINT)}, form=True)
+        data[ENDPOINT] = keep(entry, tok)
+    except (Unavailable, KeyError):
+        return None
+    save_auth(data)
+    return entry["access_token"]
+
+
+def b64url(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+class Callback(http.server.BaseHTTPRequestHandler):
+    """The loopback redirect: takes the one answer whose state matches, refuses everything else."""
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        u = urllib.parse.urlsplit(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        ok = u.path == "/callback" and q.get("state") == self.server.state
+        if ok:
+            self.server.answer = q
+        text = ("Signed in to Zebra BI. You can close this tab." if ok and "code" in q else
+                "Zebra BI sign-in did not finish. You can close this tab." if ok else "Not found.")
+        body = ("<!doctype html><meta charset=utf-8><title>Zebra BI</title><p>%s</p>" % text).encode()
+        self.send_response(200 if ok else 404)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def sign_in(open_url=webbrowser.open):
+    """Sign in in the browser and keep the token for ENDPOINT. Exits with one line when it cannot."""
+    try:
+        meta, resource = discover()
+    except Unavailable as e:
+        sys.exit("Zebra BI sign-in is unavailable (%s). Nothing was saved." % e)
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Callback)
+    srv.timeout, srv.answer, srv.state = 1, None, secrets.token_urlsafe(24)
+    redirect = "http://127.0.0.1:%d/callback" % srv.server_address[1]
+    try:
+        if not safe_url(meta.get("registration_endpoint")):
+            sys.exit("Zebra BI sign-in is unavailable (%s offers no client registration). Nothing was saved." % clean(meta["issuer"]))
+        try:
+            reg = http_json(meta["registration_endpoint"], {
+                "client_name": "Zebra BI story scripts", "redirect_uris": [redirect], "grant_types": ["authorization_code"],
+                "response_types": ["code"], "token_endpoint_auth_method": "none"})
+        except Unavailable as e:
+            sys.exit("Zebra BI sign-in is unavailable (client registration: %s). Nothing was saved." % e)
+        client_id = reg.get("client_id")
+        if not isinstance(client_id, str) or not client_id:
+            sys.exit("Zebra BI sign-in is unavailable (client registration sent no client_id). Nothing was saved.")
+        verifier = b64url(secrets.token_bytes(32))
+        query = urllib.parse.urlencode({
+            "response_type": "code", "client_id": client_id, "redirect_uri": redirect, "state": srv.state,
+            "code_challenge": b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256",
+            "resource": resource})
+        url = meta["authorization_endpoint"] + ("&" if "?" in meta["authorization_endpoint"] else "?") + query
+        print("Opening the Zebra BI sign-in page in your browser. If it does not open, visit:\n%s" % url, flush=True)
+        open_url(url)
+        deadline = time.time() + SIGN_IN_WAIT
+        while srv.answer is None and time.time() < deadline:
+            srv.handle_request()
+    finally:
+        srv.server_close()
+    answer = srv.answer
+    if answer is None:
+        sys.exit("Zebra BI sign-in timed out after %d s. Nothing was saved." % SIGN_IN_WAIT)
+    if "error" in answer:
+        sys.exit("Zebra BI sign-in was refused (%s). Nothing was saved." % clean(answer.get("error_description") or answer["error"], 300))
+    if answer.get("iss") and answer["iss"] != meta["issuer"]:
+        sys.exit("Zebra BI sign-in answered from an unexpected issuer (%s). Nothing was saved." % clean(answer["iss"]))
+    if not answer.get("code"):
+        sys.exit("Zebra BI sign-in sent no authorization code. Nothing was saved.")
+    try:
+        tok = http_json(meta["token_endpoint"], {
+            "grant_type": "authorization_code", "code": answer["code"], "redirect_uri": redirect,
+            "client_id": client_id, "code_verifier": verifier, "resource": resource}, form=True)
+        entry = keep({"client_id": client_id, "token_endpoint": meta["token_endpoint"], "resource": resource,
+                      "revocation_endpoint": meta.get("revocation_endpoint"), "issuer": meta["issuer"],
+                      "signed_in_at": dt.datetime.now().isoformat(timespec="seconds")}, tok)
+    except Unavailable as e:
+        sys.exit("Zebra BI sign-in failed at the token step (%s). Nothing was saved." % e)
+    data = load_auth()
+    data[ENDPOINT] = entry
+    save_auth(data)
+    until = dt.datetime.fromtimestamp(entry["expires_at"]).isoformat(timespec="minutes") if entry["expires_at"] else "no stated expiry"
+    print("Signed in to Zebra BI (%s). The token is kept in %s, valid until %s." % (ENDPOINT, AUTH, until))
+
+
+def sign_out():
+    """Forget the token kept for ENDPOINT, revoking it first when the server offers that."""
+    data = load_auth()
+    entry = data.pop(ENDPOINT, None)
+    if not isinstance(entry, dict):
+        print("No Zebra BI sign-in kept for %s." % ENDPOINT)
+        return
+    if safe_url(entry.get("revocation_endpoint")) and entry.get("access_token"):
+        try:
+            http_json(entry["revocation_endpoint"], {"token": entry["access_token"], "client_id": entry.get("client_id", "")}, form=True)
+        except Unavailable as e:
+            print("Could not revoke the token (%s); forgetting it anyway." % e, file=sys.stderr)
+    save_auth(data)
+    print("Signed out of Zebra BI (%s)." % ENDPOINT)
 
 
 def cached_renderer(path, meta_path):
@@ -377,6 +643,10 @@ def assemble(story, results, meta, renderer_path, brand):
 
 
 def main(argv):
+    if argv[:1] == ["sign-in"]:
+        return sign_in()
+    if argv[:1] == ["sign-out"]:
+        return sign_out()
     if not argv or argv[0] != "renderer":
         sys.exit(__doc__)
     path, meta = renderer("--refresh" in argv)

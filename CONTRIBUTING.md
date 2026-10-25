@@ -29,12 +29,12 @@ The last line needs Chrome, Edge or Chromium for the two PDF build tests; withou
 | `skills/story-office/` | Build `story.json` into a PowerPoint deck and an Excel workbook with live Zebra BI for Office visuals; `references/office-format.md` |
 | `skills/story-brand/` | Interview for a company brand (template, guideline, logo, answers), preview, save `.zebra/brand/`; `references/brand-format.md` |
 | `scripts/profile.py` | Standard-library CSV, TSV and XLSX profiler; prints the source manifest skeleton and picks a sheet by `--sheet-index` |
-| `scripts/story.py` | `renderer` (fetch and daily cache of the renderer `render_visual` names in `tools/list`); library for the builds: `render_visuals` (render over MCP HTTP, cache in `visuals/<id>.json`) and `assemble` (the branded page with renderer and results embedded). The MCP URL is the `zebra-bi` entry in `.mcp.json`; `ZEBRA_BI_MCP_URL` overrides it |
+| `scripts/story.py` | `renderer` (fetch and daily cache of the renderer `render_visual` names in `tools/list`); `sign-in` and `sign-out` (the MCP authorization flow: protected-resource and authorization-server metadata, client registration, authorization code with PKCE on a loopback redirect, the token in `auth.json` per endpoint); library for the builds: `render_visuals` (render over MCP HTTP, cache in `visuals/<id>.json`) and `assemble` (the branded page with renderer and results embedded). The MCP URL is the `zebra-bi` entry in `.mcp.json`; `ZEBRA_BI_MCP_URL` overrides it |
 | `scripts/pdf.py` | `build`: render, open the page in headless Chrome at the A4 printable width, wait until every chart is ready and settled, print the PDF |
 | `scripts/office.py` | `build` (render, snapshot, write the `.pptx` and `.xlsx`, check) and `check` (structural checks on any file) |
 | `scripts/brand.py` | `show`, `check`, `inspect-template`, `logo`, `preview`; `load()` merges `.zebra/brand/brand.json` over the default for every output |
 | `scripts/zoffice/` | `visual.py` (render_visual result to add-in settings and data), `pptx.py`, `xlsx.py`, `ooxml.py` (package and webextension part), `template.py` (the deck base), `snapshot.py` and `cdp.py` (chart pictures in headless Chrome over the DevTools protocol), `check.py` |
-| `scripts/tests/` | Unit tests: the mapping and file checks on three sample visuals, company-template geometry, Excel dates and sheet choice in `profile.py`, `story.py`'s handling of server responses against a fake server, and a hermetic PDF build with a stand-in renderer |
+| `scripts/tests/` | Unit tests: the mapping and file checks on three sample visuals, company-template geometry, Excel dates and sheet choice in `profile.py`, `story.py`'s handling of server responses and its sign-in against a fake server, and a hermetic PDF build with a stand-in renderer |
 | `assets/story-template.html` | The branded A4 page and the MCP Apps host shim that draws each chart |
 | `assets/brand/default/` | `brand.json` (the editorial default) and the static deck parts |
 | `assets/brand/sample/` | A three-chart sample story with cached results, for brand previews |
@@ -62,5 +62,5 @@ The host answers `ui/initialize` (with `hostContext.toolInfo.tool.inputSchema`, 
 
 ### Known limits
 
-- The scripts do not sign in. When the MCP asks for it, a build stops with `Zebra BI needs sign-in (<endpoint>)` unless every chart and the renderer are already cached.
+- The scripts sign in apart from the connector, so a build needs `story.py sign-in` once, and again when the token expires without a refresh token. Until then a build stops with `Zebra BI needs sign-in (<endpoint>)` unless every chart and the renderer are already cached.
 - Claude chat cannot save manifests; the skill shows them as JSON to keep in a Project.
