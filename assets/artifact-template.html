@@ -1,0 +1,57 @@
+<title>{{PAGE_TITLE}}</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+{{FONT_LINK}}
+<!--
+  Data story as a Claude artifact (a plain page), filled by scripts/artifact.py from story.json and the
+  brand. The artifact host wraps it in its own document, so there is no doctype, html, head or body here.
+  Placeholders: PAGE_TITLE, FONT_LINK, BRAND_CSS, KICKER, LOGO, TITLE, SUBTITLE, KPIS, SECTIONS, NEXT,
+  FOOTER, LIVE. Each chart is a picture of the Zebra BI chart (charts/<id>.png, drawn at the column width
+  and captured at 2x). With --live, LIVE holds the visuals' tool results and a minimal MCP Apps host that
+  loads the Zebra BI renderer from the published file zebra-renderer.txt (a page that big inline is
+  refused at publish) and swaps each picture for the live chart once it has drawn; when the renderer cannot
+  load, the pictures stay. The charts are white by design, so the page is a deliberate light design.
+-->
+<style>
+  :root { {{BRAND_CSS}}; color-scheme: light; }
+  body { background: var(--paper); color: var(--ink); }
+  .zs { max-width: 47.5rem; margin-inline: auto; padding-block: 2.5rem 3rem;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: grid; gap: 2rem; font: 15px/1.6 var(--font-body); font-variant-numeric: tabular-nums; }
+  .zs-mast { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: .6rem; border-bottom: 1px solid var(--hairline); }
+  .zs-kicker { font-size: .72rem; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; }
+  .zs-mast:has(.zs-kicker:empty):has(.zs-logo:empty) { display: none; }
+  .zs-logo img, .zs-logo svg { display: block; height: 24px; width: auto; }
+  .zs-head { display: grid; gap: .75rem; }
+  .zs h1 { margin: 0; font: 600 clamp(1.55rem, 1.1rem + 2vw, 2.1rem)/1.18 var(--font-headline); letter-spacing: -.015em; text-wrap: balance; }
+  .zs-sub { margin: 0; color: var(--muted); max-width: 62ch; }
+  .zs-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr)); gap: 1.25rem; }
+  .zs-kpis:empty { display: none; }
+  .zs-kpi { border-top: 1.5px solid var(--mark); padding-top: .6rem; display: grid; gap: .2rem; align-content: start; min-width: 0; }
+  .zs-kpi b { font: 600 1.6rem/1.2 var(--font-headline); }
+  .zs-kpi span { color: var(--muted); font-size: .82rem; line-height: 1.4; }
+  .zs-section { display: grid; gap: .9rem; padding-top: 1.4rem; border-top: 1px solid var(--hairline); min-width: 0; }
+  .zs-text { display: grid; gap: .5rem; max-width: 65ch; }
+  .zs h2 { margin: 0; font: 600 1.25rem/1.3 var(--font-headline); letter-spacing: -.01em; text-wrap: balance; }
+  .zs p, .zs li { margin: 0; }
+  .zs b { font-weight: 600; }
+  .zs-plate { position: relative; margin: 0; background: #fff; overflow: hidden; }
+  .zs-plate img { display: block; width: 100%; max-width: 100%; height: auto; }
+  .zs-plate iframe { position: absolute; inset: 0 auto auto 0; width: 100%; height: 0; border: 0; visibility: hidden; background: #fff; }
+  .zs-plate[data-live="ready"] img { display: none; }
+  .zs-plate[data-live="ready"] iframe { position: static; display: block; visibility: visible; }
+  .zs-next ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .45rem; max-width: 68ch; }
+  .zs-foot { margin: 0; color: var(--muted); font-size: .78rem; border-top: 1px solid var(--hairline); padding-top: .7rem; }
+</style>
+
+<main class="zs">
+  <div class="zs-mast"><span class="zs-kicker">{{KICKER}}</span><span class="zs-logo">{{LOGO}}</span></div>
+  <header class="zs-head">
+    <h1>{{TITLE}}</h1>
+    <p class="zs-sub">{{SUBTITLE}}</p>
+  </header>
+  <div class="zs-kpis">{{KPIS}}</div>
+{{SECTIONS}}
+{{NEXT}}
+  <p class="zs-foot">{{FOOTER}}</p>
+</main>
+{{LIVE}}

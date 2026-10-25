@@ -40,7 +40,7 @@ def find_chrome():
     return None
 
 
-def page(vid, result, renderer_html):
+def page(vid, result, renderer_html, width=WIDTH):
     import story  # scripts/, which holds zoffice, is on the path wherever zoffice imports
     shim = re.search(r"<script>\s*\(function \(\) \{.*?</script>", X.read(TEMPLATE), re.S).group(0)
     shim = shim.replace("{{VERSION}}", story.version())
@@ -54,7 +54,7 @@ def page(vid, result, renderer_html):
             '<iframe data-v="%s"></iframe>'
             '<script id="zebra-visuals" type="application/json">%s</script>'
             '<script id="zebra-renderer" type="application/json">%s</script>%s</body></html>'
-            % (WIDTH, probe, vid, embed({vid: result}), embed(renderer_html), shim))
+            % (width, probe, vid, embed({vid: result}), embed(renderer_html), shim))
 
 
 def _wait_height(ch, timeout=30):
@@ -111,8 +111,10 @@ def _content_bottom(png, scale):
     return int((last + 1) / scale)
 
 
-def snapshot_all(results, renderer_path, out_dir):
-    """results: {id: render_visual result}. Returns ({id: png path}, chrome path or None)."""
+def snapshot_all(results, renderer_path, out_dir, width=WIDTH, min_aspect=MIN_ASPECT):
+    """results: {id: render_visual result}. Returns ({id: png path}, chrome path or None).
+
+    width is the CSS width each chart is drawn at (captured at 2x); min_aspect the lowest height/width kept."""
     os.makedirs(out_dir, exist_ok=True)
     binary = find_chrome()
     out = {}
@@ -126,24 +128,24 @@ def snapshot_all(results, renderer_path, out_dir):
     with tempfile.TemporaryDirectory(prefix="zebra-bi-snap-") as tmp:
         ch = cdp.Chrome(binary, os.path.join(tmp, "profile"))
         try:
-            ch.call("Emulation.setDeviceMetricsOverride", width=WIDTH, height=900, deviceScaleFactor=2, mobile=False)
+            ch.call("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=2, mobile=False)
             for vid, res in results.items():
                 html_path = os.path.join(tmp, vid + ".html")
                 with open(html_path, "w", encoding="utf-8") as f:
-                    f.write(page(vid, res, renderer_html))
+                    f.write(page(vid, res, renderer_html, width))
                 ch.call("Page.navigate", url="file://" + html_path)
                 h = _wait_height(ch)
                 if not h:
                     raise RuntimeError("snapshot of %r: the renderer never reported a size; the chart did not draw" % vid)
                 h = min(h, 2400)
                 small = ch.call("Page.captureScreenshot", format="png", captureBeyondViewport=True,
-                                clip={"x": 0, "y": 0, "width": WIDTH, "height": h, "scale": 0.1})
+                                clip={"x": 0, "y": 0, "width": width, "height": h, "scale": 0.1})
                 bottom = _content_bottom(base64.b64decode(small["data"]), 0.1 * 2)  # deviceScaleFactor 2
                 if bottom:
                     h = min(h, bottom + 16)
-                h = max(h, int(WIDTH * MIN_ASPECT))
+                h = max(h, int(width * min_aspect))
                 shot = ch.call("Page.captureScreenshot", format="png", captureBeyondViewport=True,
-                               clip={"x": 0, "y": 0, "width": WIDTH, "height": h, "scale": 1})
+                               clip={"x": 0, "y": 0, "width": width, "height": h, "scale": 1})
                 dst = os.path.join(out_dir, vid + ".png")
                 with open(dst, "wb") as f:
                     f.write(base64.b64decode(shot["data"]))

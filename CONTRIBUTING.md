@@ -26,24 +26,28 @@ The last line needs Chrome, Edge or Chromium for the two PDF build tests; withou
 | `skills/data-source/` | Resolve and remember a dataset; adapters in `references/` (file, sharepoint, fabric) and the manifest format |
 | `skills/data-story/` | Analyse, build the IBCS pyramid, tell it in the conversation with `render_visual`, save `story.json`; `references/ibcs-narrative.md`, `chart-rules.md`, `story-json.md` |
 | `skills/story-pdf/` | Build `story.json` into one A4 PDF; `references/surfaces.md` |
+| `skills/story-artifact/` | Build `story.json` into one plain Claude artifact page with the Zebra BI charts as pictures, or live with `--live`; publish and record its URL |
 | `skills/story-office/` | Build `story.json` into a PowerPoint deck and an Excel workbook with live Zebra BI for Office visuals; `references/office-format.md` |
 | `skills/story-brand/` | Interview for a company brand (template, guideline, logo, answers), preview, save `.zebra/brand/`; `references/brand-format.md` |
 | `scripts/profile.py` | Standard-library CSV, TSV and XLSX profiler; prints the source manifest skeleton and picks a sheet by `--sheet-index` |
 | `scripts/story.py` | `renderer` (fetch and daily cache of the renderer `render_visual` names in `tools/list`); `sign-in` and `sign-out` (the MCP authorization flow: protected-resource and authorization-server metadata, client registration, authorization code with PKCE on a loopback redirect, the token in `auth.json` per endpoint); library for the builds: `render_visuals` (render over MCP HTTP, cache in `visuals/<id>.json`) and `assemble` (the branded page with renderer and results embedded). The MCP URL is the `zebra-bi` entry in `.mcp.json`; `ZEBRA_BI_MCP_URL` overrides it |
 | `scripts/pdf.py` | `build`: render, open the page in headless Chrome at the A4 printable width, wait until every chart is ready and settled, print the PDF |
+| `scripts/artifact.py` | `build` (render, snapshot each chart at the 760 px column, write `artifact/index.html` and `charts/`, with `--live` the renderer as `zebra-renderer.txt`; print what to publish) and `record` (keep the artifact URL in `artifact.json`) |
 | `scripts/office.py` | `build` (render, snapshot, write the `.pptx` and `.xlsx`, check) and `check` (structural checks on any file) |
 | `scripts/brand.py` | `show`, `check`, `inspect-template`, `logo`, `preview`; `load()` merges `.zebra/brand/brand.json` over the default for every output |
 | `scripts/zoffice/` | `visual.py` (render_visual result to add-in settings and data), `pptx.py`, `xlsx.py`, `ooxml.py` (package and webextension part), `template.py` (the deck base), `snapshot.py` and `cdp.py` (chart pictures in headless Chrome over the DevTools protocol), `check.py` |
-| `scripts/tests/` | Unit tests: the mapping and file checks on three sample visuals, company-template geometry, Excel dates and sheet choice in `profile.py`, `story.py`'s handling of server responses and its sign-in against a fake server, and a hermetic PDF build with a stand-in renderer |
+| `scripts/tests/` | Unit tests: the mapping and file checks on three sample visuals, company-template geometry, Excel dates and sheet choice in `profile.py`, `story.py`'s handling of server responses and its sign-in against a fake server, a hermetic PDF build with a stand-in renderer, and the artifact page in both modes |
 | `assets/story-template.html` | The branded A4 page and the MCP Apps host shim that draws each chart |
+| `assets/artifact-template.html` | The branded artifact page (a fragment the artifact host wraps), light by design |
 | `assets/brand/default/` | `brand.json` (the editorial default) and the static deck parts |
 | `assets/brand/sample/` | A three-chart sample story with cached results, for brand previews |
 
 ### Design rules
 
 - **One skill body for every surface.** Shell steps are guarded by "if you can run shell commands"; in Claude chat and Cowork the file skills hand over the story as JSON.
-- **Three outputs, three skills.** The conversation (`data-story`), a PDF (`story-pdf`), Office files (`story-office`). `story.json` is the hand-off between them.
-- **The conversation is the story.** Charts always render inline with `render_visual`. `data-story` never builds or opens a file and has no fallback when the MCP is down: it says so and stops. `story-pdf` and `story-office` run only when someone asks for a file.
+- **Four outputs, four skills.** The conversation (`data-story`), a PDF (`story-pdf`), an artifact page (`story-artifact`), Office files (`story-office`). `story.json` is the hand-off between them.
+- **Artifacts are plain pages.** An Artifact type such as Dashboard runs only its own scripts from its store (no frames, 256 KB per file), so it cannot carry the Zebra BI renderer or its charts. `story-artifact` publishes a plain page. Pictures are the default; `--live` publishes the renderer as its own file (`zebra-renderer.txt`, about 5 MB), because a page that size inline is refused at publish; the page fetches it, checks its sha256 against the build and plays the MCP Apps host, keeping each picture until its chart has drawn. The renderer pads short tables to a fixed height, so at about the width the picture was drawn at, a live frame takes the picture's cropped height.
+- **The conversation is the story.** Charts always render inline with `render_visual`. `data-story` never builds or opens a file and has no fallback when the MCP is down: it says so and stops. `story-pdf`, `story-artifact` and `story-office` run only when someone asks for a file or a page.
 - **IBCS end to end.** Key message as title, supporting messages as headings, title elements in every chart, standard scenario notation. `skills/data-story/references/ibcs-narrative.md` is the contract.
 - **The script renders, the model writes.** The build scripts call `render_visual` themselves from the arguments in `story.json`, so the model never copies tool results into files. Unchanged arguments are not re-rendered. When the MCP cannot render, a build exits non-zero with `Zebra BI is unavailable (<reason>)` or `Zebra BI needs sign-in (<endpoint>)` and writes no file.
 - **The MCP's text is the truth about a chart.** A build prints it per visual, and the skill rewrites the narrative when the MCP adjusted a chart.

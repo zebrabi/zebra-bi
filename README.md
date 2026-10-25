@@ -19,6 +19,7 @@ The skills add three things on top of the tool:
 | `data-source` | Finds a dataset (local CSV or Excel, Excel in SharePoint or OneDrive, a Power BI semantic model) and remembers it in `.zebra/sources/`, so the file, sheet, date format or query is never asked twice. |
 | `data-story` | Analyses the data and tells an IBCS story in the conversation, with a Zebra BI chart for every supporting message. In Claude Code it also saves the story in `.zebra/stories/`. |
 | `story-pdf` | Turns a saved story into one A4 PDF: the key message and KPIs, each supporting message with its chart, page numbers. Chart labels and values stay text. Claude Code only. |
+| `story-artifact` | Publishes a saved story as one shareable Claude artifact page: the key message and KPIs, each supporting message with its Zebra BI chart. Charts are pictures of the Zebra BI charts, or live charts with hover on request. A plain artifact page, since the Dashboard artifact type cannot carry Zebra BI charts. Claude Code only. |
 | `story-office` | Writes a saved story as a PowerPoint deck and an Excel workbook. Each chart is a live Zebra BI for Office visual where the Charts or Tables add-in is installed, and a picture of the chart for everyone else. Claude Code only. |
 | `story-brand` | Sets the look and voice of story files: colours, fonts, logo, credit line, your PowerPoint template and its layouts, and the tone of the writing. The charts keep their IBCS colours whatever the brand. |
 
@@ -27,6 +28,7 @@ In Claude Code the skills run as `/zebra-bi:<skill>`, for example:
 ```
 /zebra-bi:data-story ~/Downloads/sales.csv      # tell the story in the conversation
 /zebra-bi:story-pdf sales-2026-q3               # one shareable PDF
+/zebra-bi:story-artifact sales-2026-q3          # one shareable artifact page
 /zebra-bi:story-office sales-2026-q3            # PowerPoint deck and Excel workbook
 /zebra-bi:story-brand                           # dress story files in your company's brand
 ```
@@ -42,13 +44,14 @@ The MCP URL is `https://app.zebra-ai.com/mcp`.
 
 **Where the charts draw.** Claude Desktop chat and claude.ai show the visual inline. The Claude Code desktop tab draws it only through the MCP added as a connector in the Claude Desktop app (step 3). The plugin's own copy, which Claude Code loads too, returns the chart's data, so the skills use the connector when both are there. The Claude Code terminal cannot show MCP Apps and prints the chart data instead.
 
-**Data stories and files.** `data-story` works wherever the MCP is connected. The `.zebra/` folder, the PDF and the Office files need Claude Code, `python3` (standard library only) and Google Chrome, Microsoft Edge or Chromium. In Claude chat or Cowork, `story-pdf` and `story-office` hand over the story as JSON instead of building a file. Readers need the Zebra BI Charts or Tables for Office add-in, and its licence, to see the Office visuals live.
+**Data stories and files.** `data-story` works wherever the MCP is connected. The `.zebra/` folder, the PDF, the artifact page and the Office files need Claude Code, `python3` (standard library only) and Google Chrome, Microsoft Edge or Chromium. In Claude chat or Cowork, `story-pdf`, `story-artifact` and `story-office` hand over the story as JSON instead of building a file. Readers need the Zebra BI Charts or Tables for Office add-in, and its licence, to see the Office visuals live.
 
 ## What this plugin sends and runs
 
 - **The MCP.** The skills call `render_visual` once per chart. Each call sends the chart's arguments: the category and period labels, the aggregated values per scenario and the titles. The labels are your data's own values, so a chart by customer or employee sends those names; leave out anything that should not leave your machine. The source file is never sent. A chart that fails to render is reported to Zebra's error monitoring together with the arguments that were sent.
-- **`story-pdf` and `story-office`.** Their Python scripts send the same chart arguments to the same MCP over HTTPS and print `Sending <n> chart(s) to <endpoint>` first. A chart whose arguments did not change is reused from `.zebra/stories/<story>/visuals/`. Once a day they download the chart renderer (the `ui://` page `render_visual` names in `tools/list`) and cache it in `$CLAUDE_PLUGIN_DATA`. The plugin sends no telemetry.
-- **A local browser.** `story-pdf`, `story-office` and the `story-brand` preview start Chrome, Edge or Chromium headless, with a throwaway profile and a remote-debugging port bound to 127.0.0.1. The browser closes when the file is done.
+- **`story-pdf`, `story-artifact` and `story-office`.** Their Python scripts send the same chart arguments to the same MCP over HTTPS and print `Sending <n> chart(s) to <endpoint>` first. A chart whose arguments did not change is reused from `.zebra/stories/<story>/visuals/`. Once a day they download the chart renderer (the `ui://` page `render_visual` names in `tools/list`) and cache it in `$CLAUDE_PLUGIN_DATA`. The plugin sends no telemetry.
+- **The artifact page.** `story-artifact` publishes the page and a picture of each chart to claude.ai as a private artifact, which its owner shares from the page's Share menu. It holds the story's aggregated numbers, not the source data. With `--live` it also carries the Zebra BI renderer, which draws the charts in each reader's browser.
+- **A local browser.** `story-pdf`, `story-artifact`, `story-office` and the `story-brand` preview start Chrome, Edge or Chromium headless, with a throwaway profile and a remote-debugging port bound to 127.0.0.1. The browser closes when the file is done.
 - **A web font, if a brand sets one.** With `fonts.web_css` set, the headless browser loads that stylesheet while it builds the PDF. The default brand sets none.
 - **What is written.** Files under `.zebra/` in your working folder (sources, stories, brand, and the PDF, PowerPoint and Excel files) and the renderer cache.
 - **Sign-in.** The MCP asks for sign-in, and the scripts sign in on their own, apart from the connector: `python3 -I scripts/story.py sign-in` opens the Zebra BI sign-in page in your browser (OAuth with PKCE, answered on a 127.0.0.1 port) and keeps the token in `auth.json` next to the renderer cache, readable only by you. The token is sent only to the MCP it was issued for. Without a valid token a build stops with `Zebra BI needs sign-in` and writes no file. `story.py sign-out` revokes and forgets it.

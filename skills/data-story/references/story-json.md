@@ -1,7 +1,7 @@
-<!-- Summary: the story.json format that data-story writes and the story-pdf and story-office builds read. -->
+<!-- Summary: the story.json format that data-story writes and the story-pdf, story-artifact and story-office builds read. -->
 # story.json
 
-One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it while it tells the story in the conversation; `story-pdf` builds it into a shareable `<slug>.pdf` and `story-office` into a deck and a workbook; a later refresh re-runs it against new data. `title` is the key message and each section `heading` a supporting message (see `ibcs-narrative.md`).
+One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it while it tells the story in the conversation; `story-pdf` builds it into a shareable `<slug>.pdf`, `story-artifact` into an artifact page and `story-office` into a deck and a workbook; a later refresh re-runs it against new data. `title` is the key message and each section `heading` a supporting message (see `ibcs-narrative.md`).
 
 ```json
 {
@@ -34,4 +34,4 @@ One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it
 | `visuals` keys | lowercase letters, digits, dashes |
 | `visuals.<id>.args` | exactly what `render_visual` takes; see `chart-rules.md` |
 
-What a build adds next to it: `visuals/<id>.json` (the MCP's result plus a hash of the arguments, so unchanged visuals are not re-rendered), `<slug>.pdf` from `story-pdf`, and `snapshots/<id>.png`, `<slug>.pptx` and `<slug>.xlsx` from `story-office`.
+What a build adds next to it: `visuals/<id>.json` (the MCP's result plus a hash of the arguments, so unchanged visuals are not re-rendered), `<slug>.pdf` from `story-pdf`, `artifact/` (the page, `charts/<id>.png`, `build.json`) and `artifact.json` (the published URL) from `story-artifact`, and `snapshots/<id>.png`, `<slug>.pptx` and `<slug>.xlsx` from `story-office`.
