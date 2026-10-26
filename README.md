@@ -35,10 +35,12 @@ In Claude Code the skills run as `/zebra-bi:<skill>`, for example:
 
 ## Install
 
+[![Install the MCP in VS Code](https://img.shields.io/badge/VS_Code-Install_the_MCP-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=zebra-bi&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapp.zebra-ai.com%2Fmcp%22%7D) [![Install the MCP in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_the_MCP-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=zebra-bi&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapp.zebra-ai.com%2Fmcp%22%7D&quality=insiders)
+
 The MCP URL is `https://app.zebra-ai.com/mcp`.
 
 1. **Claude Code**: `/plugin marketplace add zebrabi/zebra-bi`, then `/plugin install zebra-bi@zebrabi`. Installs the MCP and the skills.
-2. **VS Code**: run "Chat: Install Plugin From Source" and enter `https://github.com/zebrabi/zebra-bi`. Installs the MCP and the skills.
+2. **VS Code**: run "Chat: Install Plugin From Source" and enter `https://github.com/zebrabi/zebra-bi`. Installs the MCP and the skills. The VS Code buttons above install the MCP only.
 3. **claude.ai, Claude Desktop and Cowork**: add the MCP URL as a custom connector under Settings > Connectors. This adds the MCP only.
 4. **ChatGPT**: in developer mode, add the MCP URL with "Add custom MCP server". This adds the MCP only.
 
@@ -56,7 +58,12 @@ The MCP URL is `https://app.zebra-ai.com/mcp`.
 - **What is written.** Files under `.zebra/` in your working folder (sources, stories, brand, and the PDF, PowerPoint and Excel files) and the renderer cache.
 - **Sign-in.** The MCP asks for sign-in, and the scripts sign in on their own, apart from the connector: `python3 -I scripts/story.py sign-in` opens the Zebra BI sign-in page in your browser (OAuth with PKCE, answered on a 127.0.0.1 port) and keeps the token in `auth.json` next to the renderer cache, readable only by you. The token is sent only to the MCP it was issued for. Without a valid token a build stops with `Zebra BI needs sign-in` and writes no file. `story.py sign-out` revokes and forgets it.
 
-Privacy policy: https://zebra-ai.com/privacy-policy/
+## Help
+
+- Documentation and support: https://support.zebrabi.com/
+- Email: support@zebrabi.com
+- Privacy policy: https://zebrabi.com/legal/?doc=privacy-policy
+- Terms: https://zebrabi.com/legal/
 
 ## Repository layout
 
