@@ -80,3 +80,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" "zebra-bi-$GITHUB_REF_NAME.zip" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+
+      # The Anthropic directory tracks `release`, so a merge to main reaches users only with a
+      # release tag. No force: a tag that is not ahead of `release` fails here instead of rewinding it.
+      - name: Move release to the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/release
