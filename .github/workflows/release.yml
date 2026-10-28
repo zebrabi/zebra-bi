@@ -27,6 +27,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # The last step moves `release`, which the Anthropic directory tracks: release only merged code.
+      - name: Tag is on main
+        run: git merge-base --is-ancestor HEAD origin/main
+
       # The plugin and the server carry separate versions: the tag names the plugin release,
       # server.json names the server, and the live server must report the server.json version.
       - name: Tag matches the plugin, server.json matches the live server
