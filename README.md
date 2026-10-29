@@ -35,9 +35,9 @@ In Claude Code the skills run as `/zebra-bi:<skill>`, for example:
 
 ## Install
 
-[![Install the MCP in VS Code](https://img.shields.io/badge/VS_Code-Install_the_MCP-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=zebra-bi&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapp.zebra-ai.com%2Fmcp%22%7D) [![Install the MCP in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_the_MCP-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=zebra-bi&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapp.zebra-ai.com%2Fmcp%22%7D&quality=insiders)
+[![Install the MCP in VS Code](https://img.shields.io/badge/VS_Code-Install_the_MCP-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=zebra-bi&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.zebrabi.com%22%7D) [![Install the MCP in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_the_MCP-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=zebra-bi&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.zebrabi.com%22%7D&quality=insiders)
 
-The MCP URL is `https://app.zebra-ai.com/mcp`.
+The MCP URL is `https://mcp.zebrabi.com`.
 
 1. **Claude Code**: `/plugin marketplace add zebrabi/zebra-bi`, then `/plugin install zebra-bi@zebrabi`. Installs the MCP and the skills.
 2. **VS Code**: run "Chat: Install Plugin From Source" and enter `https://github.com/zebrabi/zebra-bi`. Installs the MCP and the skills. The VS Code buttons above install the MCP only.
