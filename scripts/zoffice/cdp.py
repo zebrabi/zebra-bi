@@ -5,7 +5,7 @@ commands and read their results. Events are skipped. On macOS and Linux the prot
 pipe (--remote-debugging-pipe), so no other process or user on the machine can reach the browser;
 on Windows it runs over a WebSocket on a loopback port.
 """
-import base64, json, os, select, signal, socket, struct, subprocess, time, urllib.request
+import base64, json, os, select, signal, socket, struct, subprocess, sys, time, urllib.request
 
 POSIX = os.name == "posix"
 if POSIX:
@@ -45,15 +45,18 @@ class Chrome:
     def _start_pipe(self, binary, prof):
         cmd_r, cmd_w = os.pipe()  # commands: Chrome reads them on fd 3
         ans_r, ans_w = os.pipe()  # answers: Chrome writes them on fd 4
-        # Chrome wants the pipe on fds 3 and 4 exactly, and sh puts it there. Both ends are moved above 9
-        # first, so neither mapping can overwrite the other.
+        # Chrome wants the pipe on fds 3 and 4 exactly. A fresh Python process (no threads, so dup2 is safe
+        # there) moves the two ends onto them and execs Chrome; dash, Linux's sh, cannot name fds above 9.
+        # Both ends are first moved above 9, so neither dup2 can overwrite the other.
         hi = [fcntl.fcntl(cmd_r, fcntl.F_DUPFD, 10), fcntl.fcntl(ans_w, fcntl.F_DUPFD, 10)]
         os.close(cmd_r)
         os.close(ans_w)
         self.wfd, self.rfd = cmd_w, ans_r
+        launch = ("import os, sys; r, w = int(sys.argv[1]), int(sys.argv[2]); os.dup2(r, 3); os.dup2(w, 4); "
+                  "os.close(r); os.close(w); os.execv(sys.argv[3], sys.argv[3:])")
         try:
             self.proc = subprocess.Popen(
-                ["/bin/sh", "-c", 'exec "$0" "$@" 3<&%d 4>&%d %d<&- %d>&-' % (hi[0], hi[1], hi[0], hi[1]), binary]
+                [sys.executable, "-I", "-c", launch, str(hi[0]), str(hi[1]), binary]
                 + FLAGS + ["--remote-debugging-pipe", "--user-data-dir=" + prof, "about:blank"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, pass_fds=hi,
                 start_new_session=True)  # its own process group, so close() can stop the helpers too
