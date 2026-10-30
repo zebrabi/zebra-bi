@@ -161,8 +161,8 @@ def check(brand):
             errors.append("fonts.web_css must be an https:// stylesheet address or null, got %r" % css)
         else:
             warnings.append("fonts.web_css loads a stylesheet from %s each time a PDF is built, plus the font files it "
-                            "names: the build then needs the network, and %s sees each request. null keeps the build offline."
-                            % (host, host))
+                            "names: the build then needs the network, and %s sees each request. An artifact page loads it "
+                            "in every reader's browser. null keeps the build offline." % (host, host))
     logo = brand.get("logo") or {}
     if logo.get("placement") not in ("cover", "none", None):
         errors.append("logo.placement must be 'cover' or 'none'")
@@ -214,7 +214,7 @@ def store_logo(src, bdir):
     ext = os.path.splitext(src)[1].lower()
     if ext == ".png":
         X.png_size(src)
-        shutil.copyfile(src, os.path.join(bdir, "logo.png"))
+        X.write_atomic(os.path.join(bdir, "logo.png"), X.read(src, "rb"))
         return {"file": "logo.png", "svg": None}
     if ext != ".svg":
         raise ValueError("a logo must be .svg or .png, got %s" % ext)
@@ -222,7 +222,7 @@ def store_logo(src, bdir):
     problem = X.svg_problem(raw)
     if problem:
         raise ValueError("the SVG logo %s; export a plain SVG or use a PNG" % problem)
-    shutil.copyfile(src, os.path.join(bdir, "logo.svg"))
+    X.write_atomic(os.path.join(bdir, "logo.svg"), raw)
     from zoffice import cdp, snapshot as SN
     binary = SN.find_chrome()
     if not binary:
@@ -248,8 +248,7 @@ def store_logo(src, bdir):
                 raise RuntimeError("the SVG logo did not draw")
             shot = ch.call("Page.captureScreenshot", format="png", captureBeyondViewport=True,
                            clip={"x": 0, "y": 0, "width": w, "height": 200, "scale": 1})
-            with open(os.path.join(bdir, "logo.png"), "wb") as f:
-                f.write(base64.b64decode(shot["data"]))
+            X.write_atomic(os.path.join(bdir, "logo.png"), base64.b64decode(shot["data"]))
         finally:
             ch.close()
     return {"file": "logo.png", "svg": "logo.svg"}

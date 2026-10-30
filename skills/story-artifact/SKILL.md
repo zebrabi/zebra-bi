@@ -65,6 +65,7 @@ Give the link and one line each:
 
 - The artifact is private: only the user can open it until they share it from the page's Share menu.
 - It holds the story's aggregated numbers (not the raw data), so it is shared only where the data may go. With `--live` it also carries the Zebra BI renderer.
+- Only when the brand sets a web font: each reader's browser loads that font from Google Fonts.
 - The charts are pictures of the Zebra BI charts; with `--live`, live Zebra BI charts that readers can hover, with the pictures shown until they load.
 
 Do not paste the story again in chat.

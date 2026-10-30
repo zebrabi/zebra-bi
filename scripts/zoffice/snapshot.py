@@ -115,14 +115,13 @@ def snapshot_all(results, renderer_path, out_dir, width=WIDTH, min_aspect=MIN_AS
     """results: {id: render_visual result}. Returns ({id: png path}, chrome path or None).
 
     width is the CSS width each chart is drawn at (captured at 2x); min_aspect the lowest height/width kept."""
-    os.makedirs(out_dir, exist_ok=True)
+    X.build_dir(out_dir)
     binary = find_chrome()
     out = {}
     if not binary:
+        placeholder = X.read(PLACEHOLDER, "rb")
         for vid in results:
-            dst = os.path.join(out_dir, vid + ".png")
-            shutil.copyfile(PLACEHOLDER, dst)
-            out[vid] = dst
+            out[vid] = X.write_atomic(os.path.join(out_dir, vid + ".png"), placeholder)
         return out, None
     renderer_html = X.read(renderer_path)
     with tempfile.TemporaryDirectory(prefix="zebra-bi-snap-") as tmp:
@@ -146,10 +145,7 @@ def snapshot_all(results, renderer_path, out_dir, width=WIDTH, min_aspect=MIN_AS
                 h = max(h, int(width * min_aspect))
                 shot = ch.call("Page.captureScreenshot", format="png", captureBeyondViewport=True,
                                clip={"x": 0, "y": 0, "width": width, "height": h, "scale": 1})
-                dst = os.path.join(out_dir, vid + ".png")
-                with open(dst, "wb") as f:
-                    f.write(base64.b64decode(shot["data"]))
-                out[vid] = dst
+                out[vid] = X.write_atomic(os.path.join(out_dir, vid + ".png"), base64.b64decode(shot["data"]))
         finally:
             ch.close()
     return out, binary

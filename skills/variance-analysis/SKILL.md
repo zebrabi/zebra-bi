@@ -8,6 +8,8 @@ license: Apache-2.0
 
 A variance analysis answers two questions: how far actuals are from the comparison, and which items caused the gap. Work through the steps below, then show the result with `render_visual`.
 
+Before the first chart in a conversation, say in one line that its labels and aggregated values go to Zebra BI to be drawn.
+
 ## 1. Pick the comparison
 
 Choose from the user's question, and say which one you used.

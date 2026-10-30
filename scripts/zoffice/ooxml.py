@@ -3,7 +3,7 @@
 The add-in references, property names and the double-encoded data property follow the Zebra AI app's
 PowerPoint and Excel export.
 """
-import datetime as dt, json, os, re, struct, uuid, zipfile
+import datetime as dt, io, json, os, re, struct, uuid, zipfile
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape, quoteattr
 
@@ -99,6 +99,10 @@ def xml_problem(data):
 _LOCAL = re.compile(r"\s*(#|data:image/(png|jpe?g|gif|webp)[;,])", re.I)
 # Elements that run code or pull in other documents, by local name, whatever their namespace prefix.
 _ACTIVE = {"script", "foreignobject", "iframe", "object", "embed", "handler", "listener", "meta"}
+# Attributes a browser fetches from besides href and src. A picture has no use for any of them, so any value is refused.
+_FETCHES = {"srcset", "imagesrcset", "poster", "background", "lowsrc", "dynsrc", "longdesc", "data", "codebase",
+            "archive", "manifest", "ping", "action", "formaction"}
+_XHTML = "{http://www.w3.org/1999/xhtml}"
 _SVG_ROOT = "{http://www.w3.org/2000/svg}svg"
 _XML_NS = "{http://www.w3.org/XML/1998/namespace}"
 _CSS_COMMENT = re.compile(r"/\*.*?(\*/|\Z)", re.S)
@@ -159,8 +163,11 @@ def svg_problem(data):
         if name in _ACTIVE:
             return {"script": "carries a script", "foreignobject": "embeds HTML (foreignObject)"}.get(
                 name, "embeds an active element (%s)" % name)
+        if el.tag.startswith(_XHTML):
+            return "embeds HTML (%s)" % name
         if name == "style":
-            problem = _css_problem(el.text or "")
+            # The whole text content, as a browser reads it: CSS after a child element sits in that child's tail.
+            problem = _css_problem("".join(el.itertext()))
             if problem:
                 return problem
         for key, value in el.attrib.items():
@@ -171,6 +178,8 @@ def svg_problem(data):
                 return "carries event handlers (on... attributes)"
             if local in ("href", "src") and not _LOCAL.match(value):
                 return "refers to %s outside the file" % value.strip()[:80]
+            if local in _FETCHES and value.strip():
+                return "has a %s attribute, which loads from elsewhere" % local
             if local == "attributename" and value.strip().rsplit(":", 1)[-1].lower() in ("href", "src"):
                 return "animates a link, which can point outside the file"
             problem = _css_problem(value)
@@ -187,6 +196,32 @@ def double_encoded(obj):
 def read(path, mode="r"):
     with open(path, mode, **({} if "b" in mode else {"encoding": "utf-8"})) as f:
         return f.read()
+
+
+def write_atomic(path, data, mode=0o666):
+    """Write to a new temp file beside path, then rename it over path. A crash leaves no half file, and a
+    symlink planted at path (or at the temp name) is replaced, never written through."""
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    tmp = os.path.join(os.path.dirname(path), ".%s.%s.tmp" % (os.path.basename(path), os.urandom(4).hex()))
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.lexists(tmp):
+            os.remove(tmp)
+        raise
+    return path
+
+
+def build_dir(path):
+    """Create a folder a build writes into. A symbolic link there is refused: it would send the writes elsewhere."""
+    if os.path.islink(path):
+        raise ValueError("%s is a symbolic link; a build writes only into a real folder" % path)
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def png_size(path):
@@ -269,10 +304,9 @@ class Package:
                 '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">%s</Types>' % body)
 
     def write(self, out):
-        tmp = out + ".tmp"
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("[Content_Types].xml", self.content_types())
             for path in sorted(self.parts):
                 z.writestr(path, self.parts[path])
-        os.replace(tmp, out)
-        return out
+        return write_atomic(out, buf.getvalue())

@@ -28,21 +28,13 @@ jobs:
           fetch-depth: 0
 
       # The plugin and the server carry separate versions: the tag names the plugin release,
-      # server.json names the server, and the live server must report the server.json version.
-      - name: Tag matches the plugin, server.json matches the live server
+      # server.json names the server's MCP Registry entry.
+      - name: Tag matches the plugin
         run: |
           tag=${GITHUB_REF_NAME#v}
           plugin=$( (jq -er .version .claude-plugin/plugin.json plugin.json; echo "$tag") | sort -u)
           echo "plugin versions: $plugin"
           test "$(wc -l <<< "$plugin")" -eq 1
-          url=$(jq -er '.remotes[0].url' server.json)
-          served=$(curl -sf -X POST "$url" \
-            -H 'Content-Type: application/json' \
-            -H 'Accept: application/json, text/event-stream' \
-            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release","version":"0"}}}' \
-            | jq -er .result.serverInfo.version)
-          echo "server.json: $(jq -er .version server.json), served: $served"
-          test "$(jq -er .version server.json)" = "$served"
 
       # The registry takes each server version once, so publish only when server.json changed
       # since the previous release tag (or on the first tag).
@@ -69,12 +61,22 @@ jobs:
           MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
         run: |
           ./mcp-publisher validate
-          ./mcp-publisher login dns --domain zebrabi.com --private-key "$MCP_PRIVATE_KEY"
+          # The zebrabi.com TXT record carries an ECDSA P-384 key (k=ecdsap384); the default is Ed25519.
+          ./mcp-publisher login dns --algorithm ecdsap384 --domain zebrabi.com --private-key "$MCP_PRIVATE_KEY"
           ./mcp-publisher publish
 
       # One ZIP for ChatGPT and Codex (plugin.json) and the claude.ai upload (.claude-plugin).
+      # It carries scripts/ because the story skills run them; every ${CLAUDE_PLUGIN_ROOT} path a skill names must be in it.
       - name: Plugin ZIP
-        run: git archive --format=zip -o "zebra-bi-$GITHUB_REF_NAME.zip" HEAD -- .claude-plugin .mcp.json plugin.json mcp.json assets skills README.md LICENSE NOTICE
+        run: |
+          zip="zebra-bi-$GITHUB_REF_NAME.zip"
+          git archive --format=zip -o "$zip" HEAD -- .claude-plugin .mcp.json plugin.json mcp.json assets scripts ':(exclude)scripts/tests' skills README.md LICENSE NOTICE
+          listed=$(unzip -Z1 "$zip")
+          missing=0
+          for path in $(grep -rhoE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' skills | sed 's|^${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
+            grep -qxF "$path" <<< "$listed" || { echo "missing from the ZIP: $path"; missing=1; }
+          done
+          test "$missing" -eq 0
 
       - name: GitHub release
         env:

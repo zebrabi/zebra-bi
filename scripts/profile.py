@@ -306,8 +306,11 @@ def classify(name, values):
             out["sum"] = round(sum(nums), 2)
         return out
     distinct = len(set(s))
-    return {"name": name, "role": "category" if distinct <= max(50, len(s) // 20) else "text",
-            "distinct_in_sample": distinct, "examples": sorted(set(s))[:5]}
+    role = "category" if distinct <= max(50, len(s) // 20) else "text"
+    out = {"name": name, "role": role, "distinct_in_sample": distinct}
+    if role == "category":  # free text (names, emails, comments) is not copied into a manifest that may be shared
+        out["examples"] = sorted(set(s))[:5]
+    return out
 
 
 def main(argv):

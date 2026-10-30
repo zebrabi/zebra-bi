@@ -1,11 +1,21 @@
-"""A minimal Chrome DevTools Protocol client over a loopback WebSocket, standard library only.
+"""A minimal Chrome DevTools Protocol client, standard library only.
 
-Enough for snapshots: launch headless Chrome on a private profile, open one page target, send
-commands and read their results. Events are skipped.
+Enough for snapshots: launch headless Chrome on a private profile, attach to its one page, send
+commands and read their results. Events are skipped. On macOS and Linux the protocol runs over a
+pipe (--remote-debugging-pipe), so no other process or user on the machine can reach the browser;
+on Windows it runs over a WebSocket on a loopback port.
 """
-import base64, json, os, signal, socket, struct, subprocess, time, urllib.request
+import base64, json, os, select, signal, socket, struct, subprocess, sys, time, urllib.request
 
 POSIX = os.name == "posix"
+if POSIX:
+    import fcntl
+
+# A throwaway headless browser has no reason to call home: no component updates, sync, metrics upload,
+# phishing lists or other background traffic. Pages still load what they ask for (a brand's web font).
+QUIET = ["--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-domain-reliability",
+         "--disable-client-side-phishing-detection", "--disable-default-apps", "--metrics-recording-only", "--no-pings"]
+FLAGS = ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check"] + QUIET
 
 
 def _read(path):
@@ -15,34 +25,76 @@ def _read(path):
 
 class Chrome:
     def __init__(self, binary, profile, timeout=45):
+        self.timeout, self.next_id, self.session = timeout, 0, None
+        self.sock = self.rfd = self.wfd = self.proc = None
+        self.buf = b""
         # A slow or busy machine can miss the first start, so there is one retry in a fresh profile next to it.
         for attempt, prof in enumerate((profile, profile + "-retry")):
-            self.proc = subprocess.Popen(
-                [binary, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check",
-                 "--remote-debugging-port=0", "--remote-allow-origins=http://127.0.0.1", "--user-data-dir=" + prof, "about:blank"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=POSIX)  # its own process group, so close() can stop the helpers too
-            port_file = os.path.join(prof, "DevToolsActivePort")
-            deadline = time.time() + timeout
-            while not (os.path.exists(port_file) and _read(port_file).strip()):
-                if time.time() > deadline or self.proc.poll() is not None:
-                    break
-                time.sleep(0.1)
-            else:
+            try:
+                if POSIX:
+                    self._start_pipe(binary, prof)
+                else:
+                    self._start_port(binary, prof)
                 break
-            self.close()
-            if attempt:
+            except RuntimeError:
+                self.close()
+                self.buf, self.session = b"", None
+                if attempt:
+                    raise RuntimeError("headless Chrome did not start")
+
+    def _start_pipe(self, binary, prof):
+        cmd_r, cmd_w = os.pipe()  # commands: Chrome reads them on fd 3
+        ans_r, ans_w = os.pipe()  # answers: Chrome writes them on fd 4
+        # Chrome wants the pipe on fds 3 and 4 exactly. A fresh Python process (no threads, so dup2 is safe
+        # there) moves the two ends onto them and execs Chrome; dash, Linux's sh, cannot name fds above 9.
+        # Both ends are first moved above 9, so neither dup2 can overwrite the other.
+        hi = [fcntl.fcntl(cmd_r, fcntl.F_DUPFD, 10), fcntl.fcntl(ans_w, fcntl.F_DUPFD, 10)]
+        os.close(cmd_r)
+        os.close(ans_w)
+        self.wfd, self.rfd = cmd_w, ans_r
+        launch = ("import os, sys; r, w = int(sys.argv[1]), int(sys.argv[2]); os.dup2(r, 3); os.dup2(w, 4); "
+                  "os.close(r); os.close(w); os.execv(sys.argv[3], sys.argv[3:])")
+        try:
+            self.proc = subprocess.Popen(
+                [sys.executable, "-I", "-c", launch, str(hi[0]), str(hi[1]), binary]
+                + FLAGS + ["--remote-debugging-pipe", "--user-data-dir=" + prof, "about:blank"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, pass_fds=hi,
+                start_new_session=True)  # its own process group, so close() can stop the helpers too
+        finally:
+            for fd in hi:
+                os.close(fd)
+        deadline = time.time() + self.timeout
+        while True:  # the browser answers once it is up; its first page can follow a moment later
+            pages = [t for t in self._call("Target.getTargets", {}, None).get("targetInfos", []) if t.get("type") == "page"]
+            if pages:
+                break
+            if time.time() > deadline:
+                raise RuntimeError("headless Chrome opened no page")
+            time.sleep(0.1)
+        self.session = self._call("Target.attachToTarget", {"targetId": pages[0]["targetId"], "flatten": True}, None)["sessionId"]
+
+    def _start_port(self, binary, prof):
+        self.proc = subprocess.Popen(
+            [binary] + FLAGS + ["--remote-debugging-port=0", "--remote-allow-origins=http://127.0.0.1", "--user-data-dir=" + prof,
+                                "about:blank"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        port_file = os.path.join(prof, "DevToolsActivePort")
+        deadline = time.time() + self.timeout
+        while not (os.path.exists(port_file) and _read(port_file).strip()):
+            if time.time() > deadline or self.proc.poll() is not None:
                 raise RuntimeError("headless Chrome did not start")
-        self.port = int(_read(port_file).split()[0])
-        with urllib.request.urlopen("http://127.0.0.1:%d/json/list" % self.port, timeout=10) as r:
+            time.sleep(0.1)
+        port = int(_read(port_file).split()[0])
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # loopback: never through a proxy
+        with opener.open("http://127.0.0.1:%d/json/list" % port, timeout=10) as r:
             targets = json.load(r)
         page = next(t for t in targets if t.get("type") == "page")
-        path = page["webSocketDebuggerUrl"].split(str(self.port), 1)[1]
-        self.sock = socket.create_connection(("127.0.0.1", self.port), timeout=timeout)
+        path = page["webSocketDebuggerUrl"].split(str(port), 1)[1]
+        self.sock = socket.create_connection(("127.0.0.1", port), timeout=self.timeout)
         key = base64.b64encode(os.urandom(16)).decode()
         self.sock.sendall(("GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                            "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\nOrigin: http://127.0.0.1\r\n\r\n"
-                           % (path, self.port, key)).encode())
+                           % (path, port, key)).encode())
         head = b""
         while b"\r\n\r\n" not in head:
             chunk = self.sock.recv(1)
@@ -51,9 +103,16 @@ class Chrome:
             head += chunk
         if b" 101 " not in head.split(b"\r\n", 1)[0]:
             raise RuntimeError("DevTools refused the WebSocket: %s" % head.split(b"\r\n", 1)[0].decode(errors="replace"))
-        self.next_id = 0
 
     def _send(self, text):
+        if self.sock is None:  # pipe: one NUL-terminated JSON message
+            data = text.encode() + b"\0"
+            try:
+                while data:
+                    data = data[os.write(self.wfd, data):]
+            except OSError as e:
+                raise RuntimeError("DevTools closed the connection (%s)" % e)
+            return
         data = text.encode()
         mask = os.urandom(4)
         n = len(data)
@@ -72,6 +131,18 @@ class Chrome:
         return bytes(buf)
 
     def _recv(self):
+        if self.sock is None:  # pipe: read up to the next NUL, waiting at most timeout seconds
+            deadline = time.time() + self.timeout
+            while b"\0" not in self.buf:
+                left = deadline - time.time()
+                if left <= 0 or not select.select([self.rfd], [], [], left)[0]:
+                    raise RuntimeError("DevTools did not answer within %d s" % self.timeout)
+                chunk = os.read(self.rfd, 1 << 20)
+                if not chunk:
+                    raise RuntimeError("DevTools closed the connection")
+                self.buf += chunk
+            msg, _, self.buf = self.buf.partition(b"\0")
+            return msg.decode()
         parts = []
         while True:
             b0, b1 = self._exact(2)
@@ -90,10 +161,13 @@ class Chrome:
             if b0 & 0x80:
                 return b"".join(parts).decode()
 
-    def call(self, method, **params):
+    def _call(self, method, params, session):
         self.next_id += 1
         mid = self.next_id
-        self._send(json.dumps({"id": mid, "method": method, "params": params}))
+        msg = {"id": mid, "method": method, "params": params}
+        if session:
+            msg["sessionId"] = session
+        self._send(json.dumps(msg))
         while True:
             msg = json.loads(self._recv())
             if msg.get("id") == mid:
@@ -101,14 +175,27 @@ class Chrome:
                     raise RuntimeError("%s: %s" % (method, msg["error"].get("message")))
                 return msg.get("result", {})
 
+    def call(self, method, **params):
+        return self._call(method, params, self.session)
+
     def evaluate(self, expr):
         return self.call("Runtime.evaluate", expression=expr, returnByValue=True).get("result", {}).get("value")
 
     def close(self):
         try:
-            self.sock.close()
+            if self.sock is not None:
+                self.sock.close()
         except Exception:
             pass
+        for fd in (self.wfd, self.rfd):  # closing the command pipe also tells Chrome to quit
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        self.sock = self.wfd = self.rfd = None
+        if self.proc is None:
+            return
         try:
             if POSIX:
                 os.killpg(self.proc.pid, signal.SIGTERM)

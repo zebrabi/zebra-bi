@@ -19,14 +19,14 @@ so the next build of the story updates the same artifact.
 Without a browser, or when a chart does not draw, build stops with one line and writes no page.
 Standard library only.
 """
-import datetime as dt, html, json, os, re, shutil, struct, sys
+import datetime as dt, html, json, os, re, struct, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import brand as B  # noqa: E402
 import story as S  # noqa: E402
-from zoffice import snapshot as SN  # noqa: E402
+from zoffice import ooxml as X, snapshot as SN  # noqa: E402
 
 TEMPLATE = os.path.join(HERE, "..", "assets", "artifact-template.html")
 WIDTH = 760  # the page column (47.5rem), which the charts are drawn at
@@ -213,7 +213,10 @@ def build(story_dir, live=False, brand_dir=None):
     out = os.path.join(story_dir, "artifact")
     charts = os.path.join(out, "charts")
     try:
+        X.build_dir(out)
         snaps, _ = SN.snapshot_all({v: results[v] for v in used}, renderer_path, charts, width=WIDTH, min_aspect=0)
+    except ValueError as err:
+        sys.exit("%s. Nothing was written." % err)
     except RuntimeError as err:
         sys.exit("Chart did not draw in the browser (%s). Nothing was written; build once more." % err)
     files, sizes = {}, {}
@@ -222,8 +225,7 @@ def build(story_dir, live=False, brand_dir=None):
         px = png_size(snaps[vid])
         sizes[vid] = (px[0] // 2, px[1] // 2) if px else (WIDTH, 400)
     if live:
-        dst = os.path.join(out, RENDERER_FILE)
-        shutil.copyfile(renderer_path, dst)
+        dst = X.write_atomic(os.path.join(out, RENDERER_FILE), X.read(renderer_path, "rb"))
         files[RENDERER_FILE] = os.path.abspath(dst)
     page = assemble_page(story, results, brand, sizes, live, meta["sha256"])
     page_path = os.path.join(out, "index.html")
