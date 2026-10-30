@@ -38,7 +38,7 @@ jobs:
             uvx --from skills-ref==0.1.1 agentskills validate "$skill"
           done
 
-      # server.json carries the server's own version, checked against the live server in release.yml.
+      # server.json carries the server's own version, so only its URL is compared here.
       - name: One plugin version and one server URL in every manifest
         run: |
           versions=$(jq -er .version .claude-plugin/plugin.json plugin.json | sort -u)

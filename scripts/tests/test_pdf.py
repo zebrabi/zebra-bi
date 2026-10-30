@@ -68,7 +68,7 @@ class Base(unittest.TestCase):
         with open(os.path.join(S.CACHE, "visual.html"), "wb") as f:
             f.write(data)
         with open(os.path.join(S.CACHE, "visual.json"), "w") as f:
-            json.dump({"sha256": hashlib.sha256(data).hexdigest(), "fetched_at": dt.datetime.now().isoformat()}, f)
+            json.dump({"sha256": hashlib.sha256(data).hexdigest(), "endpoint": S.ENDPOINT, "fetched_at": dt.datetime.now().isoformat()}, f)
 
     def build(self):
         out = io.StringIO()
@@ -164,6 +164,21 @@ class ChromeStart(unittest.TestCase):
                 cdp.Chrome(fake, os.path.join(tmp, "profile"), timeout=5)
             with open(os.path.join(tmp, "runs")) as f:
                 self.assertEqual(f.read().split(), ["run", "run"])
+        finally:
+            shutil.rmtree(tmp)
+
+    @unittest.skipUnless(SN.find_chrome() and os.name == "posix", "needs Chrome, Edge or Chromium on macOS or Linux")
+    def test_devtools_runs_over_a_pipe_with_no_port(self):
+        from zoffice import cdp
+        tmp = tempfile.mkdtemp()
+        try:
+            ch = cdp.Chrome(SN.find_chrome(), os.path.join(tmp, "profile"))
+            try:
+                self.assertIsNone(ch.sock)
+                self.assertEqual(ch.evaluate("6 * 7"), 42)
+                self.assertFalse(os.path.exists(os.path.join(tmp, "profile", "DevToolsActivePort")))
+            finally:
+                ch.close()
         finally:
             shutil.rmtree(tmp)
 

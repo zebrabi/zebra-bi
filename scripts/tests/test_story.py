@@ -5,7 +5,7 @@ The fake server listens on 127.0.0.1 only and picks its behaviour from the URL p
 HTTP errors, a redirect and an oversize body. Mode "authed" wants a Bearer token and the
 server also plays the authorization server (metadata, registration, token, revocation).
 """
-import base64, contextlib, hashlib, http.server, io, json, os, re, shutil, stat, sys, tempfile, threading, time, unittest, urllib.parse, urllib.request
+import base64, contextlib, hashlib, http.server, io, json, os, re, shutil, socket, stat, sys, tempfile, threading, time, unittest, urllib.parse, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -45,13 +45,25 @@ class Fake(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         base = "http://127.0.0.1:%d" % self.server.server_address[1]
-        if self.path == "/.well-known/oauth-protected-resource/authed":
-            return self.send(200, json.dumps({"resource": base + "/authed", "authorization_servers": [base]}))
-        if self.path == "/.well-known/oauth-authorization-server":
-            return self.send(200, json.dumps({
-                "issuer": base, "authorization_endpoint": base + "/oauth/authorize", "token_endpoint": base + "/oauth/token",
-                "registration_endpoint": base + "/oauth/register", "revocation_endpoint": base + "/oauth/revoke",
-                "code_challenge_methods_supported": ["S256"]}))
+        prm = {  # protected-resource metadata per sign-in mode
+            "authed": {"resource": base + "/authed", "authorization_servers": [base]},
+            "otherresource": {"resource": "https://mcp.zebrabi.com", "authorization_servers": [base]},  # a hostile endpoint
+            "otherissuer": {"resource": base + "/otherissuer", "authorization_servers": [base + "/as-otherissuer"]},
+            "isspromised": {"resource": base + "/isspromised", "authorization_servers": [base + "/as-isspromised"]},
+        }
+        if self.path.startswith("/.well-known/oauth-protected-resource/") and self.path.rsplit("/", 1)[1] in prm:
+            return self.send(200, json.dumps(prm[self.path.rsplit("/", 1)[1]]))
+        if self.path.startswith("/.well-known/oauth-authorization-server"):
+            suffix = self.path[len("/.well-known/oauth-authorization-server"):]
+            meta = {"issuer": base + suffix, "authorization_endpoint": base + "/oauth/authorize", "token_endpoint": base + "/oauth/token",
+                    "registration_endpoint": base + "/oauth/register", "revocation_endpoint": base + "/oauth/revoke",
+                    "code_challenge_methods_supported": ["S256"]}
+            if suffix == "/as-otherissuer":
+                meta["issuer"] = "https://someone-else.example"
+            if suffix == "/as-isspromised":
+                meta["authorization_response_iss_parameter_supported"] = True
+            if suffix in ("", "/as-otherissuer", "/as-isspromised"):
+                return self.send(200, json.dumps(meta))
         self.send(405, '{"error":{"message":"Method Not Allowed"}}')
 
     def oauth(self, mode, body):
@@ -80,10 +92,10 @@ class Fake(http.server.BaseHTTPRequestHandler):
         if mode.startswith("oauth/"):
             return self.oauth(mode, body)
         AUTHS.append(self.headers.get("Authorization"))
-        if mode == "authed" and self.headers.get("Authorization") != "Bearer good":
+        if mode in ("authed", "otherresource", "otherissuer", "isspromised") and self.headers.get("Authorization") != "Bearer good":
             base = "http://127.0.0.1:%d" % self.server.server_address[1]
             return self.send(401, '{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Sign in to use Zebra BI visuals."}}',
-                             headers=[("WWW-Authenticate", 'Bearer resource_metadata="%s/.well-known/oauth-protected-resource/authed"' % base)])
+                             headers=[("WWW-Authenticate", 'Bearer resource_metadata="%s/.well-known/oauth-protected-resource/%s"' % (base, mode))])
         method = json.loads(body).get("method")
         HITS.append((mode, method))
         ok = lambda res: json.dumps({"jsonrpc": "2.0", "id": 1, "result": res})
@@ -284,8 +296,9 @@ class Disclosure(Base):  # contract 2
         self.mode("ok")
         out = self.build()
         self.assertEqual(out.splitlines()[0], "Sending 1 chart(s) to %s: labels and aggregated values" % (BASE + "ok"))
-        self.mode("e405")  # every visual and the renderer cached: no network call, no disclosure
+        del HITS[:]  # every visual and the renderer cached: no network call, no disclosure
         out = self.build()
+        self.assertEqual(HITS, [])
         self.assertNotIn("Sending", out)
         self.assertIn("<iframe data-v=\"v1\"", self.page)
 
@@ -556,10 +569,62 @@ class SignIn(Base):  # sign-in: the MCP authorization flow against the fake serv
         self.sign_in()
         with contextlib.redirect_stdout(io.StringIO()):
             S.sign_out()
-        self.assertEqual(OAUTH["posts"][-1], ("oauth/revoke", {"token": "good", "client_id": "cid-1"}))
+        self.assertEqual(OAUTH["posts"][-2:], [
+            ("oauth/revoke", {"token": "refresh-1", "token_type_hint": "refresh_token", "client_id": "cid-1"}),
+            ("oauth/revoke", {"token": "good", "token_type_hint": "access_token", "client_id": "cid-1"})])
         self.assertEqual(json.loads(read(S.AUTH)), {})
         msg = self.exit_message(self.render)
         self.assertTrue(msg.startswith("Zebra BI needs sign-in ("), msg)
+
+    def test_sign_out_forgets_an_older_address_too(self):
+        self.mode("authed")
+        self.sign_in()
+        data = json.loads(read(S.AUTH))
+        data["https://old.example/mcp"] = dict(data[BASE + "authed"], access_token="old")
+        S.save_auth(data)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            S.sign_out()
+        self.assertEqual(json.loads(read(S.AUTH)), {})
+        self.assertIn("Signed out of Zebra BI (https://old.example/mcp)", out.getvalue())
+        self.assertIn(("oauth/revoke", {"token": "old", "token_type_hint": "access_token", "client_id": "cid-1"}), OAUTH["posts"])
+
+    def test_metadata_naming_another_resource_is_refused(self):
+        # A hostile endpoint names the real Zebra BI MCP as its resource: signing in would mint a token for that
+        # server and send it here (RFC 9728 section 3.3), so sign-in stops before the browser opens.
+        self.mode("otherresource")
+        opened = []
+        with contextlib.redirect_stdout(io.StringIO()):
+            msg = self.exit_message(S.sign_in, opened.append)
+        self.assertIn("names another server (https://mcp.zebrabi.com)", msg)
+        self.assertEqual(opened, [])
+        self.assertFalse(os.path.exists(S.AUTH))
+
+    def test_issuer_that_differs_from_its_address_is_refused(self):
+        self.mode("otherissuer")
+        msg = self.exit_message(S.sign_in, lambda url: None)
+        self.assertIn("calls itself https://someone-else.example", msg)
+
+    def test_missing_iss_is_refused_when_the_server_promises_it(self):
+        self.mode("isspromised")
+        msg = self.exit_message(lambda: self.sign_in())
+        self.assertIn("without naming its issuer", msg)
+        self.assertFalse(os.path.exists(S.AUTH))
+
+    def test_an_idle_connection_does_not_hold_sign_in(self):
+        self.mode("authed")
+        idle = []
+
+        def open_url(url):
+            q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+            port = urllib.parse.urlsplit(q["redirect_uri"]).port
+            idle.append(socket.create_connection(("127.0.0.1", port)))  # connects and never sends a byte
+            self.browser()(url)
+        start = time.time()
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            S.sign_in(open_url=open_url)
+        self.assertIn("Signed in to Zebra BI", out.getvalue())
+        self.assertLess(time.time() - start, 4)
+        idle[0].close()
 
     def test_symlinked_token_store_is_not_read(self):
         other = os.path.join(self.tmp, "elsewhere.json")
@@ -569,6 +634,75 @@ class SignIn(Base):  # sign-in: the MCP authorization flow against the fake serv
         os.symlink(other, S.AUTH)
         self.mode("authed")
         self.assertIsNone(S.token())
+
+
+class EndpointCache(Base):  # a renderer or chart fetched from another endpoint is never reused
+    def fetch(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            return S.renderer()
+
+    def test_renderer_from_another_endpoint_is_fetched_again(self):
+        self.mode("ok")
+        self.fetch()
+        self.mode("nometa")
+        del HITS[:]
+        _, meta = self.fetch()
+        self.assertEqual(meta["endpoint"], BASE + "nometa")
+        self.assertIn(("nometa", "resources/read"), HITS)
+
+    def test_renderer_from_another_endpoint_is_no_fallback(self):
+        self.mode("ok")
+        self.fetch()
+        self.mode("e405")
+        msg = self.exit_message(S.renderer)
+        self.assertTrue(msg.startswith("Zebra BI is unavailable ("), msg)
+
+    def test_chart_from_another_endpoint_is_rendered_again(self):
+        self.mode("ok")
+        self.render()
+        self.mode("pretty")
+        out, _ = self.render()
+        self.assertIn("Sending 1 chart(s) to %s" % (BASE + "pretty"), out)
+        self.assertEqual(json.loads(read(os.path.join(self.story_dir, "visuals", "v1.json")))["endpoint"], BASE + "pretty")
+
+    def test_chart_cached_without_an_endpoint_is_kept(self):  # the bundled sample and older builds
+        self.mode("ok")
+        self.render()
+        path = os.path.join(self.story_dir, "visuals", "v1.json")
+        data = json.loads(read(path))
+        del data["endpoint"]
+        S.write_atomic(path, json.dumps(data))
+        self.mode("e405")
+        out, _ = self.render()
+        self.assertIn("[v1] unchanged, reused", out)
+
+    def test_a_linked_visuals_folder_is_refused(self):
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(elsewhere)
+        os.symlink(elsewhere, os.path.join(self.story_dir, "visuals"))
+        self.mode("ok")
+        msg = self.exit_message(self.render)
+        self.assertIn("symbolic link", msg)
+        self.assertEqual(os.listdir(elsewhere), [])
+
+
+class Proxy(Base):  # $HTTP_PROXY must not see calls to a loopback test server, or their token
+    def test_loopback_calls_skip_the_proxy(self):
+        keys = ("http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY")
+        saved = {k: os.environ.get(k) for k in keys}
+        os.environ["http_proxy"] = os.environ["HTTP_PROXY"] = "http://127.0.0.1:9"  # nothing listens there
+        os.environ.pop("no_proxy", None)
+        os.environ.pop("NO_PROXY", None)
+        try:
+            self.mode("ok")
+            out, _ = self.render()
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.assertIn("[v1] The chart is fine.", out)
 
 
 class Kicker(unittest.TestCase):  # the label above the key message: story first, then brand, else none

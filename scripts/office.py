@@ -39,8 +39,8 @@ def build(story_dir, formats, brand_dir=None):
     if errors:
         sys.exit("brand %r is not valid: %s" % (brand.get("name"), "; ".join(errors)))
     story = json.load(open(os.path.join(story_dir, "story.json"), encoding="utf-8"))
+    results = S.render_visuals(story_dir, story)  # first, so `Sending <n> chart(s)` comes before any call to the MCP
     renderer_path, meta = S.renderer()
-    results = S.render_visuals(story_dir, story)
     used = [s["visual"] for s in story.get("sections", []) if s.get("visual")]
     missing = [v for v in used if v not in results]
     if missing:

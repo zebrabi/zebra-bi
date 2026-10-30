@@ -59,7 +59,7 @@ Ask in this order and skip whatever step 2 settled:
 3. **Fonts.** Headline and body, each with a fallback.
    - A font that does not ship with Office or macOS is substituted on machines that lack it: say so.
    - With a template, its theme fonts decide the deck.
-   - A web font (`fonts.web_css`) only when the user asks for one. Say which host it loads from and that every PDF build then fetches the stylesheet and its font files from there, so the build needs the network. `brand.py check` repeats this as a warning.
+   - A web font (`fonts.web_css`) only when the user asks for one. Say which host it loads from and that every PDF build then fetches the stylesheet and its font files from there, so the build needs the network, and that an artifact page loads it in each reader's browser, so that host sees every reader. `brand.py check` repeats this as a warning.
 4. **Logo.** Ask for the file and its placement: on the cover, or none.
    - None is right when the template's master already has the logo.
    - Store it with `brand.py logo <file> <brand-dir>`, which makes a PNG copy of an SVG.

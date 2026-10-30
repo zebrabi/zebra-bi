@@ -10,6 +10,8 @@ When you present findings from business data, show the main ones with `render_vi
 
 Skip the visual when there is nothing to compare or rank, for example a single number, or when the user asks for text only.
 
+Before the first chart in a conversation, say in one line that its labels and aggregated values go to Zebra BI to be drawn. The labels are the data's own values, such as customer or employee names.
+
 ## Shape the data
 
 1. Aggregate first. Send one row per category, or one row per category pair for a two-level hierarchy with the parent column first. Duplicate category combinations are rejected.
