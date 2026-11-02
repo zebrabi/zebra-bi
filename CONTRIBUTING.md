@@ -4,7 +4,7 @@ The plugin root is the repository root. Skills live in `skills/<name>/SKILL.md`,
 
 ## Branches
 
-Open pull requests against `develop`. `main` moves only when the **Release from develop** workflow fast-forwards it to `develop` and tags `v<version>`; README "Versions" covers releasing.
+Open pull requests against `develop`. `main` moves only when the **Release** workflow (`release.yml`) fast-forwards it to `develop` and tags `v<version>`; README "Versions" covers releasing.
 
 ## Checks
 
