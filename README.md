@@ -81,7 +81,7 @@ The MCP URL is `https://mcp.zebrabi.com`.
 
 The plugin and the MCP carry separate versions. Every plugin release bumps `version` in `.claude-plugin/plugin.json` and `plugin.json`, because third-party marketplaces do not update plugins automatically; CI checks the two match and that every manifest carries the same MCP URL.
 
-Pushing a `v<version>` tag runs `release.yml`. It checks that the tag matches the plugin version and creates a GitHub release with the plugin ZIP. The MCP server, its version and its MCP Registry entry are released from the zai repository.
+Pushing a `v<version>` tag runs `release.yml`. It checks that the tag matches the plugin version and creates a GitHub release with the plugin ZIP. The MCP server, its version and its MCP Registry entry are released from its own repository.
 
 ## License
 

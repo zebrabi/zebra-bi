@@ -21,7 +21,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # The tag names the plugin release. The MCP server and its MCP Registry entry are released from zai.
+      # The tag names the plugin release. The MCP server and its MCP Registry entry are released from its own repository.
       - name: Tag matches the plugin
         run: |
           tag=${GITHUB_REF_NAME#v}
