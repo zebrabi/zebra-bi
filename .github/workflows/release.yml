@@ -14,71 +14,20 @@ defaults:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # The environment only accepts v* tags. It holds no secret: its variables name the Entra app that may
-    # sign with the Registry key in Azure Key Vault, and GitHub's OIDC token proves the run is this one.
-    environment: mcp-registry-publish
     permissions:
       contents: write
-      id-token: write # the OIDC token azure/login exchanges; it can only reach what the Entra app may
-    env:
-      MCP_PUBLISHER_VERSION: v1.8.1
-      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
 
-      # The plugin and the server carry separate versions: the tag names the plugin release,
-      # server.json names the server's MCP Registry entry.
+      # The tag names the plugin release. The MCP server and its MCP Registry entry are released from zai.
       - name: Tag matches the plugin
         run: |
           tag=${GITHUB_REF_NAME#v}
           plugin=$( (jq -er .version .claude-plugin/plugin.json plugin.json; echo "$tag") | sort -u)
           echo "plugin versions: $plugin"
           test "$(wc -l <<< "$plugin")" -eq 1
-
-      # The registry takes each server version once, so publish only when server.json changed
-      # since the previous release tag (or on the first tag).
-      - name: Is the server version new
-        id: registry
-        run: |
-          prev=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
-          if [ -n "$prev" ] && [ "$(git show "$prev:server.json" | jq -er .version)" = "$(jq -er .version server.json)" ]; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install mcp-publisher
-        if: steps.registry.outputs.publish == 'true'
-        run: |
-          curl -sfL -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION/mcp-publisher_linux_amd64.tar.gz"
-          echo "$MCP_PUBLISHER_SHA256  mcp-publisher.tar.gz" | sha256sum -c
-          tar xzf mcp-publisher.tar.gz mcp-publisher
-
-      # Federated credential on the Entra app: repo:zebrabi@128390584/zebra-bi@1418768860:environment:mcp-registry-publish.
-      # The repository issues GitHub's immutable OIDC subject (owner and repository IDs), so the plain form would not match.
-      - name: Sign in to Azure (OIDC, no secret)
-        if: steps.registry.outputs.publish == 'true'
-        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      # The private key never leaves the vault: mcp-publisher reads the public key and asks the vault to
-      # sign (ES384), which needs Get and Sign on that key (Key Vault Crypto User). The zebrabi.com TXT
-      # record carries the matching public key (k=ecdsap384).
-      - name: Publish to the MCP Registry
-        if: steps.registry.outputs.publish == 'true'
-        env:
-          MCP_KEY_VAULT: ${{ vars.MCP_KEY_VAULT }}
-          MCP_KEY_NAME: ${{ vars.MCP_KEY_NAME }}
-        run: |
-          ./mcp-publisher validate
-          ./mcp-publisher login dns azure-key-vault -domain zebrabi.com -vault "$MCP_KEY_VAULT" -key "$MCP_KEY_NAME"
-          ./mcp-publisher publish
 
       # One ZIP for ChatGPT and Codex (plugin.json) and the claude.ai upload (.claude-plugin).
       # It carries scripts/ because the story skills run them; every ${CLAUDE_PLUGIN_ROOT} path a skill names must be in it.
