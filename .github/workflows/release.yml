@@ -3,7 +3,7 @@ name: Release
 # Run from develop with the new plugin version. Commits the version bump on top of the develop commit,
 # pushes it to develop and main with the v<version> tag and creates the GitHub release with the plugin
 # ZIP. main moves only here, because the Anthropic directory and /plugin marketplace add publish whatever
-# main holds. The MCP server has its own version; registry.yml publishes server.json.
+# main holds. The MCP server has its own version and is not published from here.
 on:
   workflow_dispatch:
     inputs:
