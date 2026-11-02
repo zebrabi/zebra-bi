@@ -14,10 +14,12 @@ defaults:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # MCP_PRIVATE_KEY is a secret on this environment, which only accepts v* tags.
+    # The environment only accepts v* tags. It holds no secret: its variables name the Entra app that may
+    # sign with the Registry key in Azure Key Vault, and GitHub's OIDC token proves the run is this one.
     environment: mcp-registry-publish
     permissions:
       contents: write
+      id-token: write # the OIDC token azure/login exchanges; it can only reach what the Entra app may
     env:
       MCP_PUBLISHER_VERSION: v1.8.1
       MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
@@ -55,14 +57,26 @@ jobs:
           echo "$MCP_PUBLISHER_SHA256  mcp-publisher.tar.gz" | sha256sum -c
           tar xzf mcp-publisher.tar.gz mcp-publisher
 
+      # Federated credential on the Entra app: repo:zebrabi/zebra-bi:environment:mcp-registry-publish.
+      - name: Sign in to Azure (OIDC, no secret)
+        if: steps.registry.outputs.publish == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # The private key never leaves the vault: mcp-publisher reads the public key and asks the vault to
+      # sign (ES384), which needs Get and Sign on that key (Key Vault Crypto User). The zebrabi.com TXT
+      # record carries the matching public key (k=ecdsap384).
       - name: Publish to the MCP Registry
         if: steps.registry.outputs.publish == 'true'
         env:
-          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
+          MCP_KEY_VAULT: ${{ vars.MCP_KEY_VAULT }}
+          MCP_KEY_NAME: ${{ vars.MCP_KEY_NAME }}
         run: |
           ./mcp-publisher validate
-          # The zebrabi.com TXT record carries an ECDSA P-384 key (k=ecdsap384); the default is Ed25519.
-          ./mcp-publisher login dns --algorithm ecdsap384 --domain zebrabi.com --private-key "$MCP_PRIVATE_KEY"
+          ./mcp-publisher login dns azure-key-vault -domain zebrabi.com -vault "$MCP_KEY_VAULT" -key "$MCP_KEY_NAME"
           ./mcp-publisher publish
 
       # One ZIP for ChatGPT and Codex (plugin.json) and the claude.ai upload (.claude-plugin).
