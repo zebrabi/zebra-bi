@@ -82,7 +82,7 @@ The MCP URL is `https://mcp.zebrabi.com`.
 
 The plugin and the MCP carry separate versions. Every plugin release bumps `version` in `.claude-plugin/plugin.json` and `plugin.json`, because third-party marketplaces do not update plugins automatically; CI checks the two match and that every manifest carries the same MCP URL. `server.json` carries the version the MCP reports.
 
-Pushing a `v<version>` tag runs `release.yml`. It checks that the tag matches the plugin version, publishes `server.json` to the MCP Registry when its version is new, and creates a GitHub release with the plugin ZIP. Publishing needs the `mcp-registry-publish` environment with an `MCP_PRIVATE_KEY` secret, the ECDSA P-384 private key (96 hex characters) whose public half is in the `zebrabi.com` DNS TXT record.
+Pushing a `v<version>` tag runs `release.yml`. It checks that the tag matches the plugin version, publishes `server.json` to the MCP Registry when its version is new, and creates a GitHub release with the plugin ZIP. Publishing signs with the ECDSA P-384 key in Azure Key Vault whose public half is in the `zebrabi.com` DNS TXT record; the key never leaves the vault. The run signs in to Azure through GitHub OIDC, so the repository holds no secret. The `mcp-registry-publish` environment (`v*` tags only) carries four variables: `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` for the Entra app, whose federated credential is `repo:zebrabi/zebra-bi:environment:mcp-registry-publish` and which holds Key Vault Crypto User on that key, plus `MCP_KEY_VAULT` and `MCP_KEY_NAME`.
 
 ## License
 
