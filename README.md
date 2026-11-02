@@ -60,7 +60,7 @@ The MCP URL is `https://mcp.zebrabi.com`.
 
 ## Help
 
-- Documentation and support: https://support.zebrabi.com/
+- Documentation and support: https://help.zebrabi.com/
 - Email: support@zebrabi.com
 - Privacy policy: https://zebrabi.com/legal/?doc=privacy-policy
 - Terms: https://zebrabi.com/legal/
