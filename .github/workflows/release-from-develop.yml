@@ -1,0 +1,71 @@
+name: Release from develop
+
+# Run from develop with the version that develop already carries. Fast-forwards main to the develop
+# commit and tags it v<version>; the tag push runs release.yml. main moves only here, because the
+# Anthropic directory and /plugin marketplace add publish whatever main holds.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Plugin version to release, without the v (e.g. 1.1.21). Must equal version on develop.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # The environment only accepts develop and holds RELEASE_DEPLOY_KEY: a write deploy key that the
+    # main and Release tags rulesets let through. GITHUB_TOKEN cannot do this: it may not push commits
+    # that change .github/workflows/, and a tag it pushes would not run release.yml.
+    environment: release
+    steps:
+      - name: Run from develop
+        run: test "$GITHUB_REF" = refs/heads/develop || { echo "::error::run this workflow from develop, not $GITHUB_REF"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+          fetch-depth: 0
+
+      # Everything below checks and pushes $GITHUB_SHA, the develop commit this run started on,
+      # so a merge into develop during the run is not released by accident.
+      - name: Version matches develop
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 1.2.3, got '$VERSION'"; exit 1; }
+          plugin=$( (jq -er .version .claude-plugin/plugin.json plugin.json; echo "$VERSION") | sort -u)
+          echo "plugin versions: $plugin"
+          test "$(wc -l <<< "$plugin")" -eq 1 || { echo "::error::bump version in .claude-plugin/plugin.json and plugin.json to $VERSION on develop first"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+            echo "::error::v$VERSION is already tagged; bump the version"
+            exit 1
+          fi
+
+      - name: main is behind develop
+        run: |
+          git merge-base --is-ancestor origin/main "$GITHUB_SHA" || {
+            echo "::error::main has commits develop lacks; merge main into develop first"
+            git log --oneline "$GITHUB_SHA..origin/main"
+            exit 1
+          }
+
+      # Atomic, so main and the tag move together or not at all. Without --force, a main that moved
+      # since the check above is rejected rather than overwritten.
+      - name: Fast-forward main and tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git push --atomic origin "$GITHUB_SHA:refs/heads/main" "$GITHUB_SHA:refs/tags/v$VERSION"
+          echo "main and v$VERSION are at $GITHUB_SHA; release.yml runs for the tag" >> "$GITHUB_STEP_SUMMARY"
