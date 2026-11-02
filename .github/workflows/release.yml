@@ -114,6 +114,22 @@ jobs:
           done
           test "$missing" -eq 0
 
+      # The registry takes each server version once and never changes it. A server.json that differs from
+      # the listing of its own version would never be published, so stop here, before anything is pushed.
+      - name: server.json matches the MCP Registry
+        run: |
+          url="https://registry.modelcontextprotocol.io/v0.1/servers/$(jq -er '.name | @uri' server.json)/versions/$(jq -er '.version | @uri' server.json)"
+          status=$(curl --silent --show-error --retry 3 --max-time 30 -o "$RUNNER_TEMP/listing.json" -w '%{http_code}' "$url")
+          case "$status" in
+            404) echo "server $(jq -r .version server.json) is not in the registry yet; the registry job publishes it" ;;
+            200)
+              jq -e --slurpfile expected server.json '(.server | del(.["$schema"])) == ($expected[0] | del(.["$schema"]))' "$RUNNER_TEMP/listing.json" > /dev/null || {
+                echo "::error::server.json differs from the registry's listing of version $(jq -r .version server.json); bump version in server.json"
+                exit 1
+              } ;;
+            *) echo "::error::registry lookup failed: HTTP $status"; exit 1 ;;
+          esac
+
       # Atomic, so develop, main and the tag move together or not at all. Without --force, a develop or
       # main that moved since the checks above is rejected rather than overwritten. The deploy key exists
       # only in this step; github.com's host keys come from the API over HTTPS.
@@ -152,20 +168,21 @@ jobs:
         with:
           ref: v${{ inputs.version }}
           persist-credentials: false
-          fetch-depth: 0
 
       # The plugin and the server carry separate versions: the tag names the plugin release,
       # server.json names the server's MCP Registry entry. The registry takes each server version once,
-      # so publish only when server.json changed since the previous release tag (or on the first tag).
+      # so ask it whether this one is listed, which also makes a re-run of this job safe.
       - name: Is the server version new
         id: registry
         run: |
-          prev=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
-          if [ -n "$prev" ] && [ "$(git show "$prev:server.json" | jq -er .version)" = "$(jq -er .version server.json)" ]; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
+          url="https://registry.modelcontextprotocol.io/v0.1/servers/$(jq -er '.name | @uri' server.json)/versions/$(jq -er '.version | @uri' server.json)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          status=$(curl --silent --show-error --retry 3 --max-time 30 -o /dev/null -w '%{http_code}' "$url")
+          case "$status" in
+            404) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            200) echo "publish=false" >> "$GITHUB_OUTPUT"; echo "server $(jq -r .version server.json) is already listed" ;;
+            *) echo "::error::registry lookup failed: HTTP $status"; exit 1 ;;
+          esac
 
       - name: Install mcp-publisher
         if: steps.registry.outputs.publish == 'true'
@@ -196,3 +213,20 @@ jobs:
           ./mcp-publisher validate
           ./mcp-publisher login dns azure-key-vault -domain zebrabi.com -vault "$MCP_KEY_VAULT" -key "$MCP_KEY_NAME"
           ./mcp-publisher publish
+
+      # Whether published now or earlier, the listing must be this server.json, and active.
+      - name: Verify the listing
+        env:
+          LISTING_URL: ${{ steps.registry.outputs.url }}
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 --max-time 30 \
+            -o "$RUNNER_TEMP/listing.json" "$LISTING_URL"
+          jq -e --slurpfile expected server.json \
+            '(.server | del(.["$schema"])) == ($expected[0] | del(.["$schema"])) and
+             ._meta["io.modelcontextprotocol.registry/official"].status == "active"' \
+            "$RUNNER_TEMP/listing.json" > /dev/null || {
+            echo "::error::the registry's listing differs from server.json or is not active"
+            jq . "$RUNNER_TEMP/listing.json"
+            exit 1
+          }
+          echo "MCP Registry lists server $(jq -r .version server.json): $LISTING_URL" >> "$GITHUB_STEP_SUMMARY"
