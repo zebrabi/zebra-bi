@@ -57,7 +57,8 @@ jobs:
           echo "$MCP_PUBLISHER_SHA256  mcp-publisher.tar.gz" | sha256sum -c
           tar xzf mcp-publisher.tar.gz mcp-publisher
 
-      # Federated credential on the Entra app: repo:zebrabi/zebra-bi:environment:mcp-registry-publish.
+      # Federated credential on the Entra app: repo:zebrabi@128390584/zebra-bi@1418768860:environment:mcp-registry-publish.
+      # The repository issues GitHub's immutable OIDC subject (owner and repository IDs), so the plain form would not match.
       - name: Sign in to Azure (OIDC, no secret)
         if: steps.registry.outputs.publish == 'true'
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
