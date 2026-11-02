@@ -1,9 +1,9 @@
 name: Release
 
 # Run from develop with the new plugin version. Commits the version bump on top of the develop commit,
-# pushes it to develop and main with the v<version> tag, creates the GitHub release with the plugin ZIP
-# and publishes server.json to the MCP Registry. main moves only here, because the Anthropic directory
-# and /plugin marketplace add publish whatever main holds.
+# pushes it to develop and main with the v<version> tag and creates the GitHub release with the plugin
+# ZIP. main moves only here, because the Anthropic directory and /plugin marketplace add publish whatever
+# main holds. The MCP server has its own version; registry.yml publishes server.json.
 on:
   workflow_dispatch:
     inputs:
@@ -114,22 +114,6 @@ jobs:
           done
           test "$missing" -eq 0
 
-      # The registry takes each server version once and never changes it. A server.json that differs from
-      # the listing of its own version would never be published, so stop here, before anything is pushed.
-      - name: server.json matches the MCP Registry
-        run: |
-          url="https://registry.modelcontextprotocol.io/v0.1/servers/$(jq -er '.name | @uri' server.json)/versions/$(jq -er '.version | @uri' server.json)"
-          status=$(curl --silent --show-error --retry 3 --max-time 30 -o "$RUNNER_TEMP/listing.json" -w '%{http_code}' "$url")
-          case "$status" in
-            404) echo "server $(jq -r .version server.json) is not in the registry yet; the registry job publishes it" ;;
-            200)
-              jq -e --slurpfile expected server.json '(.server | del(.["$schema"])) == ($expected[0] | del(.["$schema"]))' "$RUNNER_TEMP/listing.json" > /dev/null || {
-                echo "::error::server.json differs from the registry's listing of version $(jq -r .version server.json); bump version in server.json"
-                exit 1
-              } ;;
-            *) echo "::error::registry lookup failed: HTTP $status"; exit 1 ;;
-          esac
-
       # Atomic, so develop, main and the tag move together or not at all. Without --force, a develop or
       # main that moved since the checks above is rejected rather than overwritten. The deploy key exists
       # only in this step; github.com's host keys come from the API over HTTPS.
@@ -150,83 +134,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "v$VERSION" "zebra-bi-v$VERSION.zip" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
-
-  registry:
-    needs: release
-    runs-on: ubuntu-latest
-    # The environment only accepts develop. It holds no secret: its variables name the Entra app that may
-    # sign with the Registry key in Azure Key Vault, and GitHub's OIDC token proves the run is this one.
-    environment: mcp-registry-publish
-    permissions:
-      contents: read
-      id-token: write # the OIDC token azure/login exchanges; it can only reach what the Entra app may
-    env:
-      MCP_PUBLISHER_VERSION: v1.8.1
-      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: v${{ inputs.version }}
-          persist-credentials: false
-
-      # The plugin and the server carry separate versions: the tag names the plugin release,
-      # server.json names the server's MCP Registry entry. The registry takes each server version once,
-      # so ask it whether this one is listed, which also makes a re-run of this job safe.
-      - name: Is the server version new
-        id: registry
-        run: |
-          url="https://registry.modelcontextprotocol.io/v0.1/servers/$(jq -er '.name | @uri' server.json)/versions/$(jq -er '.version | @uri' server.json)"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          status=$(curl --silent --show-error --retry 3 --max-time 30 -o /dev/null -w '%{http_code}' "$url")
-          case "$status" in
-            404) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
-            200) echo "publish=false" >> "$GITHUB_OUTPUT"; echo "server $(jq -r .version server.json) is already listed" ;;
-            *) echo "::error::registry lookup failed: HTTP $status"; exit 1 ;;
-          esac
-
-      - name: Install mcp-publisher
-        if: steps.registry.outputs.publish == 'true'
-        run: |
-          curl -sfL -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION/mcp-publisher_linux_amd64.tar.gz"
-          echo "$MCP_PUBLISHER_SHA256  mcp-publisher.tar.gz" | sha256sum -c
-          tar xzf mcp-publisher.tar.gz mcp-publisher
-
-      # Federated credential on the Entra app: repo:zebrabi@128390584/zebra-bi@1418768860:environment:mcp-registry-publish.
-      # The repository issues GitHub's immutable OIDC subject (owner and repository IDs), so the plain form would not match.
-      - name: Sign in to Azure (OIDC, no secret)
-        if: steps.registry.outputs.publish == 'true'
-        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      # The private key never leaves the vault: mcp-publisher reads the public key and asks the vault to
-      # sign (ES384), which needs Get and Sign on that key (Key Vault Crypto User). The zebrabi.com TXT
-      # record carries the matching public key (k=ecdsap384).
-      - name: Publish to the MCP Registry
-        if: steps.registry.outputs.publish == 'true'
-        env:
-          MCP_KEY_VAULT: ${{ vars.MCP_KEY_VAULT }}
-          MCP_KEY_NAME: ${{ vars.MCP_KEY_NAME }}
-        run: |
-          ./mcp-publisher validate
-          ./mcp-publisher login dns azure-key-vault -domain zebrabi.com -vault "$MCP_KEY_VAULT" -key "$MCP_KEY_NAME"
-          ./mcp-publisher publish
-
-      # Whether published now or earlier, the listing must be this server.json, and active.
-      - name: Verify the listing
-        env:
-          LISTING_URL: ${{ steps.registry.outputs.url }}
-        run: |
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 --max-time 30 \
-            -o "$RUNNER_TEMP/listing.json" "$LISTING_URL"
-          jq -e --slurpfile expected server.json \
-            '(.server | del(.["$schema"])) == ($expected[0] | del(.["$schema"])) and
-             ._meta["io.modelcontextprotocol.registry/official"].status == "active"' \
-            "$RUNNER_TEMP/listing.json" > /dev/null || {
-            echo "::error::the registry's listing differs from server.json or is not active"
-            jq . "$RUNNER_TEMP/listing.json"
-            exit 1
-          }
-          echo "MCP Registry lists server $(jq -r .version server.json): $LISTING_URL" >> "$GITHUB_STEP_SUMMARY"
