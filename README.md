@@ -1,6 +1,6 @@
 # Zebra BI plugin
 
-The Zebra BI plugin brings interactive IBCS-style charts and tables of your business data into the conversation, for AI assistants such as Claude, ChatGPT and GitHub Copilot Chat, and for coding agents such as Claude Code, Codex and Copilot CLI. It carries the Zebra BI MCP connector, which draws the visuals, and skills for variances, data stories and files to share. The plugin comes in Claude's format and in Agent Plugins, the format VS Code, Copilot CLI, ChatGPT and Codex read. Any other MCP client can connect to the Zebra BI MCP on its own.
+The Zebra BI plugin bundles the Zebra BI MCP connector with the skills that put it to work, in one install for AI assistants such as Claude, ChatGPT and GitHub Copilot Chat, and for coding agents such as Claude Code, Codex and Copilot CLI. The connector draws your business data as interactive IBCS-style charts and tables, inline in the conversation. The skills tell your assistant when to use it and how, for variances, data stories and files to share. The plugin comes in Claude's format and in Agent Plugins, the format VS Code, Copilot CLI, ChatGPT and Codex read. Any other MCP client can connect to the Zebra BI MCP on its own.
 
 The MCP has one tool, `render_visual`. Your assistant or agent sends it aggregated figures, such as actuals with a previous year, plan or forecast, and Zebra BI draws the variances. Hosts that support MCP Apps show the interactive visual; the others show a text summary of what was drawn.
 
