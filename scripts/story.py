@@ -226,8 +226,8 @@ class NoFollow(urllib.request.HTTPRedirectHandler):
         raise Unavailable("%s redirects to %s" % (clean(req.full_url), clean(newurl)))
 
 
-def http_json(url, body=None, form=False, timeout=30):
-    """GET url (body None) or POST body as JSON or a form; the JSON answer. Raises Unavailable."""
+def http_json(url, body=None, form=False, timeout=30, ignore_body=False):
+    """GET url (body None) or POST body as JSON or a form; the JSON answer ({} with ignore_body). Raises Unavailable."""
     if not safe_url(url):
         raise Unavailable("refusing %r: not https:// or loopback http://" % clean(url))
     data, headers = None, {"Accept": "application/json"}
@@ -249,6 +249,8 @@ def http_json(url, body=None, form=False, timeout=30):
         raise Unavailable("%s answered %d: %s" % (clean(url), e.code, clean(detail, 300)))
     except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
         raise Unavailable("cannot reach %s: %s" % (clean(url), clean(getattr(e, "reason", e))))
+    if ignore_body:
+        return {}
     try:
         res = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
@@ -473,9 +475,9 @@ def sign_out():
             continue
         for kind in ("refresh_token", "access_token"):
             if safe_url(entry.get("revocation_endpoint")) and isinstance(entry.get(kind), str) and entry[kind]:
-                try:
+                try:  # RFC 7009: a 200 means revoked and the client ignores the body, which is often empty
                     http_json(entry["revocation_endpoint"], {"token": entry[kind], "token_type_hint": kind,
-                                                             "client_id": entry.get("client_id", "")}, form=True)
+                                                             "client_id": entry.get("client_id", "")}, form=True, ignore_body=True)
                 except Unavailable as e:
                     print("Could not revoke the %s for %s (%s); forgetting it anyway." % (kind.replace("_", " "), clean(endpoint), e),
                           file=sys.stderr)
