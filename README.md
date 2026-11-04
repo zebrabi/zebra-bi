@@ -60,7 +60,7 @@ The MCP URL is `https://mcp.zebrabi.com`.
 
 ## Help
 
-- Documentation and support: https://support.zebrabi.com/
+- Documentation and support: https://help.zebrabi.com/
 - Email: support@zebrabi.com
 - Privacy policy: https://zebrabi.com/legal/?doc=privacy-policy
 - Terms: https://zebrabi.com/legal/
@@ -72,7 +72,6 @@ The MCP URL is `https://mcp.zebrabi.com`.
 | `.claude-plugin/plugin.json`, `.mcp.json` | Claude Code, claude.ai, Claude Desktop, Cowork, the Anthropic directory |
 | `.claude-plugin/marketplace.json` | Claude Code and Copilot marketplaces |
 | `plugin.json`, `mcp.json` | Agent Plugins 1.0: VS Code, Copilot CLI, ChatGPT and Codex |
-| `server.json` | The MCP Registry |
 | `skills/` | Hosts that install the plugin |
 | `scripts/`, `assets/` | The story skills in Claude Code: profiling, PDF and Office builds, the brand default and the page template |
 
@@ -80,7 +79,7 @@ The MCP URL is `https://mcp.zebrabi.com`.
 
 ## Versions
 
-The plugin and the MCP carry separate versions. Every plugin release bumps `version` in `.claude-plugin/plugin.json` and `plugin.json`, because Claude Code updates an install only when `version` changes and third-party marketplaces do not update plugins automatically; the release workflow makes that bump, and CI checks the two match and that every manifest carries the same MCP URL. `server.json` carries the version the MCP reports. Nothing in this repository publishes it to the MCP Registry any more; that moves to the repository the MCP server is built in.
+The plugin and the MCP carry separate versions. Every plugin release bumps `version` in `.claude-plugin/plugin.json` and `plugin.json`, because Claude Code updates an install only when `version` changes and third-party marketplaces do not update plugins automatically; the release workflow makes that bump, and CI checks the two match and that every manifest carries the same MCP URL. The MCP server, its version and its MCP Registry entry are released from its own repository.
 
 Work merges into `develop`. `main` stays the default branch, so `/plugin marketplace add zebrabi/zebra-bi` and the Anthropic directory install released code, and it moves only on a release. Pull requests leave `version` alone. To release, run the **Release** workflow (`release.yml`) from `develop` with the new version. It checks that the version is newer than the one on `develop`, that `v<version>` is not tagged yet, that `validate`, `tests (3.11)` and `tests (3.13)` passed on the `develop` commit, and that `main` has no commits `develop` lacks. It then commits the bump in both manifests on top of that commit (`Release v<version>`), checks that the plugin ZIP carries every file the skills name, and pushes the commit to `develop` and `main` with the `v<version>` tag in one atomic push. Last, it creates a GitHub release with the plugin ZIP.
 

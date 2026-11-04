@@ -14,7 +14,6 @@ CI runs these on every pull request and on pushes to `develop` and `main`. Run t
 npx --yes @anthropic-ai/claude-code@2.1.300 plugin validate --strict .
 uvx check-jsonschema@0.38.2 --schemafile https://agent-plugins.org/schemas/1.0.0/plugin.schema.json plugin.json
 uvx check-jsonschema@0.38.2 --schemafile https://agent-plugins.org/schemas/1.0.0/mcp.schema.json mcp.json
-uvx check-jsonschema@0.38.2 --schemafile https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json server.json
 for skill in skills/*/; do uvx --from skills-ref==0.1.1 agentskills validate "$skill"; done
 python3 -I -m unittest discover -s scripts/tests
 ```
