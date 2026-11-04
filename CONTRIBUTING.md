@@ -2,9 +2,13 @@
 
 The plugin root is the repository root. Skills live in `skills/<name>/SKILL.md`, with `name` equal to the folder and only spec frontmatter (`name`, `description`, `license`, `compatibility`). The skills must never contradict the `render_visual` tool description; where they would, the tool wins and the skill changes.
 
+## Branches
+
+Open pull requests against `develop`, and leave `version` in the manifests alone. `main` moves only when the **Release** workflow (`release.yml`) commits the version bump on `develop`, moves `main` to that commit and tags it `v<version>`; README "Versions" covers releasing.
+
 ## Checks
 
-CI runs these on every pull request. Run them locally before you push:
+CI runs these on every pull request and on pushes to `develop` and `main`. Run them locally before you push:
 
 ```
 npx --yes @anthropic-ai/claude-code@2.1.300 plugin validate --strict .
