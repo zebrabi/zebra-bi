@@ -4,7 +4,13 @@ The plugin root is the repository root. Skills live in `skills/<name>/SKILL.md`,
 
 ## Branches
 
-Open pull requests against `develop`, and leave `version` in the manifests alone. `main` moves only when the **Release** workflow (`release.yml`) commits the version bump on `develop`, moves `main` to that commit and tags it `v<version>`; README "Versions" covers releasing.
+Open pull requests against `develop`, and leave `version` in the manifests alone. `main` moves only when the **Release** workflow (`release.yml`) commits the version bump on `develop`, moves `main` to that commit and tags it `v<version>`; "Releasing" below covers it.
+
+## Releasing
+
+Work merges into `develop`. `main` stays the default branch, so `/plugin marketplace add zebrabi/zebra-bi` and the Anthropic directory install released code, and it moves only on a release. To release, run the **Release** workflow (`release.yml`) from `develop` with the new version. It checks that the version is newer than the one on `develop`, that `v<version>` is not tagged yet, that `validate`, `tests (3.11)` and `tests (3.13)` passed on the `develop` commit, and that `main` has no commits `develop` lacks. It then commits the bump in both manifests on top of that commit (`Release v<version>`), checks that the plugin ZIP carries every file the skills name, and pushes the commit to `develop` and `main` with the `v<version>` tag in one atomic push. Last, it creates a GitHub release with the plugin ZIP.
+
+The push uses `RELEASE_DEPLOY_KEY`, a write deploy key held by the `release` environment, which accepts only `develop` and waits for an admin's approval. `GITHUB_TOKEN` cannot do it: it may not push commits that change `.github/workflows/`, the rulesets do not let it through, and its pushes start no CI. Three rulesets back this up. `main` (update, force push, deletion) and `Release tags` (`v*`) let through only admins and deploy keys, which GitHub does not tell apart, so the repository must hold no other write deploy key. `develop` requires a reviewed pull request with those three checks, so no one can push a changed workflow to `develop` and run it with the key; deploy keys bypass it only so the release can push its bump commit.
 
 ## Checks
 
@@ -63,7 +69,7 @@ The last line needs Chrome, Edge or Chromium for the two PDF build tests; withou
 
 ### The host shim
 
-`story-template.html` embeds the renderer and results as JSON (every `<` written as `<`) and plays the MCP Apps host for each `iframe[data-v]`. The page is opened from disk and loads the renderer from a blob URL; the sandbox keeps `allow-same-origin`, which the renderer needs for storage. It is laid out at the A4 printable width (`main` 680 px, `@page` A4 with 15 mm side margins), and `pdf.py` sets the same viewport width, so each chart is drawn at the width it is printed at. Chrome draws an offscreen cross-origin frame only once it is scrolled into view, so `pdf.py` scrolls to each chart in turn. `hostInfo.version` is the plugin version from `.claude-plugin/plugin.json`.
+`story-template.html` embeds the renderer and results as JSON (every `<` written as `\u003c`) and plays the MCP Apps host for each `iframe[data-v]`. The page is opened from disk and loads the renderer from a blob URL; the sandbox keeps `allow-same-origin`, which the renderer needs for storage. It is laid out at the A4 printable width (`main` 680 px, `@page` A4 with 15 mm side margins), and `pdf.py` sets the same viewport width, so each chart is drawn at the width it is printed at. Chrome draws an offscreen cross-origin frame only once it is scrolled into view, so `pdf.py` scrolls to each chart in turn. `hostInfo.version` is the plugin version from `.claude-plugin/plugin.json`.
 
 The host answers `ui/initialize` (with `hostContext.toolInfo.tool.inputSchema`, or the app refuses to connect), pushes `tool-input` then `tool-result` after `notifications/initialized`, follows `size-changed` for height, and answers every other request with `{}`. Each `iframe[data-v]` gets `data-status="ready"` once its `tool-result` is sent and the first `size-changed` arrives. Contract details: `skills/story-pdf/references/surfaces.md`.
 
