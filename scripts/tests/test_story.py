@@ -74,8 +74,8 @@ class Fake(http.server.BaseHTTPRequestHandler):
             return self.send(201, json.dumps({"client_id": "cid-1", **reg}))
         form = dict(urllib.parse.parse_qsl(body.decode()))
         OAUTH.setdefault("posts", []).append((mode, form))
-        if mode == "oauth/revoke":
-            return self.send(200, "{}")
+        if mode == "oauth/revoke":  # as mcp.zebrabi.com answers: 200 and no body, which RFC 7009 has the client ignore
+            return self.send(200, b"", ctype="text/plain")
         if form.get("grant_type") == "refresh_token":
             if form.get("refresh_token") != "refresh-1":
                 return self.send(400, '{"error":"invalid_grant"}')
@@ -567,8 +567,9 @@ class SignIn(Base):  # sign-in: the MCP authorization flow against the fake serv
     def test_sign_out_revokes_and_forgets(self):
         self.mode("authed")
         self.sign_in()
-        with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
             S.sign_out()
+        self.assertEqual(err.getvalue(), "")
         self.assertEqual(OAUTH["posts"][-2:], [
             ("oauth/revoke", {"token": "refresh-1", "token_type_hint": "refresh_token", "client_id": "cid-1"}),
             ("oauth/revoke", {"token": "good", "token_type_hint": "access_token", "client_id": "cid-1"})])
