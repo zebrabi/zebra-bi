@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "zebra-bi": { "type": "http", "url": "https://mcp.zebrabi.com" }
+  }
+}

@@ -1,0 +1,48 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      # Validates the marketplace, then the plugin it lists with its .mcp.json and skills.
+      - name: Claude marketplace and plugin
+        run: npx --yes @anthropic-ai/claude-code@2.1.300 plugin validate --strict .
+
+      - name: Agent Plugins schemas
+        run: |
+          uvx check-jsonschema@0.38.2 --schemafile https://agent-plugins.org/schemas/1.0.0/plugin.schema.json plugin.json
+          uvx check-jsonschema@0.38.2 --schemafile https://agent-plugins.org/schemas/1.0.0/mcp.schema.json mcp.json
+
+      - name: Skills
+        run: |
+          for skill in skills/*/; do
+            uvx --from skills-ref==0.1.1 agentskills validate "$skill"
+          done
+
+      - name: One plugin version and one server URL in every manifest
+        run: |
+          versions=$(jq -er .version .claude-plugin/plugin.json plugin.json | sort -u)
+          urls=$(jq -er '.mcpServers["zebra-bi"].url' .mcp.json mcp.json)
+          urls=$(sort -u <<< "$urls")
+          echo "versions: $versions"
+          echo "urls: $urls"
+          test "$(wc -l <<< "$versions")" -eq 1
+          test "$(wc -l <<< "$urls")" -eq 1

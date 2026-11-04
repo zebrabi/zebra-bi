@@ -1,0 +1,364 @@
+<?xml version="1.0"?>
+<ns0:notesMaster xmlns:ns0="http://schemas.openxmlformats.org/presentationml/2006/main"
+  xmlns:ns1="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:ns2="http://schemas.microsoft.com/office/powerpoint/2010/main">
+  <ns0:cSld>
+    <ns0:bg>
+      <ns0:bgRef idx="1001">
+        <ns1:schemeClr val="bg1" />
+      </ns0:bgRef>
+    </ns0:bg>
+    <ns0:spTree>
+      <ns0:nvGrpSpPr>
+        <ns0:cNvPr id="1" name="" />
+        <ns0:cNvGrpSpPr />
+        <ns0:nvPr />
+      </ns0:nvGrpSpPr>
+      <ns0:grpSpPr>
+        <ns1:xfrm>
+          <ns1:off x="0" y="0" />
+          <ns1:ext cx="0" cy="0" />
+          <ns1:chOff x="0" y="0" />
+          <ns1:chExt cx="0" cy="0" />
+        </ns1:xfrm>
+      </ns0:grpSpPr>
+      <ns0:sp>
+        <ns0:nvSpPr>
+          <ns0:cNvPr id="2" name="Header Placeholder 1" />
+          <ns0:cNvSpPr>
+            <ns1:spLocks noGrp="1" />
+          </ns0:cNvSpPr>
+          <ns0:nvPr>
+            <ns0:ph type="hdr" sz="quarter" />
+          </ns0:nvPr>
+        </ns0:nvSpPr>
+        <ns0:spPr>
+          <ns1:xfrm>
+            <ns1:off x="0" y="0" />
+            <ns1:ext cx="2971800" cy="458788" />
+          </ns1:xfrm>
+          <ns1:prstGeom prst="rect">
+            <ns1:avLst />
+          </ns1:prstGeom>
+        </ns0:spPr>
+        <ns0:txBody>
+          <ns1:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" rtlCol="0" />
+          <ns1:lstStyle>
+            <ns1:lvl1pPr algn="l">
+              <ns1:defRPr sz="1200" />
+            </ns1:lvl1pPr>
+          </ns1:lstStyle>
+          <ns1:p>
+            <ns1:endParaRPr lang="en-SI" />
+          </ns1:p>
+        </ns0:txBody>
+      </ns0:sp>
+      <ns0:sp>
+        <ns0:nvSpPr>
+          <ns0:cNvPr id="3" name="Date Placeholder 2" />
+          <ns0:cNvSpPr>
+            <ns1:spLocks noGrp="1" />
+          </ns0:cNvSpPr>
+          <ns0:nvPr>
+            <ns0:ph type="dt" idx="1" />
+          </ns0:nvPr>
+        </ns0:nvSpPr>
+        <ns0:spPr>
+          <ns1:xfrm>
+            <ns1:off x="3884613" y="0" />
+            <ns1:ext cx="2971800" cy="458788" />
+          </ns1:xfrm>
+          <ns1:prstGeom prst="rect">
+            <ns1:avLst />
+          </ns1:prstGeom>
+        </ns0:spPr>
+        <ns0:txBody>
+          <ns1:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" rtlCol="0" />
+          <ns1:lstStyle>
+            <ns1:lvl1pPr algn="r">
+              <ns1:defRPr sz="1200" />
+            </ns1:lvl1pPr>
+          </ns1:lstStyle>
+          <ns1:p>
+            <ns1:fld id="{F053211D-72EA-4051-91C5-E0D78D38E6E7}" type="datetimeFigureOut">
+              <ns1:rPr lang="en-SI" smtClean="0" />
+              <ns1:t>17/02/2025</ns1:t>
+            </ns1:fld>
+            <ns1:endParaRPr lang="en-SI" />
+          </ns1:p>
+        </ns0:txBody>
+      </ns0:sp>
+      <ns0:sp>
+        <ns0:nvSpPr>
+          <ns0:cNvPr id="4" name="Slide Image Placeholder 3" />
+          <ns0:cNvSpPr>
+            <ns1:spLocks noGrp="1" noRot="1" noChangeAspect="1" />
+          </ns0:cNvSpPr>
+          <ns0:nvPr>
+            <ns0:ph type="sldImg" idx="2" />
+          </ns0:nvPr>
+        </ns0:nvSpPr>
+        <ns0:spPr>
+          <ns1:xfrm>
+            <ns1:off x="685800" y="1143000" />
+            <ns1:ext cx="5486400" cy="3086100" />
+          </ns1:xfrm>
+          <ns1:prstGeom prst="rect">
+            <ns1:avLst />
+          </ns1:prstGeom>
+          <ns1:noFill />
+          <ns1:ln w="12700">
+            <ns1:solidFill>
+              <ns1:prstClr val="black" />
+            </ns1:solidFill>
+          </ns1:ln>
+        </ns0:spPr>
+        <ns0:txBody>
+          <ns1:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" rtlCol="0"
+            anchor="ctr" />
+          <ns1:lstStyle />
+          <ns1:p>
+            <ns1:endParaRPr lang="en-SI" />
+          </ns1:p>
+        </ns0:txBody>
+      </ns0:sp>
+      <ns0:sp>
+        <ns0:nvSpPr>
+          <ns0:cNvPr id="5" name="Notes Placeholder 4" />
+          <ns0:cNvSpPr>
+            <ns1:spLocks noGrp="1" />
+          </ns0:cNvSpPr>
+          <ns0:nvPr>
+            <ns0:ph type="body" sz="quarter" idx="3" />
+          </ns0:nvPr>
+        </ns0:nvSpPr>
+        <ns0:spPr>
+          <ns1:xfrm>
+            <ns1:off x="685800" y="4400550" />
+            <ns1:ext cx="5486400" cy="3600450" />
+          </ns1:xfrm>
+          <ns1:prstGeom prst="rect">
+            <ns1:avLst />
+          </ns1:prstGeom>
+        </ns0:spPr>
+        <ns0:txBody>
+          <ns1:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" rtlCol="0" />
+          <ns1:lstStyle />
+          <ns1:p>
+            <ns1:pPr lvl="0" />
+            <ns1:r>
+              <ns1:rPr lang="en-US" />
+              <ns1:t>Click to edit Master text styles</ns1:t>
+            </ns1:r>
+          </ns1:p>
+          <ns1:p>
+            <ns1:pPr lvl="1" />
+            <ns1:r>
+              <ns1:rPr lang="en-US" />
+              <ns1:t>Second level</ns1:t>
+            </ns1:r>
+          </ns1:p>
+          <ns1:p>
+            <ns1:pPr lvl="2" />
+            <ns1:r>
+              <ns1:rPr lang="en-US" />
+              <ns1:t>Third level</ns1:t>
+            </ns1:r>
+          </ns1:p>
+          <ns1:p>
+            <ns1:pPr lvl="3" />
+            <ns1:r>
+              <ns1:rPr lang="en-US" />
+              <ns1:t>Fourth level</ns1:t>
+            </ns1:r>
+          </ns1:p>
+          <ns1:p>
+            <ns1:pPr lvl="4" />
+            <ns1:r>
+              <ns1:rPr lang="en-US" />
+              <ns1:t>Fifth level</ns1:t>
+            </ns1:r>
+            <ns1:endParaRPr lang="en-SI" />
+          </ns1:p>
+        </ns0:txBody>
+      </ns0:sp>
+      <ns0:sp>
+        <ns0:nvSpPr>
+          <ns0:cNvPr id="6" name="Footer Placeholder 5" />
+          <ns0:cNvSpPr>
+            <ns1:spLocks noGrp="1" />
+          </ns0:cNvSpPr>
+          <ns0:nvPr>
+            <ns0:ph type="ftr" sz="quarter" idx="4" />
+          </ns0:nvPr>
+        </ns0:nvSpPr>
+        <ns0:spPr>
+          <ns1:xfrm>
+            <ns1:off x="0" y="8685213" />
+            <ns1:ext cx="2971800" cy="458787" />
+          </ns1:xfrm>
+          <ns1:prstGeom prst="rect">
+            <ns1:avLst />
+          </ns1:prstGeom>
+        </ns0:spPr>
+        <ns0:txBody>
+          <ns1:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" rtlCol="0"
+            anchor="b" />
+          <ns1:lstStyle>
+            <ns1:lvl1pPr algn="l">
+              <ns1:defRPr sz="1200" />
+            </ns1:lvl1pPr>
+          </ns1:lstStyle>
+          <ns1:p>
+            <ns1:endParaRPr lang="en-SI" />
+          </ns1:p>
+        </ns0:txBody>
+      </ns0:sp>
+      <ns0:sp>
+        <ns0:nvSpPr>
+          <ns0:cNvPr id="7" name="Slide Number Placeholder 6" />
+          <ns0:cNvSpPr>
+            <ns1:spLocks noGrp="1" />
+          </ns0:cNvSpPr>
+          <ns0:nvPr>
+            <ns0:ph type="sldNum" sz="quarter" idx="5" />
+          </ns0:nvPr>
+        </ns0:nvSpPr>
+        <ns0:spPr>
+          <ns1:xfrm>
+            <ns1:off x="3884613" y="8685213" />
+            <ns1:ext cx="2971800" cy="458787" />
+          </ns1:xfrm>
+          <ns1:prstGeom prst="rect">
+            <ns1:avLst />
+          </ns1:prstGeom>
+        </ns0:spPr>
+        <ns0:txBody>
+          <ns1:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" rtlCol="0"
+            anchor="b" />
+          <ns1:lstStyle>
+            <ns1:lvl1pPr algn="r">
+              <ns1:defRPr sz="1200" />
+            </ns1:lvl1pPr>
+          </ns1:lstStyle>
+          <ns1:p>
+            <ns1:fld id="{F2833005-406C-4DD1-B1AD-FE6C4AFB08A4}" type="slidenum">
+              <ns1:rPr lang="en-SI" smtClean="0" />
+              <ns1:t>‹#›</ns1:t>
+            </ns1:fld>
+            <ns1:endParaRPr lang="en-SI" />
+          </ns1:p>
+        </ns0:txBody>
+      </ns0:sp>
+    </ns0:spTree>
+    <ns0:extLst>
+      <ns0:ext uri="{BB962C8B-B14F-4D97-AF65-F5344CB8AC3E}">
+        <ns2:creationId val="1837745137" />
+      </ns0:ext>
+    </ns0:extLst>
+  </ns0:cSld>
+  <ns0:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2"
+    accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink"
+    folHlink="folHlink" />
+  <ns0:notesStyle>
+    <ns1:lvl1pPr marL="0" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl1pPr>
+    <ns1:lvl2pPr marL="457200" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl2pPr>
+    <ns1:lvl3pPr marL="914400" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl3pPr>
+    <ns1:lvl4pPr marL="1371600" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl4pPr>
+    <ns1:lvl5pPr marL="1828800" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl5pPr>
+    <ns1:lvl6pPr marL="2286000" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl6pPr>
+    <ns1:lvl7pPr marL="2743200" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl7pPr>
+    <ns1:lvl8pPr marL="3200400" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl8pPr>
+    <ns1:lvl9pPr marL="3657600" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0"
+      hangingPunct="1">
+      <ns1:defRPr sz="1200" kern="1200">
+        <ns1:solidFill>
+          <ns1:schemeClr val="tx1" />
+        </ns1:solidFill>
+        <ns1:latin typeface="+mn-lt" />
+        <ns1:ea typeface="+mn-ea" />
+        <ns1:cs typeface="+mn-cs" />
+      </ns1:defRPr>
+    </ns1:lvl9pPr>
+  </ns0:notesStyle>
+</ns0:notesMaster>
