@@ -1,0 +1,16 @@
+{
+  "name": "zebra-bi",
+  "displayName": "Zebra BI",
+  "version": "0.0.0",
+  "description": "The Zebra BI MCP connector bundled with the skills that put it to work: interactive IBCS-style charts and tables of your business data, variance explanations, and data stories you can export as a PDF, a shareable artifact page, or PowerPoint and Excel files with live Zebra BI visuals.",
+  "author": { "name": "Zebra BI", "url": "https://zebrabi.com" },
+  "homepage": "https://zebrabi.com/",
+  "repository": "https://github.com/zebrabi/zebra-bi",
+  "license": "Apache-2.0",
+  "keywords": ["charts", "ibcs", "variance", "analytics", "visualization", "data-story", "pdf", "powerpoint", "excel"],
+  "icon": "./assets/icon.png",
+  "documentationUrl": "https://help.zebrabi.com/",
+  "supportUrl": "https://help.zebrabi.com/",
+  "privacyPolicyUrl": "https://zebrabi.com/legal/?doc=privacy-policy",
+  "termsOfServiceUrl": "https://zebrabi.com/legal/"
+}

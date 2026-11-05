@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="{{LANG}}">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{{TITLE}}</title>
+<meta name="zebra-renderer" content="{{RENDERER_SHA}}"/>
+{{FONT_LINK}}
+<!--
+  Data story page, filled by scripts/story.py from story.json and the brand (scripts/brand.py:
+  .zebra/brand/brand.json, else assets/brand/default/brand.json) and printed to an A4 PDF by
+  scripts/pdf.py. Placeholders: LANG, TITLE, FONT_LINK, BRAND_CSS, KICKER, LOGO, SUBTITLE, KPIS,
+  SECTIONS, NEXT, FOOTER, VERSION, RENDERER_SHA (the renderer's sha256), VISUALS_JSON, RENDERER_JSON.
+  The brand sets the page around the charts: colours, fonts, kicker, logo, credit. The charts keep
+  their IBCS colours. The Zebra BI renderer (the ui:// page render_visual names) and every chart's tool
+  result are embedded as JSON. Each <iframe data-v="id"> loads the renderer from a blob URL and gets
+  its data from window.__VISUALS[id] through the minimal MCP Apps host at the bottom, which sets
+  data-status="ready" on the iframe once the chart has its data and has reported its size. The page
+  is laid out at the A4 printable width (180 mm, 680 CSS px), so the charts are drawn at the width
+  they are printed at. The charts are white by design, so the page stays light.
+-->
+<style>
+  :root{ {{BRAND_CSS}} }
+  @page{size:A4;margin:16mm 15mm}
+  html,body{margin:0;background:var(--paper);color:var(--ink);font:14.5px/1.55 var(--font-body);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  main{width:680px;margin:0 auto}
+  .masthead{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:10px;border-bottom:1px solid var(--hairline);margin-bottom:36px}
+  .kicker{font-size:10.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase}
+  .logo img,.logo svg{display:block;height:24px;width:auto}
+  h1{font:600 30px/1.15 var(--font-headline);letter-spacing:-.015em;margin:0 0 12px}
+  .sub{color:var(--muted);font-size:16px;margin:0 0 30px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:22px;margin:0 0 40px}
+  .kpis:empty{display:none}
+  .kpi{border-top:1.5px solid var(--mark);padding-top:10px;break-inside:avoid}
+  .kpi b{display:block;font:600 24px/1.2 var(--font-headline)}
+  .kpi span{color:var(--muted);font-size:13px;line-height:1.4;display:block}
+  section{margin:0 0 36px;padding-top:20px;border-top:1px solid var(--hairline);break-inside:avoid-page}
+  section h2{font:600 20px/1.25 var(--font-headline);letter-spacing:-.01em;margin:0 0 8px;break-after:avoid}
+  section p{margin:0 0 10px}
+  iframe{border:0;display:block;width:100%;height:420px;background:#fff;margin-top:14px;break-inside:avoid}
+  .next ul{padding-left:20px}
+  .next li{margin:0 0 6px}
+  section:last-of-type{margin-bottom:20px}
+  footer{border-top:1px solid var(--hairline);padding-top:10px;color:var(--muted);font-size:11px;break-before:avoid}
+</style>
+</head>
+<body>
+<main>
+  <div class="masthead"><span class="kicker">{{KICKER}}</span><span class="logo">{{LOGO}}</span></div>
+  <h1>{{TITLE}}</h1>
+  <p class="sub">{{SUBTITLE}}</p>
+  <div class="kpis">{{KPIS}}</div>
+{{SECTIONS}}
+{{NEXT}}
+  <footer>{{FOOTER}}</footer>
+</main>
+<script id="zebra-visuals" type="application/json">{{VISUALS_JSON}}</script>
+<script id="zebra-renderer" type="application/json">{{RENDERER_JSON}}</script>
+<script>
+(function () {
+  window.__VISUALS = JSON.parse(document.getElementById('zebra-visuals').textContent);
+  // The page is opened from disk, so the renderer loads from a blob URL made from the embedded copy.
+  var rendererUrl = URL.createObjectURL(new Blob([JSON.parse(document.getElementById('zebra-renderer').textContent)], { type: 'text/html' }));
+  var frames = Array.prototype.slice.call(document.querySelectorAll('iframe[data-v]'));
+  var state = new Map();
+  function load(f) {
+    state.set(f, { sent: false, width: f.clientWidth });
+    f.removeAttribute('data-status');
+    f.style.height = '420px';
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    var url = rendererUrl + '#' + f.dataset.v + '-' + Date.now();
+    if (!f.getAttribute('src')) { f.src = url; return; }
+    // A src that differs only in its hash is a fragment navigation: no new document and no
+    // ui/initialize. Going through about:blank starts the renderer again.
+    f.addEventListener('load', function next() { f.removeEventListener('load', next); f.src = url; });
+    f.src = 'about:blank';
+  }
+  frames.forEach(load);
+  function frameFor(src) { return frames.find(function (f) { return f.contentWindow === src; }); }
+  function post(f, msg) { f.contentWindow.postMessage(msg, '*'); }
+  function sendData(f) {
+    var st = state.get(f); if (st.sent) return; st.sent = true;
+    var res = window.__VISUALS[f.dataset.v];
+    post(f, { jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: {} });
+    post(f, { jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: res });
+  }
+  window.addEventListener('message', function (ev) {
+    var f = frameFor(ev.source); if (!f) return;
+    var m = ev.data; if (!m || m.jsonrpc !== '2.0') return;
+    if (m.id != null && m.method) {
+      if (m.method === 'ui/initialize') {
+        var w = f.clientWidth;
+        post(f, { jsonrpc: '2.0', id: m.id, result: {
+          protocolVersion: (m.params && m.params.protocolVersion) || '2025-11-21',
+          hostInfo: { name: 'zebra-bi', version: '{{VERSION}}' },
+          hostCapabilities: {},
+          hostContext: {
+            toolInfo: { id: 1, tool: { name: 'render_visual', inputSchema: { type: 'object' } } },
+            theme: 'light', displayMode: 'inline', maxWidth: w, viewport: { width: w }
+          }
+        }});
+        setTimeout(function () { sendData(f); }, 50);
+      } else {
+        post(f, { jsonrpc: '2.0', id: m.id, result: {} });
+      }
+      return;
+    }
+    if (m.method === 'notifications/initialized') sendData(f);
+    else if (m.method === 'ui/notifications/size-changed' && m.params && m.params.height) {
+      f.style.height = Math.ceil(m.params.height) + 'px';
+      if (state.get(f).sent) f.setAttribute('data-status', 'ready');
+    }
+  });
+  var t;
+  window.addEventListener('resize', function () {
+    clearTimeout(t);
+    t = setTimeout(function () {
+      frames.forEach(function (f) { if (Math.abs(f.clientWidth - state.get(f).width) > 40) load(f); });
+    }, 300);
+  });
+})();
+</script>
+</body>
+</html>

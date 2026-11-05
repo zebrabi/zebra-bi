@@ -1,0 +1,15 @@
+{
+  "name": "zebrabi",
+  "description": "The Zebra BI plugin, which bundles the MCP connector with the skills that put it to work, for AI assistants and coding agents.",
+  "owner": {
+    "name": "Zebra BI",
+    "url": "https://zebrabi.com"
+  },
+  "plugins": [
+    {
+      "name": "zebra-bi",
+      "source": "./",
+      "description": "The Zebra BI MCP connector bundled with the skills that put it to work: interactive IBCS-style charts and tables of your business data, variance explanations, and data stories you can export as a PDF, a shareable artifact page, or PowerPoint and Excel files with live Zebra BI visuals."
+    }
+  ]
+}
