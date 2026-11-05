@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<ns0:Relationships xmlns:ns0="http://schemas.openxmlformats.org/package/2006/relationships">
+  <ns0:Relationship Id="rId1"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"
+    Target="../theme/theme2.xml" />
+</ns0:Relationships>
