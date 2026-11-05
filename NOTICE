@@ -1,0 +1,6 @@
+Zebra BI plugin
+Copyright 2026 ZEBRA BI informacijske rešitve d.d.
+
+assets/brand/default/pptx/ holds the default Office theme, notes master and presentation
+property parts that Microsoft PowerPoint writes into every new presentation. They are the
+base of the decks the story-office skill generates.

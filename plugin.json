@@ -1,0 +1,100 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "zebra-bi",
+  "version": "0.0.0",
+  "description": "The Zebra BI MCP connector bundled with the skills that put it to work: interactive IBCS-style charts and tables of your business data, variance explanations, and data stories you can export as a PDF, a shareable artifact page, or PowerPoint and Excel files with live Zebra BI visuals.",
+  "author": {
+    "name": "Zebra BI",
+    "url": "https://zebrabi.com"
+  },
+  "homepage": "https://zebrabi.com/",
+  "repository": "https://github.com/zebrabi/zebra-bi",
+  "license": "Apache-2.0",
+  "keywords": [
+    "charts",
+    "ibcs",
+    "variance",
+    "analytics",
+    "visualization",
+    "data-story",
+    "pdf",
+    "powerpoint",
+    "excel"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Zebra BI",
+        "shortDescription": "IBCS charts from your numbers",
+        "longDescription": "See what changed and why, right in the conversation. Give it actuals together with a previous year, previous month, plan or forecast, and Zebra BI draws the variances as an interactive chart or table, with good and bad differences marked.\n\nThe visuals follow IBCS (International Business Communication Standards), the reporting notation many finance teams use. Time periods are drawn as charts, and other categories, such as regions, products or accounts, as tables with inline charts. It's the same engine as Zebra BI for Power BI and Office.\n\nHand it a dataset and its skills tell a data story: one key message, the findings that prove it, and a Zebra BI chart for each one.\n\nOnly the figures for each chart reach Zebra BI: titles, labels and aggregated values. Your prompts, conversations and files never do.\n\nSign in with your Microsoft work account. Works for organisations that use Zebra BI for Power BI, Zebra BI for Office or Zebra AI.",
+        "developerName": "Zebra BI",
+        "category": "Productivity",
+        "websiteURL": "https://zebrabi.com/",
+        "supportURL": "https://help.zebrabi.com/",
+        "privacyPolicyURL": "https://zebrabi.com/legal/?doc=privacy-policy",
+        "termsOfServiceURL": "https://zebrabi.com/legal/",
+        "defaultPrompt": [
+          "Chart monthly sales against last year: Jan 42 vs 38, Feb 45 vs 44, Mar 51 vs 47.",
+          "Compare actual costs with budget: rent 12 vs 12, staff 58 vs 52, travel 9 vs 6.",
+          "Chart actual against plan by region: North 120 vs 100, South 80 vs 95, West 140 vs 130."
+        ],
+        "logo": "./assets/icon.png",
+        "composerIcon": "./assets/icon.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Monthly sales against last year, drawn as a variance chart",
+              "prompt": "Chart monthly sales against last year: Jan 42 vs 38, Feb 45 vs 44, Mar 51 vs 47.",
+              "tools_triggered": "render_visual",
+              "expected_behavior": "Calls render_visual with a month time axis and previous year as the comparison. Shows an interactive column chart with the variance to last year; all three months are above last year."
+            },
+            {
+              "description": "Costs against budget, where an increase is bad",
+              "prompt": "Compare actual costs with budget: rent 12 vs 12, staff 58 vs 52, travel 9 vs 6.",
+              "tools_triggered": "render_visual",
+              "expected_behavior": "Calls render_visual with plan as the comparison and negative_impact set. Shows a table with inline charts; staff and travel are over budget and marked as bad because they are costs, rent is on budget."
+            },
+            {
+              "description": "Regions against plan, drawn as a table",
+              "prompt": "Chart actual against plan by region: North 120 vs 100, South 80 vs 95, West 140 vs 130.",
+              "tools_triggered": "render_visual",
+              "expected_behavior": "Calls render_visual with region as the category and plan as the comparison. Shows a table with inline charts; South is below plan and marked red, North and West are above plan."
+            },
+            {
+              "description": "Quarters against forecast, drawn as a variance chart",
+              "prompt": "Chart quarterly revenue against forecast: Q1 210 vs 200, Q2 190 vs 205, Q3 230 vs 220, Q4 240 vs 235.",
+              "tools_triggered": "render_visual",
+              "expected_behavior": "Calls render_visual with a quarter time axis and forecast as the comparison. Shows a column chart with the variance to forecast; Q2 is below forecast."
+            },
+            {
+              "description": "Products against previous month, drawn as a table",
+              "prompt": "Compare this month's sales with last month by product: A 50 vs 45, B 30 vs 34, C 20 vs 18.",
+              "tools_triggered": "render_visual",
+              "expected_behavior": "Calls render_visual with previous month as the comparison. Shows a table with inline charts; A and C are above last month, B is below."
+            }
+          ],
+          "negative": [
+            {
+              "description": "A general question about IBCS with no figures to chart",
+              "prompt": "What does IBCS stand for?"
+            },
+            {
+              "description": "A writing task unrelated to charts",
+              "prompt": "Write a short email inviting my team to Friday's review meeting."
+            },
+            {
+              "description": "Arithmetic with no chart asked for",
+              "prompt": "What is 15% of 240?"
+            }
+          ]
+        },
+        "demo_recording_url": "https://youtu.be/uaz_cVSrxo0"
+      },
+      "publication": {
+        "release_notes": "First directory release of the Zebra BI plugin. It contains the Zebra BI connector, which draws actuals against previous year, previous month, plan or forecast as interactive IBCS-style charts and tables with the variances marked, and the skills that turn a dataset into a data story with a Zebra BI chart for each finding."
+      }
+    }
+  }
+}

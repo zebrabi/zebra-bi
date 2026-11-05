@@ -1,0 +1,138 @@
+name: Release
+
+# Run from develop with the new plugin version. Commits the version bump on top of the develop commit,
+# pushes it to develop and main with the v<version> tag and creates the GitHub release with the plugin
+# ZIP. main moves only here, because the Anthropic directory and /plugin marketplace add publish whatever
+# main holds. The MCP server has its own version and is not published from here.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New plugin version, without the v (e.g. 1.1.21). Must be newer than the version on develop.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # The environment only accepts develop, waits for an admin's approval and holds RELEASE_DEPLOY_KEY:
+    # a write deploy key that the develop, main and Release tags rulesets let through. GITHUB_TOKEN
+    # cannot push them: it may not push commits that change .github/workflows/, the rulesets do not let
+    # it through, and its pushes would start no CI on the bump commit.
+    environment: release
+    permissions:
+      contents: write # the GitHub release
+      checks: read # the CI conclusions on the commit to release
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Run from develop
+        run: test "$GITHUB_REF" = refs/heads/develop || { echo "::error::run this workflow from develop, not $GITHUB_REF"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Everything below checks $GITHUB_SHA, the develop commit this run started on, and releases one
+      # commit on top of it, so a merge into develop during the run is not released by accident.
+      - name: Version is new
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 1.2.3, got '$VERSION'"; exit 1; }
+          current=$(jq -er .version .claude-plugin/plugin.json plugin.json | sort -u)
+          test "$(wc -l <<< "$current")" -eq 1 || { echo "::error::.claude-plugin/plugin.json and plugin.json disagree: $current"; exit 1; }
+          newest=$(printf '%s\n' "$current" "$VERSION" | sort -V | tail -n 1)
+          if [ "$VERSION" = "$current" ] || [ "$newest" != "$VERSION" ]; then
+            echo "::error::version must be newer than $current, got $VERSION"
+            exit 1
+          fi
+          echo "releasing $current -> $VERSION"
+          if git rev-parse -q --verify "refs/tags/v$VERSION" > /dev/null; then
+            echo "::error::v$VERSION is already tagged; bump the version"
+            exit 1
+          fi
+
+      # push CI on develop runs these on every commit; a red or missing one stops the release.
+      - name: CI passed on the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRED: "validate|tests (3.11)|tests (3.13)"
+        run: |
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+            --jq '.check_runs[] | "\(.name)|\(.conclusion)"')
+          echo "$runs"
+          failed=0
+          IFS='|' read -ra names <<< "$REQUIRED"
+          for name in "${names[@]}"; do
+            grep -qxF "$name|success" <<< "$runs" || { echo "::error::$name has not passed on $GITHUB_SHA"; failed=1; }
+          done
+          test "$failed" -eq 0
+
+      - name: main is behind develop
+        run: |
+          git merge-base --is-ancestor origin/main "$GITHUB_SHA" || {
+            echo "::error::main has commits develop lacks; merge main into develop first"
+            git log --oneline "$GITHUB_SHA..origin/main"
+            exit 1
+          }
+
+      # The release commit changes only the version line of the two manifests, so the CI that passed
+      # on $GITHUB_SHA covers it. sed rather than jq keeps the files' formatting.
+      - name: Bump the version
+        run: |
+          sed -i -E "s/^(  \"version\": )\"[^\"]*\"/\1\"$VERSION\"/" .claude-plugin/plugin.json plugin.json
+          test "$(jq -er .version .claude-plugin/plugin.json plugin.json | sort -u)" = "$VERSION"
+          test "$(git diff --numstat | awk '{print $1, $2, $3}')" = "$(printf '1 1 .claude-plugin/plugin.json\n1 1 plugin.json')"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "Release v$VERSION" -- .claude-plugin/plugin.json plugin.json
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git show --stat HEAD
+
+      # One ZIP for ChatGPT and Codex (plugin.json) and the claude.ai upload (.claude-plugin), built from
+      # the release commit before anything is pushed, so a broken one stops the release. It carries
+      # scripts/ because the story skills run them; every ${CLAUDE_PLUGIN_ROOT} path a skill names must
+      # be in it.
+      - name: Plugin ZIP
+        run: |
+          zip="zebra-bi-v$VERSION.zip"
+          git archive --format=zip -o "$zip" "$RELEASE_SHA" -- .claude-plugin .mcp.json plugin.json mcp.json assets scripts ':(exclude)scripts/tests' skills README.md LICENSE NOTICE
+          listed=$(unzip -Z1 "$zip")
+          missing=0
+          for path in $(grep -rhoE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' skills | sed 's|^${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
+            grep -qxF "$path" <<< "$listed" || { echo "missing from the ZIP: $path"; missing=1; }
+          done
+          test "$missing" -eq 0
+
+      # Atomic, so develop, main and the tag move together or not at all. Without --force, a develop or
+      # main that moved since the checks above is rejected rather than overwritten. The deploy key exists
+      # only in this step; github.com's host keys come from the API over HTTPS.
+      - name: Push develop, main and the tag
+        env:
+          DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          key="$RUNNER_TEMP/release_key" hosts="$RUNNER_TEMP/known_hosts"
+          trap 'rm -f "$key"' EXIT
+          (umask 077; printf '%s\n' "$DEPLOY_KEY" > "$key")
+          gh api meta --jq '.ssh_keys[] | "github.com \(.)"' > "$hosts"
+          test -s "$hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$hosts"
+          git push --atomic "git@github.com:$GITHUB_REPOSITORY.git" \
+            "$RELEASE_SHA:refs/heads/develop" "$RELEASE_SHA:refs/heads/main" "$RELEASE_SHA:refs/tags/v$VERSION"
+          echo "develop, main and v$VERSION are at $RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$VERSION" "zebra-bi-v$VERSION.zip" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

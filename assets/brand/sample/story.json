@@ -1,0 +1,307 @@
+{
+ "title": "2018 sales grew 20% to $722k, more than half of it from the West",
+ "kicker": "Superstore · 2018 vs 2017",
+ "subtitle": "Superstore, US, 9,800 order lines Jan 2015 to Dec 2018; 2018 AC vs PY 2017. Sales only: no profit, quantity or discount in the data.",
+ "source": {
+  "name": "superstore-sample",
+  "label": "Superstore sample data (public), 2018 vs 2017"
+ },
+ "kpis": [
+  {
+   "value": "$722k",
+   "label": "2018 sales, +$122k (+20%) on 2017"
+  },
+  {
+   "value": "1,661",
+   "label": "orders, +28% on 2017"
+  },
+  {
+   "value": "$435",
+   "label": "average order, down from $463 (-6%)"
+  },
+  {
+   "value": "87%",
+   "label": "of 2017 customers bought again in 2018"
+  }
+ ],
+ "sections": [
+  {
+   "heading": "Eight months of twelve grew, with November the biggest",
+   "body": "Growth came from more orders, while the average order got smaller. **November** added $39k and **August** $32k; May and December each came in about $13k below 2017. Q4 holds 39% of sales in both years, so the seasonal shape did not change.",
+   "visual": "sales-by-month"
+  },
+  {
+   "heading": "The West made more than half of the gain",
+   "body": "West added $66k (+36%), 54% of the total increase. South grew 31% and East 18%. Central is the only region that shrank, by $4k.",
+   "visual": "sales-by-region"
+  },
+  {
+   "heading": "Phones and Binders lead, Machines goes backwards",
+   "body": "Office Supplies added the most as a category (+$58k). Phones (+$27k) and Binders (+$23k) are the biggest single gains. **Machines** lost $12k (-22%), the only sizeable decline, and Tables stayed flat.",
+   "visual": "sales-by-subcategory"
+  }
+ ],
+ "next": [
+  "**Washington:** 5 of its 93 customers bring 43% of its 2018 sales and the largest order is $14k; check whether the jump repeats in 2019.",
+  "**Concentration:** in 2018 the top 10% of customers bring in 42% of sales; the top 1% of orders, 15%.",
+  "**Machines:** the one sizeable sub-category in decline; its best sellers changed from 2017 to 2018.",
+  "**Lost states:** Virginia and Indiana fell by 72% and 46%."
+ ],
+ "visuals": {
+  "sales-by-month": {
+   "args": {
+    "title": "Superstore, Sales by month",
+    "subtitle": "USD, 2018 AC vs PY",
+    "chart_type": "variance",
+    "category_columns": [
+     "Month"
+    ],
+    "columns": [
+     "Month",
+     "AC",
+     "PY"
+    ],
+    "measure": {
+     "name": "Sales",
+     "Val": "AC",
+     "PY": "PY"
+    },
+    "rows": [
+     [
+      "2018-01",
+      43476,
+      18542
+     ],
+     [
+      "2018-02",
+      19921,
+      22979
+     ],
+     [
+      "2018-03",
+      58863,
+      51165
+     ],
+     [
+      "2018-04",
+      35542,
+      38680
+     ],
+     [
+      "2018-05",
+      43826,
+      56657
+     ],
+     [
+      "2018-06",
+      48191,
+      39724
+     ],
+     [
+      "2018-07",
+      44825,
+      38321
+     ],
+     [
+      "2018-08",
+      62838,
+      30542
+     ],
+     [
+      "2018-09",
+      86153,
+      69193
+     ],
+     [
+      "2018-10",
+      77448,
+      59583
+     ],
+     [
+      "2018-11",
+      117938,
+      79066
+     ],
+     [
+      "2018-12",
+      83030,
+      95739
+     ]
+    ]
+   }
+  },
+  "sales-by-region": {
+   "args": {
+    "title": "Superstore, Sales by region",
+    "subtitle": "USD, 2018 AC vs PY",
+    "chart_type": "variance",
+    "category_columns": [
+     "Region"
+    ],
+    "columns": [
+     "Region",
+     "AC",
+     "PY"
+    ],
+    "measure": {
+     "name": "Sales",
+     "Val": "AC",
+     "PY": "PY"
+    },
+    "rows": [
+     [
+      "West",
+      248131,
+      182471
+     ],
+     [
+      "East",
+      210129,
+      178512
+     ],
+     [
+      "Central",
+      141627,
+      145674
+     ],
+     [
+      "South",
+      122165,
+      93536
+     ]
+    ],
+    "sort_by": "variance_abs_py",
+    "sort_order": "descending"
+   }
+  },
+  "sales-by-subcategory": {
+   "args": {
+    "title": "Superstore, Sales by category and sub-category",
+    "subtitle": "USD, 2018 AC vs PY",
+    "chart_type": "variance",
+    "category_columns": [
+     "Category",
+     "Sub-category"
+    ],
+    "columns": [
+     "Category",
+     "Sub-category",
+     "AC",
+     "PY"
+    ],
+    "measure": {
+     "name": "Sales",
+     "Val": "AC",
+     "PY": "PY"
+    },
+    "rows": [
+     [
+      "Office Supplies",
+      "Binders",
+      71721,
+      48995
+     ],
+     [
+      "Office Supplies",
+      "Storage",
+      68073,
+      58752
+     ],
+     [
+      "Office Supplies",
+      "Appliances",
+      40213,
+      26017
+     ],
+     [
+      "Office Supplies",
+      "Paper",
+      27505,
+      20326
+     ],
+     [
+      "Office Supplies",
+      "Supplies",
+      15952,
+      14242
+     ],
+     [
+      "Office Supplies",
+      "Art",
+      8826,
+      5891
+     ],
+     [
+      "Office Supplies",
+      "Labels",
+      3845,
+      2793
+     ],
+     [
+      "Office Supplies",
+      "Envelopes",
+      3379,
+      4457
+     ],
+     [
+      "Office Supplies",
+      "Fasteners",
+      855,
+      946
+     ],
+     [
+      "Technology",
+      "Phones",
+      104686,
+      78000
+     ],
+     [
+      "Technology",
+      "Copiers",
+      62899,
+      46319
+     ],
+     [
+      "Technology",
+      "Accessories",
+      58241,
+      41735
+     ],
+     [
+      "Technology",
+      "Machines",
+      43545,
+      55907
+     ],
+     [
+      "Furniture",
+      "Chairs",
+      93191,
+      81930
+     ],
+     [
+      "Furniture",
+      "Tables",
+      60894,
+      60762
+     ],
+     [
+      "Furniture",
+      "Bookcases",
+      30024,
+      26275
+     ],
+     [
+      "Furniture",
+      "Furnishings",
+      28205,
+      26845
+     ]
+    ],
+    "sort_by": "variance_abs_py",
+    "sort_order": "descending"
+   }
+  }
+ },
+ "next_heading": "Suggestions"
+}
