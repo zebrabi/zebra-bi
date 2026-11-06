@@ -45,3 +45,7 @@ Then write the explanation:
 3. Anything the text result of `render_visual` says it changed or left out.
 
 Keep the numbers in your text the same as the ones you sent to the visual.
+
+## A page or dashboard to share
+
+When the user wants these charts as an artifact, a dashboard or a page to share, use the `story-artifact` skill: it builds a plain artifact page with the Zebra BI charts. Do not start from the Dashboard Artifact type and do not write the page by hand: neither carries Zebra BI charts.
