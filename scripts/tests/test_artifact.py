@@ -59,6 +59,8 @@ class Page(unittest.TestCase):
         for vid in ARGS:
             self.assertRegex(page, r'<figure class="zs-plate" data-v="%s" data-w="760" data-h="300"><img src="charts/%s.png"[^>]*><iframe title="[^"]*" scrolling="no"></iframe></figure>' % (vid, vid))
         self.assertIn("fetch('zebra-renderer.txt')", page)
+        # the renderer's start-up new URL(origin + pathname) throws in a blob: frame; the host disables it
+        self.assertIn("self.location.origin!==\"null\"').join('false')", page)
         self.assertIn("!== '%s'" % ("ab" * 32), page)  # checked against the build's renderer
         self.assertIn("version: '%s'" % S.version(), page)
         data = re.search(r'<script id="zebra-visuals" type="application/json">(.*?)</script>', page, re.S).group(1)

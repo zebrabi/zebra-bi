@@ -471,6 +471,7 @@ class Page(Base):  # items 16, 17, 18
         self.assertIn("@page{size:A4;margin:16mm 15mm}", t)
         self.assertIn("main{width:680px;", t)
         self.assertIn("URL.createObjectURL(new Blob(", t)
+        self.assertIn("self.location.origin!==\"null\"').join('false')", t)  # blob: frames break that URL
         self.assertNotIn("visual.html'", t)  # no sibling renderer copy: the page is only opened from disk
 
 

@@ -1,13 +1,15 @@
 ---
 name: story-artifact
-description: "Turn a data story into one shareable Claude artifact page with its Zebra BI charts: the key message, the KPIs, one section per supporting message with its chart, and where to look next. A plain artifact page, never the Dashboard artifact type, which cannot carry Zebra BI charts. Charts are pictures of the Zebra BI charts by default, or live Zebra BI charts with hover on request. Builds from a story saved by data-story (its story.json under .zebra/stories) or from the story just told in the conversation. Use when the user says 'artifact', 'make it an artifact', 'a page I can share', 'a link to share', 'publish this story', 'one page I can share', '/zebra-bi:story-artifact'. For a PDF use story-pdf; for PowerPoint or Excel, story-office."
+description: "Turn a data story into one shareable Claude artifact page with its Zebra BI charts: the key message, the KPIs, one section per supporting message with its chart, and where to look next. A plain artifact page, never the Dashboard artifact type, which cannot carry Zebra BI charts. Charts are pictures of the Zebra BI charts by default, or live Zebra BI charts with hover on request. Builds from a story saved by data-story (its story.json under .zebra/stories) or from the story just told in the conversation. Use when the user says 'artifact', 'make it an artifact', 'dashboard', 'make a dashboard of this', 'a dashboard page', 'a page I can share', 'a link to share', 'publish this story', 'one page I can share', '/zebra-bi:story-artifact', and for any request for a dashboard or web page that should show Zebra BI charts or tables. For a PDF use story-pdf; for PowerPoint or Excel, story-office."
 compatibility: "Builds in Claude Code only (python3, standard library, and the Artifact tool to publish); in Claude chat or Cowork it hands over the story JSON instead. Sends each chart's arguments to the Zebra BI MCP over HTTP at build time, and starts Google Chrome, Microsoft Edge or Chromium headless on 127.0.0.1 to draw the chart pictures."
 license: Apache-2.0
 ---
 
 # Story to artifact
 
-Run this only when someone asks for a page to share. `data-story` tells the story in the conversation and never builds this page on its own.
+Run this only when someone asks for a page to share or a dashboard. `data-story` tells the story in the conversation and never builds this page on its own.
+
+A dashboard with Zebra BI charts is this page. Do not call the Artifact tool's `quickstart`, do not start from the Dashboard Artifact type, and do not write the page by hand: the Dashboard type cannot carry Zebra BI charts, and a hand-written page has no Zebra BI charts in it.
 
 ## In Claude chat or Cowork
 
@@ -44,7 +46,7 @@ If the build stops with one of these lines, say so in one line and stop. Nothing
 
 ## 3. Publish
 
-Publish the build as a **plain artifact page** with the Artifact tool. Do not start from the Dashboard type or any other Artifact type: their pages cannot carry the Zebra BI charts. If the Artifact tool asks for a quickstart first, call it with intent `other`, then publish the plain page as below, whatever type the quickstart suggests.
+Publish the build as a **plain artifact page** with the Artifact tool. This page is already built and designed, so skip `quickstart`, never pass a `type_url`, and do not start from the Dashboard type or any other Artifact type: their pages cannot carry the Zebra BI charts. This holds when the user called it a dashboard. The Artifact tool's own guidance sends dashboards to the Dashboard type; that guidance is for pages Claude writes by hand, and this page is written by the build script.
 
 - `file_path`: the printed `page`. Publish it as built: no edits, and never the renderer inline (the publish refuses a page that large).
 - `files`: every printed `files` entry; `zebra-renderer.txt` as `{"from": <local path>, "contentType": "text/plain"}`. Add each path in `remove` as `null`.

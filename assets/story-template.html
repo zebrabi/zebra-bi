@@ -60,7 +60,10 @@
 (function () {
   window.__VISUALS = JSON.parse(document.getElementById('zebra-visuals').textContent);
   // The page is opened from disk, so the renderer loads from a blob URL made from the embedded copy.
-  var rendererUrl = URL.createObjectURL(new Blob([JSON.parse(document.getElementById('zebra-renderer').textContent)], { type: 'text/html' }));
+  // The renderer's JSON-schema library builds new URL(location.origin + location.pathname) at start-up, which
+  // throws in a blob: frame (its pathname is the whole blob URL), so it takes the library's own fallback base.
+  var rendererText = JSON.parse(document.getElementById('zebra-renderer').textContent).split('typeof self<"u"&&self.location&&self.location.origin!=="null"').join('false');
+  var rendererUrl = URL.createObjectURL(new Blob([rendererText], { type: 'text/html' }));
   var frames = Array.prototype.slice.call(document.querySelectorAll('iframe[data-v]'));
   var state = new Map();
   function load(f) {
