@@ -47,6 +47,10 @@ LIVE = """<script id="zebra-visuals" type="application/json">%(visuals)s</script
   fetch('%(file)s').then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); }).then(function (text) {
     return crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then(function (d) {
       if (hex(d) !== '%(sha)s') throw new Error('renderer does not match the build');
+      // The renderer's JSON-schema library builds new URL(location.origin + location.pathname) at start-up,
+      // which throws in a blob: frame (its pathname is the whole blob URL), so no chart would draw. Make it
+      // take the library's own fallback base instead.
+      text = text.split('typeof self<"u"&&self.location&&self.location.origin!=="null"').join('false');
       start(URL.createObjectURL(new Blob([text], { type: 'text/html' })));
     });
   }).catch(function () { /* the pictures stay */ });
