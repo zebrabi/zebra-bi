@@ -1,6 +1,6 @@
 ---
 name: chart-from-data
-description: Show business figures as an interactive IBCS-style Zebra BI chart or table with the render_visual tool. Use when presenting findings from business data such as sales, costs, budgets or KPIs, even if the user did not ask for a chart, and when the user asks to chart, plot or visualize numbers or to compare actuals with previous year, plan or forecast. Also when the user asks for a dashboard of business data: the charts are Zebra BI charts, and story-artifact builds the page, never the Dashboard artifact type.
+description: "Show business figures as an interactive IBCS-style Zebra BI chart or table with the render_visual tool. Use when presenting findings from business data such as sales, costs, budgets or KPIs, even if the user did not ask for a chart, and when the user asks to chart, plot or visualize numbers or to compare actuals with previous year, plan or forecast. Also when the user asks for a dashboard of business data: the charts are Zebra BI charts, and story-artifact builds the page, never the Dashboard artifact type."
 license: Apache-2.0
 ---
 
