@@ -85,6 +85,9 @@ def validate(rep):
             if cell.get("type") == "chart":
                 if cell.get("visual") not in visuals:
                     raise ValueError("cell %s shows a chart the report does not hold" % cid)
+                note = cell.get("note", "")
+                if not isinstance(note, str) or len(note) > MAX_TEXT:
+                    raise ValueError("cell %s: the note must be a string of at most %d characters" % (cid, MAX_TEXT))
             elif cell.get("type") == "text":
                 if not isinstance(cell.get("text"), str) or len(cell["text"]) > MAX_TEXT:
                     raise ValueError("cell %s: text must be a string of at most %d characters" % (cid, MAX_TEXT))
@@ -355,13 +358,24 @@ def place(rep, cell, row=None):
     return len(rows)
 
 
-def add_chart(rep, args, row=None):
-    """Add a chart cell for render_visual args. Returns (visual id, row number)."""
+def with_note(cell, note):
+    """The chart cell with its note (the narrative under the chart), or without one when the note is empty."""
+    note = str(note or "").strip()
+    if len(note) > MAX_TEXT:
+        raise ValueError("the note must hold at most %d characters" % MAX_TEXT)
+    cell.pop("note", None)
+    if note:
+        cell["note"] = note
+    return cell
+
+
+def add_chart(rep, args, row=None, note=None):
+    """Add a chart cell for render_visual args, with the narrative under it. Returns (visual id, row number)."""
     if not isinstance(args, dict) or not args:
         raise ValueError("chart needs the render_visual arguments")
     vid = unique_visual_id(rep, args.get("title"))
     rep["visuals"][vid] = {"args": args}
-    return vid, place(rep, {"id": next_cell_id(rep), "type": "chart", "visual": vid}, row)
+    return vid, place(rep, with_note({"id": next_cell_id(rep), "type": "chart", "visual": vid}, note), row)
 
 
 def add_text(rep, text, row=None):
@@ -377,6 +391,7 @@ def apply_layout(rep, title, rows, rev):
     shows any more are dropped from visuals."""
     if rev != rep.get("rev"):
         raise Conflict("the report changed since it was opened (rev %s, now %s)" % (rev, rep.get("rev")))
+    old_notes = {c["id"]: c.get("note") for r in rep["rows"] for c in r["cells"] if c["type"] == "chart"}
     new_rows = []
     for row in rows if isinstance(rows, list) else []:
         cells = [c for c in (row.get("cells") if isinstance(row, dict) else None) or [] if isinstance(c, dict)]
@@ -385,7 +400,9 @@ def apply_layout(rep, title, rows, rev):
         kept = []
         for c in cells:
             if c.get("type") == "chart":
-                kept.append({"id": c.get("id"), "type": "chart", "visual": c.get("visual")})
+                # a save without the note field (an older builder) keeps the note; "" removes it
+                note = c["note"] if "note" in c else old_notes.get(c.get("id"))
+                kept.append(with_note({"id": c.get("id"), "type": "chart", "visual": c.get("visual")}, note))
             else:
                 kept.append({"id": c.get("id"), "type": "text", "text": str(c.get("text") or "")})
         new_rows.append({"cells": kept})
@@ -421,8 +438,9 @@ def remove_cell(rep, cell):
 def update_text(rep, cell, text):
     ri, ci = locate(rep, cell)
     c = rep["rows"][ri]["cells"][ci]
-    if c["type"] != "text":
-        raise ValueError("cell %s is a chart; replace_chart changes a chart" % cell)
+    if c["type"] == "chart":  # a chart's text is its note; empty text removes the note
+        with_note(c, text)
+        return
     text = str(text or "").strip()
     if not text or len(text) > MAX_TEXT:
         raise ValueError("text must hold 1 to %d characters" % MAX_TEXT)
@@ -477,7 +495,9 @@ def summary(rep):
         parts = []
         for c in row["cells"]:
             if c["type"] == "chart":
-                parts.append("[%s] chart %r" % (c["id"], chart_title(rep, c["visual"])))
+                note = " ".join(c.get("note", "").split())
+                parts.append("[%s] chart %r, note %s" % (c["id"], chart_title(rep, c["visual"]),
+                                                        repr(note[:60] + ("..." if len(note) > 60 else "")) if note else "MISSING"))
             else:
                 t = " ".join(c["text"].split())
                 parts.append("[%s] text %r" % (c["id"], t[:80] + ("..." if len(t) > 80 else "")))
@@ -488,7 +508,8 @@ def summary(rep):
 def to_story(rep):
     """The report in the story.json format, so story-pdf and story-artifact build it from its folder: the title
     as the heading and each row as a story row, its charts and texts side by side. A report names no data source."""
-    rows = [{"cells": [{"visual": c["visual"]} if c["type"] == "chart" else {"text": c["text"]} for c in row["cells"]]}
+    rows = [{"cells": [dict({"visual": c["visual"]}, **({"note": c["note"]} if c.get("note") else {}))
+                       if c["type"] == "chart" else {"text": c["text"]} for c in row["cells"]]}
             for row in rep["rows"] if row["cells"]]
     shown = {c["visual"] for row in rows for c in row["cells"] if "visual" in c}
     return {"title": rep["title"], "sections": [], "rows": rows,

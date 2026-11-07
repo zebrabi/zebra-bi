@@ -68,6 +68,27 @@ def wait_charts(ch, timeout=None):
     return None
 
 
+def trim_row_charts(ch):
+    """Cut each chart in a report row to where its drawing ends. The renderer reports a minimum height, so a short
+    table would leave a band of white between the chart and the note under it. Read from a small screenshot of
+    the frame, as the artifact pictures are cropped (the frames' documents are not readable from the page).
+    Chrome paints a frame only while it is in view, so each is scrolled into view first."""
+    sel = "document.querySelectorAll('section.row iframe[data-v]')"
+    for i in range(ch.evaluate(sel + ".length") or 0):
+        frame = "%s[%d]" % (sel, i)
+        ch.evaluate(frame + ".scrollIntoView({block:'start'})")
+        time.sleep(0.3)
+        x, y, w, h = json.loads(ch.evaluate("(function(r){return JSON.stringify([r.left+scrollX,r.top+scrollY,r.width,r.height])})"
+                                            "(%s.getBoundingClientRect())" % frame))
+        if not w or not h:
+            continue
+        shot = ch.call("Page.captureScreenshot", format="png", clip={"x": x, "y": y, "width": w, "height": h, "scale": 0.25})
+        bottom = SN._content_bottom(base64.b64decode(shot["data"]), 0.25)
+        if bottom and bottom + 16 < h:
+            ch.evaluate("%s.style.height='%dpx'" % (frame, bottom + 16))
+    ch.evaluate("window.scrollTo(0,0)")
+
+
 def pages(pdf):
     return len(re.findall(rb"/Type\s*/Page(?![A-Za-z])", pdf))
 
@@ -89,6 +110,7 @@ def print_page(page_html, binary, brand):
             if failed:
                 sys.exit("Chart %s did not draw in the browser, so no PDF was written. Build again; if it repeats, "
                          "the Zebra BI renderer may have changed." % failed)
+            trim_row_charts(ch)
             res = ch.call("Page.printToPDF", preferCSSPageSize=True, printBackground=True, displayHeaderFooter=True,
                           headerTemplate="<span></span>", footerTemplate=footer_template(brand))
         finally:

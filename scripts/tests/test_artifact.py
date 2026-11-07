@@ -69,7 +69,8 @@ class Page(unittest.TestCase):
         story = rows_story()
         self.assertEqual(A.picture_widths(story), {"v1": 370, "v2": 240, "v3": 240})  # (760 - gaps) / cells
         page = self.page(story=story)
-        self.assertIn('<section class="zs-section zs-row zs-cols-2"><figure class="zs-plate" data-v="v1"', page)
+        self.assertIn('<section class="zs-section zs-row zs-cols-2"><div class="zs-cell"><figure class="zs-plate" data-v="v1"', page)
+        self.assertIn('</figure><div class="zs-text zs-note"><p>V1 rose <b>+5%</b>.</p></div></div>', page)
         self.assertIn('<div class="zs-text"><p>Key <b>message</b>.</p></div></section>', page)
         self.assertIn('<section class="zs-section zs-row zs-cols-3"><figure class="zs-plate" data-v="v2"', page)
         self.assertIn('alt="Zebra BI chart: Chart 2."', page)

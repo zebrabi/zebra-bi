@@ -127,18 +127,21 @@ def tools():
          "inputSchema": obj({"report": {"type": "string", "description": "Name or title from list_reports deleted=true."}}, ["report"]),
          "annotations": write},
         {"name": "add_chart", "title": "Add a Zebra BI chart to the report",
-         "description": "Draw a Zebra BI chart with render_visual and add it to the report. Send aggregated rows only, "
+         "description": "Draw a Zebra BI chart with render_visual and add it to the report with `note`, the narrative "
+                        "under the chart: its message with the numbers in **bold**, then one or two sentences of evidence "
+                        "from the chart (IBCS: AC, PL, PY, ΔPY%; no cause the data does not show). Send aggregated rows only, "
                         "one per category. It joins `row` when that row has room (at most 3 cells), else starts a new "
                         "row. Returns Zebra BI's notes on the chart, not the chart itself.",
-         "inputSchema": obj({"chart": chart_schema(), "row": {"type": "integer", "minimum": 1}, "report": opt_report()}, ["chart"]),
+         "inputSchema": obj({"chart": chart_schema(), "note": {"type": "string", "maxLength": R.MAX_TEXT},
+                             "row": {"type": "integer", "minimum": 1}, "report": opt_report()}, ["chart", "note"]),
          "annotations": write},
         {"name": "add_text", "title": "Add text to the report",
          "description": "Add a narrative paragraph (**bold** allowed). It joins `row` when that row has room, else "
                         "starts a new row.",
          "inputSchema": obj({"text": {"type": "string", "maxLength": R.MAX_TEXT}, "row": {"type": "integer", "minimum": 1},
                              "report": opt_report()}, ["text"]), "annotations": write},
-        {"name": "update_text", "title": "Change a text cell",
-         "description": "Replace the text of a text cell, by its id from open_report.",
+        {"name": "update_text", "title": "Change a text cell or a chart's note",
+         "description": "Replace the text of a text cell, or the note under a chart, by its id from open_report.",
          "inputSchema": obj({"cell": {"type": "string"}, "text": {"type": "string", "maxLength": R.MAX_TEXT},
                              "report": opt_report()}, ["cell", "text"]), "annotations": write},
         {"name": "remove_cell", "title": "Remove a cell",
@@ -285,7 +288,7 @@ def call(name, args, thread):
     if name == "add_chart":
         slug = target(args, thread)
         rep = R.load(R.path_for(slug))
-        vid, row = R.add_chart(rep, args.get("chart"), args.get("row"))
+        vid, row = R.add_chart(rep, args.get("chart"), args.get("row"), args.get("note"))
         res, err = draw(slug, vid, rep["visuals"][vid]["args"])
         if err:
             return err
@@ -295,7 +298,7 @@ def call(name, args, thread):
     if name == "add_text":
         return edit(target(args, thread), lambda rep: "Added text to row %d" % R.add_text(rep, args.get("text"), args.get("row")))
     if name == "update_text":
-        return edit(target(args, thread), lambda rep: R.update_text(rep, args.get("cell"), args.get("text")) or "Changed text %s" % args.get("cell"))
+        return edit(target(args, thread), lambda rep: R.update_text(rep, args.get("cell"), args.get("text")) or "Changed the text of %s" % args.get("cell"))
     if name == "remove_cell":
         return edit(target(args, thread), lambda rep: R.remove_cell(rep, args.get("cell")) or "Removed %s" % args.get("cell"))
     if name == "move_cell":

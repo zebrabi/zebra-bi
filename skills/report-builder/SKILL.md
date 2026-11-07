@@ -28,12 +28,19 @@ Each chat works on its own report: the one it opened or created last. A chat tha
 
 ## Building and editing
 
-1. Shape each chart as `chart-from-data` does: aggregate first, one row per category, the scenarios as columns (`AC`, `PL`, `PY`, `FC`), `time_axis` for periods. `add_chart` returns Zebra BI's notes on the chart; read them and fix the arguments if it changed something you did not intend.
-2. Lead with the key message as text (`add_text`, numbers in `**bold**`), then the chart that proves it, then the breakdowns. Put related breakdowns side by side: give `add_chart` the same `row`, at most three per row.
-3. Edits by cell id: `move_cell` (row and position; one past the last row makes a new row), `update_text`, `remove_cell`, `replace_chart` (new data, period or chart type in the same place).
-4. After a change, tell the user in one or two lines what is where now. Do not paste the chart data into the chat.
+The report follows IBCS, the notation Zebra BI charts use (the `data-story` skill's `references/ibcs-narrative.md` has the full rules):
 
-The user can do all of this in the builder too: drag cells by the grip, edit text and the title in place, and use ⋯ for duplicate and delete. Their edits are saved to the same file, so open the report again (`open_report`) before you change something they may have rearranged.
+1. **Key message first.** One `add_text` at the top: what happened, how big, against what, numbers in `**bold**`. "October EBITDA was **359.7k**, **+113.1k (+45.9%)** above PL."
+2. **Every chart has a note under it** (`add_chart` `note`, required). The note is the chart's supporting message, then one or two sentences of evidence read from the chart: "Cost of goods sold came in **98.4k** below PL. Material costs gave **78.7k** of it." Detection first (what happened), then explanation from the data (which split drove it). Never a cause the data does not show; put an open question in the closing text instead.
+3. **IBCS notation in text and titles.** AC, PL, PY, FC; ΔPY, ΔPL and ΔPY% for variances; the unit once per chart. Chart `title` is the reporting unit and measure, `subtitle` the unit, period and scenarios; the message lives in the note, never in the chart title.
+4. **Condense.** Round for reading (359.7k, +45.9%). No decoration words ("significant", "notable"). A cost that went down is "down" or "below PL", never "a positive variance".
+5. **Check.** Every number in a note matches its chart, from the same rows you sent.
+
+Shape each chart as `chart-from-data` does: aggregate first, one row per category, the scenarios as columns (`AC`, `PL`, `PY`, `FC`), `time_axis` for periods. `add_chart` returns Zebra BI's notes on the chart; read them and fix the arguments if it changed something you did not intend. Order charts by contribution, largest first, and put related breakdowns side by side: the same `row`, at most three per row.
+
+Edits by cell id: `move_cell` (row and position; one past the last row makes a new row), `update_text` (a text cell, or the note of a chart cell), `remove_cell`, `replace_chart` (new data, period or chart type in the same place; then `update_text` its note so the numbers match). `open_report` marks a chart without a note `note MISSING`: write one. After a change, tell the user in one or two lines what is where now. Do not paste the chart data into the chat.
+
+The user can do all of this in the builder too: drag cells by the grip, edit text, notes and the title in place, and use ⋯ for duplicate and delete. Their edits are saved to the same file, so open the report again (`open_report`) before you change something they may have rearranged.
 
 ## Sharing
 
