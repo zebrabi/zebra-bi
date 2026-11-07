@@ -1,19 +1,21 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Zebra BI report</title>
+<title>Zebra BI reports</title>
 <!--
-  The Zebra BI report builder, an MCP App served by report_server.py. It is two things at once:
-  - an MCP App to its host (ChatGPT, Codex, Claude): ui/initialize, tools/call of the server's app-only tools
-    get_report, get_renderer and save_layout, size-changed;
+  The Zebra BI report builder, an MCP App served by report_server.py. Two views: the home ("All reports": open,
+  create, rename, duplicate, delete, Recently deleted) and the editor (rows of up to three chart or text cells).
+  It is two things at once:
+  - an MCP App to its host (ChatGPT, Codex, Claude): ui/initialize, tools/call of the server's tools, size-changed;
   - a host to the Zebra BI renderer: every chart cell nests the renderer page in an iframe through srcdoc with
     sandbox allow-scripts and answers its ui/initialize with the cell's width, then sends it the chart's
     render_visual result. srcdoc, not a blob: URL, because the desktop hosts' CSP blocks blob: frames; the frame's
     opaque origin also keeps the renderer off the location.origin path that throws in blob: frames.
-  The report is the server's file; the page keeps no state of its own beyond what it shows.
+  Every edit is a tool call and every report is the server's file; the page keeps no state beyond what it shows.
+  Opened inline in a chat it follows that chat's report; opened from the sidebar it follows the report opened last.
 -->
 <style>
   :root { --ink:#242424; --muted:#616161; --hairline:#E0E0E0; --paper:#FFFFFF; --soft:#F5F5F5; --accent:#0F6CBD;
-    --font:'Segoe UI', system-ui, -apple-system, sans-serif; color-scheme: light; }
+    --danger:#A4262C; --font:'Segoe UI', system-ui, -apple-system, sans-serif; color-scheme: light; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.5 var(--font); }
   .bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 10px 20px;
@@ -21,10 +23,45 @@
   .bar .brand { font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-right: auto; }
   button { font: inherit; font-size: 13px; padding: 5px 11px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--paper); color: var(--ink); cursor: pointer; }
   button:hover { background: var(--soft); }
+  button.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  button.primary:hover { background: #000; }
+  button.danger { color: var(--danger); }
+  button.link { border: 0; padding: 5px 6px; background: none; color: var(--muted); }
+  button.link:hover { color: var(--ink); background: none; }
+  input[type=text] { font: inherit; padding: 6px 10px; border: 1px solid var(--hairline); border-radius: 6px; min-width: 0; }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .status { font-size: 12px; color: var(--muted); min-width: 64px; text-align: right; }
   main { max-width: 1280px; margin: 0 auto; padding: 20px 20px 80px; }
   h1 { margin: 0 0 16px; font: 600 26px/1.2 var(--font); letter-spacing: -.01em; outline: none; border-radius: 4px; }
-  h1:focus { box-shadow: 0 0 0 2px var(--accent); }
+  h1[contenteditable]:focus { box-shadow: 0 0 0 2px var(--accent); }
+  [hidden] { display: none !important; }
+
+  /* home */
+  .home-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .home-head h1 { margin: 0 auto 0 0; }
+  .newform { display: flex; gap: 8px; margin: 0 0 16px; }
+  .newform input { flex: 1 1 auto; max-width: 480px; }
+  .search { width: 260px; margin-bottom: 12px; }
+  .list { border-top: 1px solid var(--hairline); }
+  .item { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-bottom: 1px solid var(--hairline); }
+  .item:hover { background: var(--soft); }
+  .item .main { flex: 1 1 auto; min-width: 0; cursor: pointer; }
+  .item .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .m { font-size: 12px; color: var(--muted); }
+  .item .badge { font-size: 11px; color: var(--accent); margin-left: 8px; font-weight: 600; }
+  .item input { width: 100%; max-width: 480px; }
+  details.deleted { margin-top: 28px; }
+  details.deleted summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .confirm { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--danger); }
+  .empty { margin: 24px 0; padding: 40px; border: 1px dashed var(--hairline); border-radius: 8px; color: var(--muted); text-align: center; }
+
+  /* menu */
+  .menu { position: fixed; z-index: 20; min-width: 160px; padding: 4px; background: var(--paper); border: 1px solid var(--hairline);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+  .menu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 4px; padding: 7px 10px; }
+  .dots { width: 30px; padding: 4px 0; text-align: center; }
+
+  /* editor */
   .row { display: flex; gap: 16px; align-items: flex-start; }
   .slot { height: 14px; margin: 2px 0; border-radius: 4px; }
   .slot.over { height: 36px; background: rgba(15,108,189,.08); outline: 2px dashed var(--accent); }
@@ -40,32 +77,57 @@
   .tools .grip { cursor: grab; }
   .chart iframe { display: block; width: 100%; height: 0; border: 0; background: #fff; }
   .chart .wait, .chart .err { padding: 24px 8px; color: var(--muted); font-size: 13px; }
-  .chart .err { color: #A4262C; }
+  .chart .err { color: var(--danger); }
   .text { min-height: 2.6em; padding: 4px 6px; outline: none; border-radius: 4px; white-space: pre-wrap; max-width: 75ch; }
   .text:focus { box-shadow: 0 0 0 2px var(--accent); }
   .text:empty::before { content: 'Write here…'; color: var(--muted); }
-  .empty { margin: 40px 0; padding: 40px; border: 1px dashed var(--hairline); border-radius: 8px; color: var(--muted); text-align: center; }
   .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
+
+  /* toast */
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; background: var(--ink); color: #fff; border-radius: 8px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.2); }
+  .toast button { background: none; border-color: rgba(255,255,255,.4); color: #fff; padding: 3px 9px; }
 </style></head>
 <body>
 <div class="bar">
-  <span class="brand">Zebra BI report</span>
-  <button id="add-text" title="Add a text row">+ Text</button>
-  <button id="reload" title="Reload from the report file">Reload</button>
+  <button class="link" id="back" hidden title="All reports">← All reports</button>
+  <span class="brand" id="brand">Zebra BI reports</span>
+  <span id="editor-actions" hidden>
+    <button id="add-text" title="Add a text row">+ Text</button>
+    <button id="reload" title="Reload from the report file">Reload</button>
+    <button class="dots" id="report-menu" title="More">⋯</button>
+  </span>
   <button id="full" title="Full screen">Full screen</button>
   <span class="status" id="status"></span>
 </div>
-<main>
+
+<main id="home" hidden>
+  <div class="home-head">
+    <h1>Reports</h1>
+    <button class="primary" id="new">New report</button>
+  </div>
+  <div class="newform" id="newform" hidden>
+    <input type="text" id="newtitle" placeholder="Title, for example P&amp;L close November 2026" maxlength="200">
+    <button class="primary" id="newcreate">Create</button>
+    <button id="newcancel">Cancel</button>
+  </div>
+  <input type="text" class="search" id="search" placeholder="Search reports" hidden>
+  <div id="list"></div>
+  <details class="deleted" id="deleted" hidden><summary id="deleted-sum"></summary><div class="list" id="deleted-list"></div></details>
+</main>
+
+<main id="editor" hidden>
   <h1 id="title" contenteditable="true" spellcheck="false"></h1>
   <div id="rows"></div>
   <p class="note" id="note"></p>
 </main>
+
 <script>
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var statusEl = $('status');
-  function status(s) { statusEl.textContent = s; }
+  function status(s) { $('status').textContent = s; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
   // ---------- this page as an MCP App ----------
   var nextId = 1, pending = {};
@@ -79,12 +141,13 @@
   function callTool(name, args) {
     return request('tools/call', { name: name, arguments: args || {} }).then(function (r) {
       if (r && r.isError) {
-        var t = (r.content || []).map(function (c) { return c.text || ''; }).join(' ');
-        var err = new Error(t || name + ' failed'); err.result = r; throw err;
+        var err = new Error((r.content || []).map(function (c) { return c.text || ''; }).join(' ') || name + ' failed');
+        err.result = r; throw err;
       }
       return r || {};
     });
   }
+  function sc(r) { return (r && r.structuredContent) || {}; }
   var sizeTimer = null;
   function reportSize() {
     clearTimeout(sizeTimer);
@@ -93,32 +156,196 @@
     }, 60);
   }
 
+  // ---------- toast ----------
+  var toastTimer = null;
+  function toast(message, action, onAction) {
+    var old = document.querySelector('.toast'); if (old) old.remove();
+    var t = el('div', 'toast'); t.appendChild(el('span', null, message));
+    if (action) { var b = el('button', null, action); b.onclick = function () { t.remove(); onAction(); }; t.appendChild(b); }
+    document.body.appendChild(t);
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.remove(); }, action ? 8000 : 4000);
+  }
+  function fail(e) { toast(e && e.message ? e.message : 'Something went wrong'); }
+
+  // ---------- menu ----------
+  function openMenu(anchor, items) {
+    closeMenu();
+    var m = el('div', 'menu'); m.id = 'menu';
+    items.forEach(function (it) {
+      var b = el('button', it.danger ? 'danger' : null, it.label);
+      b.onclick = function (e) { e.stopPropagation(); closeMenu(); it.run(); };
+      m.appendChild(b);
+    });
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect();
+    m.style.top = (r.bottom + 4) + 'px';
+    m.style.left = Math.max(8, Math.min(r.right - m.offsetWidth, window.innerWidth - m.offsetWidth - 8)) + 'px';
+  }
+  function closeMenu() { var m = $('menu'); if (m) m.remove(); }
+  document.addEventListener('click', function (e) { if (!e.target.closest('.menu') && !e.target.closest('.dots')) closeMenu(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenu(); });
+
   // ---------- state ----------
-  var rep = null, results = {}, errors = {}, rendererText = null, rendererError = null;
-  var saving = false, dirty = false, saveTimer = null, dragId = null;
+  var view = null, follow = 'last', lib = null, slug = null, rep = null, results = {}, errors = {};
+  var rendererText = null, rendererError = null;
+  var saving = false, dirty = false, saveTimer = null, dragId = null, busy = false;
 
-  function cellsById() {
-    var m = {};
-    rep.rows.forEach(function (row) { row.cells.forEach(function (c) { m[c.id] = c; }); });
-    return m;
-  }
-  function chartTitle(vid) {
-    var v = rep.visuals[vid]; return (v && v.args && v.args.title) || vid;
+  function show(which) {
+    view = which; closeMenu();
+    $('home').hidden = which !== 'home';
+    $('editor').hidden = which !== 'editor';
+    $('back').hidden = which !== 'editor';
+    $('editor-actions').hidden = which !== 'editor';
+    $('brand').textContent = which === 'editor' ? 'Zebra BI report' : 'Zebra BI reports';
+    status('');
   }
 
-  // ---------- nested Zebra BI renderer frames ----------
-  var frames = new Map();  // iframe -> {vid, sent, width}
+  // ---------- actions (every one is a tool call) ----------
+  function act(promise, after) {
+    busy = true;
+    return promise.then(function (r) { busy = false; return after ? after(r) : r; }, function (e) { busy = false; fail(e); });
+  }
+  function openReport(s) { return act(callTool('open_report', { report: s }), function () { return loadReport(s, true); }); }
+  function createReport(title) {
+    return act(callTool('create_report', { title: title }), function (r) { return loadReport(sc(r).report, true); });
+  }
+  function renameReport(s, title) { return act(callTool('rename_report', { report: s, title: title }), function () { toast('Renamed'); return refreshLibrary(); }); }
+  function duplicateReport(s, title, openIt) {
+    return act(callTool('duplicate_report', { report: s, title: title || undefined }), function (r) {
+      var copy = sc(r).report;
+      if (openIt) return loadReport(copy, true).then(function () { toast('Opened the copy'); });
+      return refreshLibrary().then(function () { toast('Duplicated', 'Open', function () { openReport(copy); }); });
+    });
+  }
+  function deleteReport(s, title) {
+    return act(callTool('delete_report', { report: s }), function () {
+      if (slug === s) { slug = null; rep = null; }
+      return goHome().then(function () {
+        toast('Moved “' + title + '” to Recently deleted', 'Undo', function () {
+          act(callTool('restore_report', { report: s }), function (r) { return loadReport(sc(r).report, true); });
+        });
+      });
+    });
+  }
+  function restoreReport(entry) { return act(callTool('restore_report', { report: entry }), function () { toast('Restored'); return refreshLibrary(); }); }
+  function purgeReport(entry) { return act(callTool('purge_report', { entry: entry }), function () { toast('Deleted for good'); return refreshLibrary(); }); }
+
+  // ---------- home ----------
+  function ago(iso) {
+    if (!iso) return '';
+    var s = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (isNaN(s)) return '';
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    if (s < 86400) return Math.round(s / 3600) + ' h ago';
+    if (s < 30 * 86400) return Math.round(s / 86400) + ' d ago';
+    return new Date(iso).toLocaleDateString();
+  }
+  function plural(n, one) { return n + ' ' + one + (n === 1 ? '' : 's'); }
+
+  function refreshLibrary() {
+    return callTool('library').then(function (r) { lib = sc(r); if (view === 'home') renderHome(); }, fail);
+  }
+  function goHome() { show('home'); return refreshLibrary(); }
+
+  function renderHome() {
+    var reports = lib.reports || [], q = $('search').value.trim().toLowerCase();
+    $('search').hidden = reports.length <= 8;
+    var list = $('list'); list.innerHTML = '';
+    if (!reports.length) {
+      var e = el('div', 'empty'); e.textContent = 'No reports yet. Ask in the chat, for example “build a Zebra BI report of the October P&L”, or start one here with New report.';
+      list.appendChild(e);
+    } else {
+      var box = el('div', 'list');
+      reports.filter(function (r) { return !q || r.title.toLowerCase().indexOf(q) >= 0; }).forEach(function (r) { box.appendChild(reportItem(r)); });
+      list.appendChild(box);
+    }
+    var del = lib.deleted || [];
+    $('deleted').hidden = !del.length;
+    $('deleted-sum').textContent = 'Recently deleted (' + del.length + '), kept for 30 days';
+    var dl = $('deleted-list'); dl.innerHTML = '';
+    del.forEach(function (d) { dl.appendChild(deletedItem(d)); });
+    reportSize();
+  }
+
+  function reportItem(r) {
+    var item = el('div', 'item'), main = el('div', 'main');
+    var t = el('div', 't', r.title);
+    if (r.report === (slug || (follow === 'last' ? lib.last : lib.current))) t.appendChild(el('span', 'badge', 'current'));
+    main.appendChild(t);
+    main.appendChild(el('div', 'm', ['edited ' + ago(r.saved_at), plural(r.charts, 'chart'), plural(r.rows, 'row')].join(' · ')));
+    main.onclick = function () { openReport(r.report); };
+    var dots = el('button', 'dots', '⋯'); dots.title = 'More';
+    dots.onclick = function (e) {
+      e.stopPropagation();
+      openMenu(dots, [
+        { label: 'Open', run: function () { openReport(r.report); } },
+        { label: 'Rename', run: function () { renameInline(item, main, r); } },
+        { label: 'Duplicate', run: function () { duplicateReport(r.report, null, false); } },
+        { label: 'Delete', danger: true, run: function () { deleteReport(r.report, r.title); } }
+      ]);
+    };
+    item.appendChild(main); item.appendChild(dots);
+    return item;
+  }
+
+  function renameInline(item, main, r) {
+    var input = el('input'); input.type = 'text'; input.value = r.title; input.maxLength = 200;
+    main.replaceWith(input); input.focus(); input.select(); busy = true;
+    var done = false;
+    function finish(save) {
+      if (done) return; done = true; busy = false;
+      var title = input.value.trim();
+      if (save && title && title !== r.title) renameReport(r.report, title); else renderHome();
+    }
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', function () { finish(true); });
+  }
+
+  function deletedItem(d) {
+    var item = el('div', 'item'), main = el('div', 'main');
+    main.style.cursor = 'default';
+    main.appendChild(el('div', 't', d.title));
+    main.appendChild(el('div', 'm', 'deleted ' + ago(d.deleted_at)));
+    var restore = el('button', null, 'Restore'); restore.onclick = function () { restoreReport(d.entry); };
+    var forever = el('button', 'danger', 'Delete forever');
+    forever.onclick = function () {
+      var c = el('div', 'confirm'); c.appendChild(el('span', null, 'Delete “' + d.title + '” forever? This cannot be undone.'));
+      var yes = el('button', 'danger', 'Delete forever'); yes.onclick = function () { purgeReport(d.entry); };
+      var no = el('button', null, 'Cancel'); no.onclick = function () { renderHome(); };
+      c.appendChild(yes); c.appendChild(no);
+      restore.remove(); forever.replaceWith(c);
+    };
+    item.appendChild(main); item.appendChild(restore); item.appendChild(forever);
+    return item;
+  }
+
+  $('new').onclick = function () { $('newform').hidden = false; $('newtitle').value = ''; $('newtitle').focus(); };
+  $('newcancel').onclick = function () { $('newform').hidden = true; };
+  // no <form>: hosts sandbox the app without allow-forms, where a form never fires submit
+  function submitNew() {
+    var title = $('newtitle').value.trim(); if (!title) { $('newtitle').focus(); return; }
+    $('newform').hidden = true; createReport(title);
+  }
+  $('newcreate').onclick = submitNew;
+  $('newtitle').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitNew(); if (e.key === 'Escape') $('newform').hidden = true; });
+  $('search').addEventListener('input', renderHome);
+
+  // ---------- editor: nested Zebra BI renderer frames ----------
+  var frames = new Map();  // iframe -> {vid, sent}
+  function chartTitle(vid) { var v = rep.visuals[vid]; return (v && v.args && v.args.title) || vid; }
+  function cellsById() { var m = {}; rep.rows.forEach(function (row) { row.cells.forEach(function (c) { m[c.id] = c; }); }); return m; }
   function mountChart(box, cell) {
     var vid = cell.visual;
-    if (errors[vid]) { box.innerHTML = '<div class="err"></div>'; box.firstChild.textContent = errors[vid]; return; }
-    if (rendererError) { box.innerHTML = '<div class="err"></div>'; box.firstChild.textContent = rendererError; return; }
-    if (!results[vid] || !rendererText) { box.innerHTML = '<div class="wait">Drawing ' + escapeHtml(chartTitle(vid)) + '…</div>'; return; }
+    if (rendererError) { box.appendChild(el('div', 'err', rendererError)); return; }
+    if (errors[vid]) { box.appendChild(el('div', 'err', errors[vid])); return; }
+    if (!results[vid] || !rendererText) { box.appendChild(el('div', 'wait', 'Drawing ' + chartTitle(vid) + '…')); return; }
     var f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts');
     f.setAttribute('scrolling', 'no');  // the frame takes the height the renderer reports; no inner scrollbar
     f.setAttribute('title', chartTitle(vid));
     box.appendChild(f);
-    frames.set(f, { vid: vid, sent: false, width: box.clientWidth });
+    frames.set(f, { vid: vid, sent: false });
     f.srcdoc = rendererText;
   }
   function frameFor(src) { var hit = null; frames.forEach(function (st, f) { if (f.contentWindow === src) hit = f; }); return hit; }
@@ -159,40 +386,40 @@
     } else if (m.id != null && m.method) {
       window.parent.postMessage({ jsonrpc: '2.0', id: m.id, result: {} }, '*');
     } else if (m.method === 'ui/notifications/tool-result') {
-      refresh();  // open_report ran: show what it opened
+      var s = sc(m.params).report;  // the host ran open_report / create_report / ... for this view: show its report
+      if (s && s !== slug && started) loadReport(s, true);
+      else if (s && !started) launchSlug = s;
     }
   });
 
-  // ---------- rendering ----------
-  // **bold** shown bold outside editing, as the story pages do (story.para)
-  function formatted(text) { return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+  // ---------- editor: rendering ----------
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function formatted(text) { return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }  // **bold**, as story.para
 
-  function render() {
+  function renderEditor() {
     frames.clear();
     if (document.activeElement !== $('title')) $('title').textContent = rep.title;
     var host = $('rows'); host.innerHTML = '';
     if (!rep.rows.length) {
-      host.innerHTML = '<div class="empty">This report is empty. Ask in the chat, for example ' +
-        '<i>“add a chart of sales by region against plan to the report”</i>, or add text with <b>+ Text</b>.</div>';
+      host.appendChild(el('div', 'empty', 'This report is empty. Ask in the chat, for example “add a chart of sales by region against plan to the report”, or add text with + Text.'));
     }
     host.appendChild(slot(0));
     rep.rows.forEach(function (row, ri) {
-      var r = document.createElement('div'); r.className = 'row';
+      var r = el('div', 'row');
       row.cells.forEach(function (cell) { r.appendChild(cellEl(cell, ri)); });
       host.appendChild(r);
       host.appendChild(slot(ri + 1));
     });
     $('note').textContent = rep.rows.length ? 'Drag a cell by ⠿ to move it, into another row (up to 3 side by side) or between rows. Saved to the report file on this computer.' : '';
-    // mount charts once the row widths are known
     requestAnimationFrame(function () {
-      document.querySelectorAll('.chart').forEach(function (box) { mountChart(box, cellsById()[box.dataset.cell]); });
+      var byId = cellsById();
+      document.querySelectorAll('.chart').forEach(function (box) { mountChart(box, byId[box.dataset.cell]); });
       reportSize();
     });
   }
 
   function slot(index) {
-    var s = document.createElement('div'); s.className = 'slot';
+    var s = el('div', 'slot');
     s.addEventListener('dragover', function (e) { if (dragId) { e.preventDefault(); s.classList.add('over'); } });
     s.addEventListener('dragleave', function () { s.classList.remove('over'); });
     s.addEventListener('drop', function (e) { e.preventDefault(); s.classList.remove('over'); moveCell(dragId, { newRow: index }); });
@@ -200,50 +427,47 @@
   }
 
   function cellEl(cell, ri) {
-    var el = document.createElement('div'); el.className = 'cell'; el.dataset.cell = cell.id;
-    var tools = document.createElement('div'); tools.className = 'tools';
-    var grip = document.createElement('span'); grip.className = 'grip'; grip.textContent = '⠿'; grip.title = 'Drag to move';
-    grip.draggable = true;
+    var c = el('div', 'cell'); c.dataset.cell = cell.id;
+    var tools = el('div', 'tools');
+    var grip = el('span', 'grip', '⠿'); grip.title = 'Drag to move'; grip.draggable = true;
     grip.addEventListener('dragstart', function (e) {
-      dragId = cell.id; el.classList.add('dragging');
+      dragId = cell.id; c.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', cell.id);
     });
-    grip.addEventListener('dragend', function () { dragId = null; el.classList.remove('dragging'); });
-    var del = document.createElement('span'); del.textContent = '✕'; del.title = 'Remove from the report';
+    grip.addEventListener('dragend', function () { dragId = null; c.classList.remove('dragging'); });
+    var del = el('span', null, '✕'); del.title = 'Remove from the report';
     del.addEventListener('click', function () { removeCell(cell.id); });
-    tools.appendChild(grip); tools.appendChild(del); el.appendChild(tools);
-
+    tools.appendChild(grip); tools.appendChild(del); c.appendChild(tools);
     if (cell.type === 'chart') {
-      var box = document.createElement('div'); box.className = 'chart'; box.dataset.cell = cell.id;
-      el.appendChild(box);
+      var box = el('div', 'chart'); box.dataset.cell = cell.id; c.appendChild(box);
     } else {
-      var t = document.createElement('div'); t.className = 'text'; t.contentEditable = 'true';
-      var show = function () { t.innerHTML = formatted(cell.text); };
-      show();
+      var t = el('div', 'text'); t.contentEditable = 'true';
+      var shown = function () { t.innerHTML = formatted(cell.text); };
+      shown();
       t.addEventListener('focus', function () { t.textContent = cell.text; });  // edit the plain text, **bold** marks and all
-      t.addEventListener('blur', show);
+      t.addEventListener('blur', shown);
       t.addEventListener('input', function () { cell.text = t.innerText.replace(/\n$/, ''); scheduleSave(); });
-      el.appendChild(t);
+      c.appendChild(t);
     }
-    el.addEventListener('dragover', function (e) {
+    c.addEventListener('dragover', function (e) {
       if (!dragId || dragId === cell.id) return;
-      var full = rep.rows[ri].cells.length >= 3 && !rep.rows[ri].cells.some(function (c) { return c.id === dragId; });
+      var full = rep.rows[ri].cells.length >= 3 && !rep.rows[ri].cells.some(function (x) { return x.id === dragId; });
       if (full) return;
       e.preventDefault();
-      var rect = el.getBoundingClientRect(), after = e.clientX > rect.left + rect.width / 2;
-      el.classList.toggle('over-after', after); el.classList.toggle('over-before', !after);
+      var rect = c.getBoundingClientRect(), after = e.clientX > rect.left + rect.width / 2;
+      c.classList.toggle('over-after', after); c.classList.toggle('over-before', !after);
     });
-    el.addEventListener('dragleave', function () { el.classList.remove('over-after', 'over-before'); });
-    el.addEventListener('drop', function (e) {
+    c.addEventListener('dragleave', function () { c.classList.remove('over-after', 'over-before'); });
+    c.addEventListener('drop', function (e) {
       e.preventDefault();
-      var after = el.classList.contains('over-after');
-      el.classList.remove('over-after', 'over-before');
+      var after = c.classList.contains('over-after');
+      c.classList.remove('over-after', 'over-before');
       moveCell(dragId, { beside: cell.id, after: after });
     });
-    return el;
+    return c;
   }
 
-  // ---------- edits ----------
+  // ---------- editor: edits, saved through save_layout ----------
   function takeCell(id) {
     for (var ri = 0; ri < rep.rows.length; ri++) {
       var cells = rep.rows[ri].cells;
@@ -252,15 +476,11 @@
     return null;
   }
   function prune() { rep.rows = rep.rows.filter(function (r) { return r.cells.length; }); }
-
   function moveCell(id, where) {
-    if (!id) return;
-    if (where.beside === id) return;
+    if (!id || where.beside === id) return;
     var cell = takeCell(id); if (!cell) return;
     if (where.newRow != null) {
-      // count rows before the slot that are still there after removing the cell
-      var idx = where.newRow;
-      var emptied = rep.rows.findIndex(function (r) { return !r.cells.length; });
+      var idx = where.newRow, emptied = rep.rows.findIndex(function (r) { return !r.cells.length; });
       if (emptied >= 0 && emptied < idx) idx -= 1;
       prune();
       rep.rows.splice(Math.max(0, Math.min(idx, rep.rows.length)), 0, { cells: [cell] });
@@ -272,17 +492,16 @@
       }
     }
     dragId = null;
-    render(); saveNow();
+    renderEditor(); saveNow();
   }
-  function removeCell(id) { takeCell(id); prune(); render(); saveNow(); }
+  function removeCell(id) { takeCell(id); prune(); renderEditor(); saveNow(); }
   function addText() {
-    var used = []; rep.rows.forEach(function (r) { r.cells.forEach(function (c) { used.push(+c.id.slice(1)); }); });
-    var id = 'c' + (Math.max.apply(null, used.concat([0])) + 1);
+    var used = [0]; rep.rows.forEach(function (r) { r.cells.forEach(function (c) { used.push(+c.id.slice(1)); }); });
+    var id = 'c' + (Math.max.apply(null, used) + 1);
     rep.rows.push({ cells: [{ id: id, type: 'text', text: '' }] });
-    render(); saveNow();
+    renderEditor(); saveNow();
     setTimeout(function () { var t = document.querySelector('[data-cell="' + id + '"] .text'); if (t) t.focus(); }, 50);
   }
-
   function scheduleSave() { dirty = true; status('Editing…'); clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 700); }
   function saveNow() {
     clearTimeout(saveTimer); dirty = true;
@@ -291,51 +510,88 @@
     var rows = rep.rows.map(function (r) { return { cells: r.cells.map(function (c) {
       return c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual } : { id: c.id, type: 'text', text: c.text };
     }) }; });
-    callTool('save_layout', { rev: rep.rev, title: $('title').textContent, rows: rows }).then(function (r) {
-      rep.rev = r.structuredContent.rev; dirty = false; saving = false; status('Saved');
+    callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows }).then(function (r) {
+      rep.rev = sc(r).rev; dirty = false; saving = false; status('Saved');
     }, function (e) {
       saving = false; dirty = false;
-      var sc = e.result && e.result.structuredContent;
-      status(sc && sc.conflict ? 'Changed elsewhere, reloaded' : 'Not saved');
-      if (sc && sc.conflict) refresh(true);
+      var s = e.result && e.result.structuredContent;
+      if (s && s.gone) { reportGone(); return; }
+      status(s && s.conflict ? 'Changed elsewhere, reloaded' : 'Not saved');
+      if (s && s.conflict) poll(true);
     });
   }
 
-  // ---------- loading ----------
-  function refresh(force) {
-    if (dirty || saving || dragId) return Promise.resolve();
-    return callTool('get_report', force || !rep ? {} : { since: rep.rev }).then(function (r) {
-      var sc = r.structuredContent || {};
-      if (sc.unchanged) return;
-      rep = sc.report; results = sc.results || {}; errors = sc.errors || {};
-      render(); status('');
-    }, function (e) { status('Could not load'); $('rows').innerHTML = '<div class="empty"></div>'; $('rows').firstChild.textContent = e.message; });
+  // ---------- loading and following ----------
+  function loadReport(s, force) {
+    slug = s; dirty = false;
+    return callTool('get_report', { report: s, follow: 'none' }).then(function (r) {
+      var d = sc(r);
+      if (d.gone) { reportGone(); return; }
+      rep = d.report; results = d.results || {}; errors = d.errors || {};
+      show('editor'); renderEditor();
+    }, fail);
+  }
+  function reportGone() { slug = null; rep = null; goHome().then(function () { toast('This report was deleted. It is in Recently deleted.'); }); }
+  function poll(force) {
+    if (view !== 'editor' || dirty || saving || dragId || busy || !slug) return Promise.resolve();
+    return callTool('get_report', { report: slug, follow: follow, since: force ? undefined : rep && rep.rev }).then(function (r) {
+      var d = sc(r);
+      if (d.switched) {
+        return loadReport(d.switched).then(function () { toast('Opened in chat: ' + (rep ? rep.title : d.switched)); });
+      }
+      if (d.gone) { reportGone(); return; }
+      if (d.unchanged) return;
+      rep = d.report; results = d.results || {}; errors = d.errors || {};
+      renderEditor(); status('');
+    }, function () { status('Not connected'); });
   }
 
   $('title').addEventListener('input', scheduleSave);
   $('title').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('title').blur(); } });
+  $('back').onclick = function () { goHome(); };
   $('add-text').onclick = addText;
-  $('reload').onclick = function () { refresh(true); };
+  $('reload').onclick = function () { poll(true); };
+  $('report-menu').onclick = function (e) {
+    e.stopPropagation();
+    openMenu($('report-menu'), [
+      { label: 'Duplicate', run: function () { duplicateReport(slug, null, true); } },
+      { label: 'All reports', run: function () { goHome(); } },
+      { label: 'Delete', danger: true, run: function () { deleteReport(slug, rep.title); } }
+    ]);
+  };
   $('full').onclick = function () { request('ui/request-display-mode', { mode: 'fullscreen' }).catch(function () {}); };
 
   var lastWidth = window.innerWidth;
   window.addEventListener('resize', function () {
-    if (rep && Math.abs(window.innerWidth - lastWidth) > 40) { lastWidth = window.innerWidth; render(); }
+    if (view === 'editor' && rep && Math.abs(window.innerWidth - lastWidth) > 40) { lastWidth = window.innerWidth; renderEditor(); }
   });
 
+  // ---------- start ----------
+  var started = false, launchSlug = null;
   status('Connecting…');
   request('ui/initialize', {
     appInfo: { name: 'zebra-bi-report', version: '1' },
     appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
     protocolVersion: '2026-01-26'
-  }).then(function () {
+  }).then(function (init) {
+    var ctx = (init && init.hostContext) || {};
+    follow = ctx.displayMode === 'inline' ? 'thread' : 'last';  // in a chat: that chat's report; in the sidebar: the last one
     notify('ui/notifications/initialized');
     status('Loading…');
-    return callTool('get_renderer').then(function (r) { rendererText = r.structuredContent.renderer; },
-      function (e) { rendererError = e.message; });
-  }).then(function () { return refresh(true); }).then(function () {
-    setInterval(function () { if (!document.hidden) refresh(false); }, 4000);
-  }, function (e) { status('Not connected'); });
+    return callTool('get_renderer').then(function (r) { rendererText = sc(r).renderer; }, function (e) { rendererError = e.message; });
+  }).then(function () {
+    return callTool('library');
+  }).then(function (r) {
+    lib = sc(r); started = true;
+    var s = launchSlug || (follow === 'last' ? lib.last : lib.current);
+    return s ? loadReport(s) : goHome();
+  }).then(function () {
+    setInterval(function () {
+      if (document.hidden) return;
+      if (view === 'editor') poll(false);
+      else if (view === 'home' && !busy && !$('menu') && $('newform').hidden) refreshLibrary();
+    }, 4000);
+  }, function () { status('Not connected'); });
 })();
 </script>
 </body></html>
