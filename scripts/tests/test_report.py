@@ -162,13 +162,15 @@ class Server(unittest.TestCase):
     def test_tools_entrypoints_and_visibility(self):
         tools = {t["name"]: t for t in self.rpc("tools/list")["result"]["tools"]}
         self.assertEqual(tools["open_report"]["_meta"]["openai/ui"]["entrypoints"], [{"type": "global"}, {"type": "thread"}])
-        self.assertEqual(tools["open_report"]["_meta"]["ui"]["resourceUri"], "ui://zebra-bi/report-builder-v1.html")
+        self.assertRegex(tools["open_report"]["_meta"]["ui"]["resourceUri"], r"^ui://zebra-bi/report-builder-[0-9a-f]{12}\.html$")
+        self.uri = tools["open_report"]["_meta"]["ui"]["resourceUri"]
         for app_only in ("get_report", "get_renderer", "save_layout"):
             self.assertEqual(tools[app_only]["_meta"]["ui"]["visibility"], ["app"])
         self.assertNotIn("_meta", tools["add_chart"])
 
     def test_app_page_nests_through_srcdoc(self):
-        res = self.rpc("resources/read", {"uri": "ui://zebra-bi/report-builder-v1.html"})["result"]["contents"][0]
+        uri = self.rpc("resources/list")["result"]["resources"][0]["uri"]
+        res = self.rpc("resources/read", {"uri": uri})["result"]["contents"][0]
         self.assertEqual(res["mimeType"], "text/html;profile=mcp-app")
         self.assertIn("ui/initialize", res["text"])
         self.assertIn("f.srcdoc = rendererText", res["text"])
