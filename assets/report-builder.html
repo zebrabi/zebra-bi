@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zebra BI reports</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;700&amp;display=swap">
 <!--
   The Zebra BI report builder, an MCP App served by report_server.py. Two views: the home ("All reports": open,
   create, rename, duplicate, delete, Recently deleted) and the editor (rows of up to three chart or text cells).
@@ -14,26 +15,31 @@
   Opened inline in a chat it follows that chat's report; opened from the sidebar it follows the report opened last.
 -->
 <style>
-  :root { --ink:#242424; --muted:#616161; --hairline:#E0E0E0; --paper:#FFFFFF; --soft:#F5F5F5; --accent:#0F6CBD;
-    --danger:#A4262C; --font:'Segoe UI', system-ui, -apple-system, sans-serif; color-scheme: light; }
+  /* Zebra BI brand: black and Power BI yellow on white, Open Sans Light and Bold (the system font where it cannot
+     load). Yellow is a fill with black text on it; focus rings and drag markers stay black, which reads on white.
+     The charts keep their IBCS colours. */
+  :root { --ink:#000000; --muted:#5f6264; --hairline:#d9dadb; --paper:#ffffff; --soft:#f4f4f4; --accent:#FFD800;
+    --accent-dark:#FBBA00; --focus:#000000; --danger:#A4262C; --font:'Open Sans', system-ui, -apple-system, sans-serif;
+    color-scheme: light; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.5 var(--font); }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 300 14px/1.5 var(--font); }
+  b, strong { font-weight: 700; }
   .bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 10px 20px;
     background: rgba(255,255,255,.96); border-bottom: 1px solid var(--hairline); }
-  .bar .brand { font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-right: auto; }
+  .bar .brand { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-right: auto; }
   button { font: inherit; font-size: 13px; padding: 5px 11px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--paper); color: var(--ink); cursor: pointer; }
   button:hover { background: var(--soft); }
-  button.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
-  button.primary:hover { background: #000; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
+  button.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
   button.danger { color: var(--danger); }
   button.link { border: 0; padding: 5px 6px; background: none; color: var(--muted); }
   button.link:hover { color: var(--ink); background: none; }
   input[type=text] { font: inherit; padding: 6px 10px; border: 1px solid var(--hairline); border-radius: 6px; min-width: 0; }
-  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input[type=text]:focus { outline: 2px solid var(--focus); outline-offset: -1px; }
   .status { font-size: 12px; color: var(--muted); min-width: 64px; text-align: right; }
   main { max-width: 1280px; margin: 0 auto; padding: 20px 20px 80px; }
-  h1 { margin: 0 0 16px; font: 600 26px/1.2 var(--font); letter-spacing: -.01em; outline: none; border-radius: 4px; }
-  h1[contenteditable]:focus { box-shadow: 0 0 0 2px var(--accent); }
+  h1 { margin: 0 0 16px; font: 700 26px/1.2 var(--font); letter-spacing: -.01em; outline: none; border-radius: 4px; }
+  h1[contenteditable]:focus { box-shadow: 0 0 0 2px var(--focus); }
   [hidden] { display: none !important; }
 
   /* home */
@@ -46,10 +52,11 @@
   .item { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-bottom: 1px solid var(--hairline); }
   .item:hover { background: var(--soft); }
   .item .main { flex: 1 1 auto; min-width: 0; cursor: pointer; border-radius: 4px; }
-  .item .main:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .item .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .main:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .item .t { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item .m { font-size: 12px; color: var(--muted); }
-  .item .badge { font-size: 11px; color: var(--accent); margin-left: 8px; font-weight: 600; }
+  .item .badge { font-size: 11px; color: var(--ink); background: var(--accent); border-radius: 3px; padding: 1px 6px;
+    margin-left: 8px; font-weight: 700; }
   .item input { width: 100%; max-width: 480px; }
   details.deleted { margin-top: 28px; }
   details.deleted summary { cursor: pointer; color: var(--muted); font-size: 13px; }
@@ -65,11 +72,11 @@
   /* editor */
   .row { display: flex; gap: 16px; align-items: flex-start; }
   .slot { height: 14px; margin: 2px 0; border-radius: 4px; }
-  .slot.over { height: 36px; background: rgba(15,108,189,.08); outline: 2px dashed var(--accent); }
+  .slot.over { height: 36px; background: rgba(255,216,0,.18); outline: 2px dashed var(--focus); }
   .cell { position: relative; flex: 1 1 0; min-width: 0; border: 1px solid transparent; border-radius: 8px; padding: 6px; }
   .cell:hover { border-color: var(--hairline); }
-  .cell.over-before { box-shadow: -3px 0 0 var(--accent); }
-  .cell.over-after { box-shadow: 3px 0 0 var(--accent); }
+  .cell.over-before { box-shadow: -3px 0 0 var(--focus); }
+  .cell.over-after { box-shadow: 3px 0 0 var(--focus); }
   .cell.dragging { opacity: .4; }
   .tools { position: absolute; top: 4px; right: 4px; display: none; gap: 4px; z-index: 2; }
   .cell:hover .tools { display: flex; }
@@ -80,20 +87,20 @@
   .chart .wait, .chart .err { padding: 24px 8px; color: var(--muted); font-size: 13px; }
   .chart .err { color: var(--danger); }
   .text { min-height: 2.6em; padding: 4px 6px; outline: none; border-radius: 4px; white-space: pre-wrap; max-width: 75ch; }
-  .text:focus { box-shadow: 0 0 0 2px var(--accent); }
+  .text:focus { box-shadow: 0 0 0 2px var(--focus); }
   .text:empty::before { content: 'Write here…'; color: var(--muted); }
   .chart-note { min-height: 1.6em; margin-top: 8px; font-size: 13px; }
   .chart-note:empty::before { content: 'Add the evidence: the numbers from this chart that prove its message…'; }
   .key, .chart-msg, .kpi .v, .kpi .l { outline: none; border-radius: 4px; white-space: pre-wrap; }
-  .key:focus, .chart-msg:focus, .kpi .v:focus, .kpi .l:focus { box-shadow: 0 0 0 2px var(--accent); }
-  .key { min-height: 1.5em; margin: -6px 0 14px; font-size: 17px; font-weight: 600; line-height: 1.4; max-width: 75ch; }
+  .key:focus, .chart-msg:focus, .kpi .v:focus, .kpi .l:focus { box-shadow: 0 0 0 2px var(--focus); }
+  .key { min-height: 1.5em; margin: -6px 0 14px; font-size: 17px; font-weight: 700; line-height: 1.4; max-width: 75ch; }
   .key:empty::before { content: 'Add the key message: what happened, how big, against what…'; color: var(--muted); font-weight: 400; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 0 0 18px; }
   .kpi { border-top: 2px solid var(--ink); padding-top: 6px; }
   .kpi .v { font-size: 20px; font-weight: 700; }
   .kpi .l { font-size: 12px; color: var(--muted); }
   .chart-head { display: flex; align-items: flex-start; gap: 4px; margin: 0 56px 6px 0; }
-  .chart-msg { flex: 1 1 auto; min-height: 1.4em; font-weight: 600; padding: 2px 4px; }
+  .chart-msg { flex: 1 1 auto; min-height: 1.4em; font-weight: 700; padding: 2px 4px; }
   .chart-msg:empty::before { content: 'Add the message for this chart…'; color: var(--muted); font-weight: 400; }
   .why-btn { border: 0; background: none; padding: 2px 4px; color: var(--muted); }
   .why-text { font-size: 12px; color: var(--muted); margin: 0 0 6px 4px; }
@@ -101,7 +108,7 @@
     color: var(--danger); font-size: 12px; }
   .flag button { font-size: 12px; padding: 2px 8px; }
   #layouts { display: inline-flex; gap: 4px; margin-right: 8px; }
-  #layouts button[aria-pressed=true] { background: var(--ink); border-color: var(--ink); color: #fff; }
+  #layouts button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
   .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
 
   /* toast, at the top: ChatGPT lays its own composer over the bottom of the app */

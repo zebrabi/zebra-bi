@@ -529,6 +529,17 @@ class Server(unittest.TestCase):
         self.assertIn("f.srcdoc = rendererText", res["text"])
         self.assertNotIn("createObjectURL", res["text"])
 
+    def test_the_builder_wears_the_zebra_bi_brand(self):
+        res = self.rpc("resources/list")["result"]["resources"][0]
+        fonts = ["https://fonts.googleapis.com", "https://fonts.gstatic.com"]
+        self.assertEqual(res["_meta"]["ui"]["csp"]["resourceDomains"], fonts)
+        read = self.rpc("resources/read", {"uri": res["uri"]})["result"]["contents"][0]
+        self.assertEqual(read["_meta"]["openai/widgetCSP"]["resource_domains"], fonts)
+        self.assertIn("--accent:#FFD800", read["text"])
+        self.assertIn("'Open Sans'", read["text"])
+        self.assertIn("fonts.googleapis.com/css2?family=Open+Sans:wght@300;700", read["text"])
+        self.assertNotIn("#0F6CBD", read["text"])  # the old blue is gone
+
     def test_open_with_no_reports_opens_the_empty_home(self):
         out = self.tool("open_report")
         self.assertIsNone(out["structuredContent"]["report"])
