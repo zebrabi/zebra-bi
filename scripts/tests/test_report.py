@@ -225,6 +225,54 @@ class Draft(unittest.TestCase):
             R.validate(dict(self.rep, layout="grid"))
 
 
+class Layouts(unittest.TestCase):
+    """Named layouts rearrange the same cells: charts by how much they move, largest first, text after its chart."""
+
+    def setUp(self):
+        self.rep = R.new("Layouts")
+        chart = lambda name, size: {"title": name, "chart_type": "variance", "columns": ["Item", "AC", "PL"],
+                                    "measure": {"name": name, "Val": "AC", "PL": "PL"}, "rows": [["a", size, 0]]}
+        R.add_chart(self.rep, chart("small", 1), message="m", note="n")
+        R.add_chart(self.rep, chart("middle", 10), row=1, message="m", note="n")
+        R.add_text(self.rep, "About the middle chart.", row=1)  # row 1 is now full: small, middle, text
+        R.add_chart(self.rep, chart("big", 100), message="m", note="n")
+        cells = {c["id"]: c for r in self.rep["rows"] for c in r["cells"]}
+        self.middle_id = next(i for i, c in cells.items() if c.get("visual") == "middle")
+        self.text_id = next(i for i, c in cells.items() if c["type"] == "text")
+
+    def test_layouts_rearrange_the_same_cells(self):
+        before = sorted(c["id"] for r in self.rep["rows"] for c in r["cells"])
+        for layout in R.LAYOUTS:
+            R.arrange(self.rep, layout)
+            self.assertEqual(sorted(c["id"] for r in self.rep["rows"] for c in r["cells"]), before)
+            self.assertTrue(all(1 <= len(r["cells"]) <= 3 for r in self.rep["rows"]))
+            self.assertEqual(self.rep["layout"], layout)
+            R.validate(self.rep)
+
+    def test_variance_walk_puts_each_chart_alone_largest_first(self):
+        R.arrange(self.rep, "variance-walk")
+        charts = [r["cells"][0] for r in self.rep["rows"] if r["cells"][0]["type"] == "chart"]
+        self.assertTrue(all(len(r["cells"]) == 1 for r in self.rep["rows"]))
+        self.assertEqual([c["visual"] for c in charts], ["big", "middle", "small"])
+
+    def test_text_follows_its_chart(self):
+        R.arrange(self.rep, "one-pager")
+        ids = [[c["id"] for c in r["cells"]] for r in self.rep["rows"]]
+        row_of = {cid: i for i, r in enumerate(ids) for cid in r}
+        self.assertEqual(row_of[self.text_id], row_of[self.middle_id] + 1)
+        self.assertEqual(len(ids[0]), 1)  # the largest chart alone on top
+
+    def test_a_single_chart_and_an_unknown_layout(self):
+        sys.path.insert(0, HERE)
+        from test_numbercheck import PNL
+        one = R.new("One")
+        R.add_chart(one, PNL, message="m", note="n")
+        R.arrange(one, "board-pack")
+        self.assertEqual(len(one["rows"]), 1)
+        with self.assertRaises(ValueError):
+            R.arrange(one, "grid")
+
+
 class Files(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
