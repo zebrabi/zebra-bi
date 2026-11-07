@@ -326,7 +326,7 @@ class Server(unittest.TestCase):
         self.assertFalse(tools["delete_report"]["annotations"]["destructiveHint"])  # restorable
         self.assertTrue(tools["purge_report"]["annotations"]["destructiveHint"])
         for model in ("create_report", "list_reports", "rename_report", "duplicate_report", "delete_report", "restore_report",
-                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf"):
+                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf", "read_chart"):
             self.assertNotEqual(tools[model].get("_meta", {}).get("ui", {}).get("visibility"), ["app"], model)
 
     def test_app_page_nests_through_srcdoc(self):
@@ -439,6 +439,16 @@ class Server(unittest.TestCase):
         self.tool("create_report", {"title": "November"}, thread="chat-1")
         self.assertEqual(self.tool("open_report", {}, thread="plugin")["structuredContent"]["report"], "november")
         self.assertEqual(self.tool("library", {}, thread="plugin")["structuredContent"]["last"], "november")
+
+    def test_read_chart_gives_the_rows_behind_a_note(self):
+        slug = self.tool("create_report", {"title": "Q4"})["structuredContent"]["report"]
+        cache(os.path.join(self.tmp, "reports", slug), "sales-by-region", ARGS, endpoint=FAKE_MCP)
+        self.tool("add_chart", {"chart": ARGS, "note": "West led."})
+        self.tool("add_text", {"text": "x"})
+        out = self.tool("read_chart", {"cell": "c1"})
+        self.assertEqual(out["structuredContent"]["chart"]["rows"], ARGS["rows"])
+        self.assertIn("note: West led.", out["content"][0]["text"])
+        self.assertTrue(self.tool("read_chart", {"cell": "c2"})["isError"])
 
     def test_save_pdf_without_a_browser_says_so(self):
         self.tool("create_report", {"title": "Q4 close"})
