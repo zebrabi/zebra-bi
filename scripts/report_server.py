@@ -16,7 +16,7 @@ In ChatGPT and Codex desktop the builder opens from the sidebar (entrypoint "glo
 ("thread"). The renderer is nested in the builder through iframe srcdoc: the desktop hosts block blob: frames.
 Standard library only. stdout carries JSON-RPC alone; anything else goes to stderr.
 """
-import json, os, sys, traceback
+import hashlib, json, os, sys, traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -27,7 +27,19 @@ import report as R  # noqa: E402
 import story as S  # noqa: E402
 
 APP = os.path.join(HERE, "..", "assets", "report-builder.html")
-APP_URI = "ui://zebra-bi/report-builder-v1.html"
+
+
+def app_uri():
+    """The builder's address carries a hash of the page: hosts cache an app page by its URI, so a changed page
+    must get a new one."""
+    try:
+        with open(APP, "rb") as f:
+            return "ui://zebra-bi/report-builder-%s.html" % hashlib.sha256(f.read()).hexdigest()[:12]
+    except OSError:
+        return "ui://zebra-bi/report-builder.html"
+
+
+APP_URI = app_uri()
 MIME = "text/html;profile=mcp-app"
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26")
 CSP = {"connectDomains": [], "resourceDomains": [], "frameDomains": []}
