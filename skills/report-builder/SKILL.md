@@ -38,6 +38,8 @@ The report follows IBCS, the notation Zebra BI charts use (the `data-story` skil
 
 Shape each chart as `chart-from-data` does: aggregate first, one row per category, the scenarios as columns (`AC`, `PL`, `PY`, `FC`), `time_axis` for periods. `add_chart` returns Zebra BI's notes on the chart; read them and fix the arguments if it changed something you did not intend. Order charts by contribution, largest first, and put related breakdowns side by side: the same `row`, at most three per row.
 
+"Hide the notes" / "show the notes": `show_notes`. It switches the notes under all charts off or on, in the builder and in the PDF and page; hidden notes are kept. Text cells are not affected. In the builder the same is the Notes button.
+
 Edits by cell id: `move_cell` (row and position; one past the last row makes a new row), `update_text` (a text cell, or the note of a chart cell), `remove_cell`, `replace_chart` (new data, period or chart type in the same place; then `update_text` its note so the numbers match). `open_report` marks a chart without a note `note MISSING`: write one. To write or check a note on a chart you did not just add, `read_chart` gives its rows first. Never write a placeholder note: when the numbers are not there (a copied report whose data has not been replaced yet), say so in the chat and leave the note as it is. After a change, tell the user in one or two lines what is where now. Do not paste the chart data into the chat.
 
 The user can do all of this in the builder too: drag cells by the grip, edit text, notes and the title in place, and use ⋯ for duplicate and delete. Their edits are saved to the same file, so open the report again (`open_report`) before you change something they may have rearranged.

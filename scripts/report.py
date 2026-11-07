@@ -64,6 +64,8 @@ def validate(rep):
     """Raise ValueError when rep is not a report this code can show and save."""
     if not isinstance(rep, dict) or rep.get("format") != FORMAT:
         raise ValueError("not a Zebra BI report (format must be %r)" % FORMAT)
+    if not isinstance(rep.get("show_notes", True), bool):
+        raise ValueError("show_notes must be true or false")
     if not isinstance(rep.get("rows"), list) or len(rep["rows"]) > MAX_ROWS:
         raise ValueError("rows must be a list of at most %d rows" % MAX_ROWS)
     visuals = rep.get("visuals")
@@ -385,7 +387,7 @@ def add_text(rep, text, row=None):
     return place(rep, {"id": next_cell_id(rep), "type": "text", "text": text}, row)
 
 
-def apply_layout(rep, title, rows, rev):
+def apply_layout(rep, title, rows, rev, show_notes=None):
     """The builder's edit: a new title and the rows as it shows them. Cells keep their ids; a chart cell may only
     name a chart the report holds, so the editor can move and drop charts but never invent one. Charts no cell
     shows any more are dropped from visuals."""
@@ -407,6 +409,8 @@ def apply_layout(rep, title, rows, rev):
                 kept.append({"id": c.get("id"), "type": "text", "text": str(c.get("text") or "")})
         new_rows.append({"cells": kept})
     out = dict(rep, title=clean_title(title if title is not None else rep["title"]), rows=new_rows)
+    if show_notes is not None:
+        out["show_notes"] = bool(show_notes)
     shown = {c["visual"] for r in new_rows for c in r["cells"] if c["type"] == "chart"}
     out["visuals"] = {k: v for k, v in rep["visuals"].items() if k in shown}
     validate(out)
@@ -490,7 +494,8 @@ def chart_title(rep, vid):
 
 def summary(rep):
     """What the model sees: the title and, per row, the chart titles and the start of each text. Never the data."""
-    lines = ["Report: %s (%d rows)" % (rep["title"], len(rep["rows"]))]
+    lines = ["Report: %s (%d rows)%s" % (rep["title"], len(rep["rows"]),
+                                        "" if rep.get("show_notes", True) else ", chart notes hidden")]
     for i, row in enumerate(rep["rows"], 1):
         parts = []
         for c in row["cells"]:
@@ -508,7 +513,8 @@ def summary(rep):
 def to_story(rep):
     """The report in the story.json format, so story-pdf and story-artifact build it from its folder: the title
     as the heading and each row as a story row, its charts and texts side by side. A report names no data source."""
-    rows = [{"cells": [dict({"visual": c["visual"]}, **({"note": c["note"]} if c.get("note") else {}))
+    notes = rep.get("show_notes", True)  # off: the notes stay in the report, the exports leave them out
+    rows = [{"cells": [dict({"visual": c["visual"]}, **({"note": c["note"]} if notes and c.get("note") else {}))
                        if c["type"] == "chart" else {"text": c["text"]} for c in row["cells"]]}
             for row in rep["rows"] if row["cells"]]
     shown = {c["visual"] for row in rows for c in row["cells"] if "visual" in c}

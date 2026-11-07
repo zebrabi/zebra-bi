@@ -98,6 +98,7 @@
   <span class="brand" id="brand">Zebra BI reports</span>
   <span id="editor-actions" hidden>
     <button id="add-text" title="Add a text row">+ Text</button>
+    <button id="notes-toggle" aria-pressed="true" title="Show or hide the notes under the charts, here and in the PDF and page">Notes: on</button>
     <button id="reload" title="Reload from the report file">Reload</button>
     <button class="dots" id="report-menu" title="More">⋯</button>
   </span>
@@ -416,6 +417,8 @@
   function renderEditor() {
     frames.clear();
     if (document.activeElement !== $('title')) $('title').textContent = rep.title;
+    var on = rep.show_notes !== false;
+    $('notes-toggle').textContent = on ? 'Notes: on' : 'Notes: off'; $('notes-toggle').setAttribute('aria-pressed', String(on));
     var host = $('rows'); host.innerHTML = '';
     if (!rep.rows.length) {
       host.appendChild(el('div', 'empty', 'This report is empty. Ask in the chat, for example “add a chart of sales by region against plan to the report”, or add text with + Text.'));
@@ -468,7 +471,7 @@
     tools.appendChild(grip); tools.appendChild(del); c.appendChild(tools);
     if (cell.type === 'chart') {
       var box = el('div', 'chart'); box.dataset.cell = cell.id; c.appendChild(box);
-      c.appendChild(editable(cell, 'note', 'text chart-note'));  // the narrative under the chart
+      if (rep.show_notes !== false) c.appendChild(editable(cell, 'note', 'text chart-note'));  // the narrative under the chart
     } else {
       c.appendChild(editable(cell, 'text', 'text'));
     }
@@ -533,7 +536,7 @@
     var rows = rep.rows.map(function (r) { return { cells: r.cells.map(function (c) {
       return c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual, note: c.note || '' } : { id: c.id, type: 'text', text: c.text };
     }) }; });
-    callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows }).then(function (r) {
+    callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows, show_notes: rep.show_notes !== false }).then(function (r) {
       rep.rev = sc(r).rev; dirty = false; saving = false; status('Saved');
     }, function (e) {
       saving = false; dirty = false;
@@ -574,6 +577,7 @@
   $('back').onclick = function () { goHome(); };
   $('add-text').onclick = addText;
   $('reload').onclick = function () { poll(true); };
+  $('notes-toggle').onclick = function () { rep.show_notes = rep.show_notes === false; renderEditor(); scheduleSave(); };
   $('report-menu').onclick = function (e) {
     e.stopPropagation();
     openMenu($('report-menu'), [

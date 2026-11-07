@@ -326,7 +326,7 @@ class Server(unittest.TestCase):
         self.assertFalse(tools["delete_report"]["annotations"]["destructiveHint"])  # restorable
         self.assertTrue(tools["purge_report"]["annotations"]["destructiveHint"])
         for model in ("create_report", "list_reports", "rename_report", "duplicate_report", "delete_report", "restore_report",
-                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf", "read_chart"):
+                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf", "read_chart", "show_notes"):
             self.assertNotEqual(tools[model].get("_meta", {}).get("ui", {}).get("visibility"), ["app"], model)
 
     def test_app_page_nests_through_srcdoc(self):
@@ -439,6 +439,19 @@ class Server(unittest.TestCase):
         self.tool("create_report", {"title": "November"}, thread="chat-1")
         self.assertEqual(self.tool("open_report", {}, thread="plugin")["structuredContent"]["report"], "november")
         self.assertEqual(self.tool("library", {}, thread="plugin")["structuredContent"]["last"], "november")
+
+    def test_notes_can_be_hidden_and_shown_for_the_whole_report(self):
+        slug = self.tool("create_report", {"title": "Q4"})["structuredContent"]["report"]
+        rdir = os.path.join(self.tmp, "reports", slug)
+        cache(rdir, "sales-by-region", ARGS, endpoint=FAKE_MCP)
+        self.tool("add_chart", {"chart": ARGS, "note": "West led."})
+        self.tool("show_notes", {"show": False})
+        self.assertNotIn("note", S.load(rdir)["rows"][0]["cells"][0])  # exports leave it out
+        self.assertIn("chart notes hidden", self.tool("open_report", {"report": slug})["content"][0]["text"])
+        rep = self.report(slug)["report"]
+        self.assertEqual(rep["rows"][0]["cells"][0]["note"], "West led.")  # kept
+        self.tool("save_layout", {"report": slug, "rev": rep["rev"], "rows": rep["rows"], "show_notes": True})
+        self.assertEqual(S.load(rdir)["rows"][0]["cells"][0]["note"], "West led.")
 
     def test_read_chart_gives_the_rows_behind_a_note(self):
         slug = self.tool("create_report", {"title": "Q4"})["structuredContent"]["report"]
