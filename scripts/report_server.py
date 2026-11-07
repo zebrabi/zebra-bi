@@ -158,6 +158,10 @@ def tools():
                         "cell keeps its place.",
          "inputSchema": obj({"cell": {"type": "string"}, "chart": chart_schema(), "report": opt_report()}, ["cell", "chart"]),
          "annotations": write},
+        {"name": "read_chart", "title": "Read a chart's numbers",
+         "description": "The aggregated rows and arguments of one chart cell, by its id from open_report: what you need "
+                        "to write or check the note under it. Read only.",
+         "inputSchema": obj({"cell": {"type": "string"}, "report": opt_report()}, ["cell"]), "annotations": {"readOnlyHint": True}},
         {"name": "save_pdf", "title": "Save the report as a PDF",
          "description": "Print the report to an A4 PDF in its folder on this computer, its charts and texts side by side "
                         "as in the builder. Needs Chrome, Edge or Chromium. Returns the file's path.",
@@ -314,6 +318,16 @@ def call(name, args, thread):
         R.save(R.path_for(slug), rep)
         return text("Replaced chart %s with %r in %r. Zebra BI: %s" % (args.get("cell"), R.chart_title(rep, vid), rep["title"],
                     R.server_note(res)), {"report": slug, "rev": rep["rev"]})
+    if name == "read_chart":
+        slug = target(args, thread)
+        rep = R.load(R.path_for(slug))
+        ri, ci = R.locate(rep, args.get("cell"))
+        cell = rep["rows"][ri]["cells"][ci]
+        if cell["type"] != "chart":
+            raise ValueError("cell %s is text, not a chart" % args.get("cell"))
+        chart = rep["visuals"][cell["visual"]]["args"]
+        return text("Chart %s in %r (row %d), note: %s\n%s" % (cell["id"], rep["title"], ri + 1, cell.get("note") or "MISSING",
+                    json.dumps(chart, ensure_ascii=False)), {"report": slug, "cell": cell["id"], "chart": chart})
     if name == "save_pdf":
         slug = target(args, thread)
         import pdf as P  # starts nothing until a PDF is asked for
