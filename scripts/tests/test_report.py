@@ -508,6 +508,7 @@ class Server(unittest.TestCase):
         out = self.tool("save_layout", {"report": slug, "rev": rep["rev"], "rows": rows, "key_message": "Key",
                                         "kpis": [{"value": "411.7", "label": "AC"}]})
         self.assertFalse(out.get("isError"), out)
+        self.assertEqual(out["structuredContent"]["checks"], {})  # the builder refreshes its flags from the save
         got = self.report(slug)
         self.assertEqual((got["report"]["key_message"], got["report"]["rows"][0]["cells"][0]["message"]), ("Key", "Edited"))
         self.assertEqual(got["checks"], {})  # 99.0 is kept now

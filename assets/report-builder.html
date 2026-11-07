@@ -83,7 +83,25 @@
   .text:focus { box-shadow: 0 0 0 2px var(--accent); }
   .text:empty::before { content: 'Write here…'; color: var(--muted); }
   .chart-note { min-height: 1.6em; margin-top: 8px; font-size: 13px; }
-  .chart-note:empty::before { content: 'Add the message for this chart and the numbers that prove it…'; }
+  .chart-note:empty::before { content: 'Add the evidence: the numbers from this chart that prove its message…'; }
+  .key, .chart-msg, .kpi .v, .kpi .l { outline: none; border-radius: 4px; white-space: pre-wrap; }
+  .key:focus, .chart-msg:focus, .kpi .v:focus, .kpi .l:focus { box-shadow: 0 0 0 2px var(--accent); }
+  .key { min-height: 1.5em; margin: -6px 0 14px; font-size: 17px; font-weight: 600; line-height: 1.4; max-width: 75ch; }
+  .key:empty::before { content: 'Add the key message: what happened, how big, against what…'; color: var(--muted); font-weight: 400; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 0 0 18px; }
+  .kpi { border-top: 2px solid var(--ink); padding-top: 6px; }
+  .kpi .v { font-size: 20px; font-weight: 700; }
+  .kpi .l { font-size: 12px; color: var(--muted); }
+  .chart-head { display: flex; align-items: flex-start; gap: 4px; margin: 0 56px 6px 0; }
+  .chart-msg { flex: 1 1 auto; min-height: 1.4em; font-weight: 600; padding: 2px 4px; }
+  .chart-msg:empty::before { content: 'Add the message for this chart…'; color: var(--muted); font-weight: 400; }
+  .why-btn { border: 0; background: none; padding: 2px 4px; color: var(--muted); }
+  .why-text { font-size: 12px; color: var(--muted); margin: 0 0 6px 4px; }
+  .flag { display: flex; align-items: center; gap: 8px; margin: 4px 0; padding: 4px 8px; border-radius: 6px; background: #fdecec;
+    color: var(--danger); font-size: 12px; }
+  .flag button { font-size: 12px; padding: 2px 8px; }
+  #layouts { display: inline-flex; gap: 4px; margin-right: 8px; }
+  #layouts button[aria-pressed=true] { background: var(--ink); border-color: var(--ink); color: #fff; }
   .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
 
   /* toast, at the top: ChatGPT lays its own composer over the bottom of the app */
@@ -97,6 +115,9 @@
   <button class="link" id="back" hidden title="All reports">← All reports</button>
   <span class="brand" id="brand">Zebra BI reports</span>
   <span id="editor-actions" hidden>
+    <span id="layouts" title="Lay out the same cells, largest variance first">
+      <button data-layout="one-pager">One-pager</button><button data-layout="variance-walk">Variance walk</button><button data-layout="board-pack">Board pack</button>
+    </span>
     <button id="add-text" title="Add a text row">+ Text</button>
     <button id="notes-toggle" aria-pressed="true" title="Show or hide the notes under the charts, here and in the PDF and page">Notes: on</button>
     <button id="reload" title="Reload from the report file">Reload</button>
@@ -123,6 +144,7 @@
 
 <main id="editor" hidden>
   <h1 id="title" contenteditable="true" spellcheck="false"></h1>
+  <div id="head"></div>
   <div id="rows"></div>
   <p class="note" id="note"></p>
 </main>
@@ -224,7 +246,16 @@
   }
   function savePdf(s) {
     toast('Saving the PDF…', null, null, 120000);  // until the result replaces it
-    return act(callTool('save_pdf', { report: s }), function (r) { toast('PDF saved: ' + (sc(r).shown || sc(r).file), null, null, 10000); });
+    busy = true;
+    return callTool('save_pdf', { report: s }).then(function (r) {
+      busy = false; toast('PDF saved: ' + (sc(r).shown || sc(r).file), null, null, 10000);
+    }, function (e) {
+      busy = false;
+      var flags = e.result && e.result.structuredContent && e.result.structuredContent.flags;
+      if (!flags) { fail(e); return; }
+      toast('Fix or keep the flagged numbers first', null, null, 8000);
+      if (view === 'editor' && slug === s) { var f = document.querySelector('.flag'); if (f) f.scrollIntoView({ block: 'center' }); }
+    });
   }
   function deleteReport(s, title) {
     return act(callTool('delete_report', { report: s }), function () {
@@ -414,9 +445,52 @@
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function formatted(text) { return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }  // **bold**, as story.para
 
+  // Numbers no chart holds, from the server's checks: one line each, with Keep as mine.
+  var checks = {};
+  function flagged(where) {
+    var p = where.split(':');
+    if (p[0] === 'key') return checks.key_message || [];
+    if (p[0] === 'kpi') return (checks.kpis || [])[+p[1]] || [];
+    return ((checks.cells || {})[p[1]] || {})[p[2]] || [];
+  }
+  function flagBox(where, owner, anyChart) {
+    var box = el('div', 'flags'); box.dataset.flags = where; box._owner = owner; box._any = anyChart;
+    fillFlags(box);
+    return box;
+  }
+  function fillFlags(box) {
+    box.innerHTML = '';
+    var owner = box._owner;
+    flagged(box.dataset.flags).filter(function (raw) { return (owner.kept || []).indexOf(raw) < 0; }).forEach(function (raw) {
+      var f = el('div', 'flag');
+      f.appendChild(el('span', null, raw + (box._any ? ' is not in any chart' : ' is not in this chart')));
+      var keep = el('button', null, 'Keep as mine'); keep.title = 'Keep this number although no chart holds it';
+      keep.onclick = function () { owner.kept = (owner.kept || []).concat([raw]); f.remove(); saveNow(); };
+      f.appendChild(keep); box.appendChild(f);
+    });
+  }
+  function refreshFlags() { document.querySelectorAll('[data-flags]').forEach(fillFlags); }
+
+  function renderHead() {
+    var head = $('head'); head.innerHTML = '';
+    var key = editable(rep, 'key_message', 'key'); key.id = 'key'; head.appendChild(key);
+    head.appendChild(flagBox('key', rep, true));
+    if (rep.kpis && rep.kpis.length) {
+      var grid = el('div', 'kpis'); grid.id = 'kpis';
+      rep.kpis.forEach(function (tile) {
+        var k = el('div', 'kpi'); k.appendChild(editable(tile, 'value', 'v')); k.appendChild(editable(tile, 'label', 'l'));
+        grid.appendChild(k);
+      });
+      head.appendChild(grid);
+      rep.kpis.forEach(function (tile, i) { head.appendChild(flagBox('kpi:' + i, rep, true)); });
+    }
+    document.querySelectorAll('#layouts button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.layout === rep.layout)); });
+  }
+
   function renderEditor() {
     frames.clear();
     if (document.activeElement !== $('title')) $('title').textContent = rep.title;
+    renderHead();
     var on = rep.show_notes !== false;
     $('notes-toggle').textContent = on ? 'Notes: on' : 'Notes: off'; $('notes-toggle').setAttribute('aria-pressed', String(on));
     var host = $('rows'); host.innerHTML = '';
@@ -470,10 +544,25 @@
     del.addEventListener('click', function () { removeCell(cell.id); });
     tools.appendChild(grip); tools.appendChild(del); c.appendChild(tools);
     if (cell.type === 'chart') {
+      var head = el('div', 'chart-head');
+      head.appendChild(editable(cell, 'message', 'chart-msg'));  // the message above the chart
+      if (cell.why) {
+        var why = el('div', 'why-text', cell.why); why.hidden = true;
+        var wb = el('button', 'why-btn', 'ⓘ'); wb.title = 'Why this chart'; wb.setAttribute('aria-label', 'Why this chart');
+        wb.onclick = function () { why.hidden = !why.hidden; };
+        head.appendChild(wb); c.appendChild(head); c.appendChild(why);
+      } else {
+        c.appendChild(head);
+      }
+      c.appendChild(flagBox('cell:' + cell.id + ':message', cell, false));
       var box = el('div', 'chart'); box.dataset.cell = cell.id; c.appendChild(box);
-      if (rep.show_notes !== false) c.appendChild(editable(cell, 'note', 'text chart-note'));  // the narrative under the chart
+      if (rep.show_notes !== false) {
+        c.appendChild(editable(cell, 'note', 'text chart-note'));  // the evidence under the chart
+        c.appendChild(flagBox('cell:' + cell.id + ':note', cell, false));
+      }
     } else {
       c.appendChild(editable(cell, 'text', 'text'));
+      c.appendChild(flagBox('cell:' + cell.id + ':text', cell, true));
     }
     c.addEventListener('dragover', function (e) {
       if (!dragId || dragId === cell.id) return;
@@ -534,10 +623,15 @@
     if (saving) { saveTimer = setTimeout(saveNow, 300); return; }
     saving = true; status('Saving…');
     var rows = rep.rows.map(function (r) { return { cells: r.cells.map(function (c) {
-      return c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual, note: c.note || '' } : { id: c.id, type: 'text', text: c.text };
+      var out = c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual, note: c.note || '', message: c.message || '' }
+                                   : { id: c.id, type: 'text', text: c.text };
+      out.kept = c.kept || [];
+      return out;
     }) }; });
-    callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows, show_notes: rep.show_notes !== false }).then(function (r) {
+    callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows, show_notes: rep.show_notes !== false,
+                              key_message: rep.key_message || '', kpis: rep.kpis || [], kept: rep.kept || [] }).then(function (r) {
       rep.rev = sc(r).rev; dirty = false; saving = false; status('Saved');
+      if (sc(r).checks) { checks = sc(r).checks; refreshFlags(); }
     }, function (e) {
       saving = false; dirty = false;
       var s = e.result && e.result.structuredContent;
@@ -553,7 +647,7 @@
     return callTool('get_report', { report: s, follow: 'none' }).then(function (r) {
       var d = sc(r);
       if (d.gone) { reportGone(); return; }
-      rep = d.report; results = d.results || {}; errors = d.errors || {};
+      rep = d.report; results = d.results || {}; errors = d.errors || {}; checks = d.checks || {};
       show('editor'); renderEditor();
     }, fail);
   }
@@ -567,7 +661,7 @@
       }
       if (d.gone) { reportGone(); return; }
       if (d.unchanged) return;
-      rep = d.report; results = d.results || {}; errors = d.errors || {};
+      rep = d.report; results = d.results || {}; errors = d.errors || {}; checks = d.checks || {};
       renderEditor(); status('');
     }, function () { status('Not connected'); });
   }
@@ -576,6 +670,11 @@
   $('title').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('title').blur(); } });
   $('back').onclick = function () { goHome(); };
   $('add-text').onclick = addText;
+  document.querySelectorAll('#layouts button').forEach(function (b) {
+    b.onclick = function () {
+      act(callTool('arrange_report', { report: slug, layout: b.dataset.layout }), function () { return loadReport(slug); });
+    };
+  });
   $('reload').onclick = function () { poll(true); };
   $('notes-toggle').onclick = function () { rep.show_notes = rep.show_notes === false; renderEditor(); scheduleSave(); };
   $('report-menu').onclick = function (e) {

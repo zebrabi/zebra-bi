@@ -441,7 +441,7 @@ def call(name, args, thread):
                                  args.get("key_message"), args.get("kpis"), args.get("kept"))
         except R.Conflict as e:
             return text(str(e), {"conflict": True, "rev": rep["rev"]}, error=True)
-        return text("saved", {"rev": R.save(path, new)})
+        return text("saved", {"rev": R.save(path, new), "checks": R.checks(new)})
     if name == "purge_report":
         R.purge(args.get("entry"))
         return text("deleted for good", {"purged": args.get("entry")})
