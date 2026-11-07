@@ -199,9 +199,11 @@ def target(args, thread):
     return slug
 
 
-def opened(slug, thread, lead=""):
-    """Result of a tool that opens a report in the builder: its outline for the model, its slug for the builder."""
-    R.remember(slug, thread)
+def opened(slug, thread, lead="", pin=True):
+    """Result of a tool that opens a report in the builder: its outline for the model, its slug for the builder.
+    pin=False only shows it: the chat keeps no report and the report opened last stays as it was."""
+    if pin:
+        R.remember(slug, thread)
     rep = R.load(R.path_for(slug))
     return text((lead + "\n" if lead else "") + R.summary(rep),
                 {"report": slug, "title": rep["title"], "rev": rep["rev"], "follow": "thread" if thread else "last"})
@@ -240,11 +242,12 @@ def results_for(rep, slug):
 
 def call(name, args, thread):
     if name == "open_report":
-        slug = R.find(args["report"]) if args.get("report") else R.resolve(thread)
+        named = bool(args.get("report"))
+        slug = R.find(args["report"]) if named else R.resolve(thread)
         if not slug:
             return text("There are no reports yet. create_report starts one; the builder shows its empty home.",
                         {"report": None, "follow": "thread" if thread else "last"})
-        return opened(slug, thread, "The builder shows this report; the user can arrange it there.")
+        return opened(slug, thread, "The builder shows this report; the user can arrange it there.", pin=named)
     if name == "create_report":
         return opened(R.create(args.get("title")), thread, "Created a new, empty report.")
     if name == "list_reports":
