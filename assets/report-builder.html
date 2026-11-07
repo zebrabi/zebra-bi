@@ -45,7 +45,8 @@
   .list { border-top: 1px solid var(--hairline); }
   .item { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-bottom: 1px solid var(--hairline); }
   .item:hover { background: var(--soft); }
-  .item .main { flex: 1 1 auto; min-width: 0; cursor: pointer; }
+  .item .main { flex: 1 1 auto; min-width: 0; cursor: pointer; border-radius: 4px; }
+  .item .main:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .item .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item .m { font-size: 12px; color: var(--muted); }
   .item .badge { font-size: 11px; color: var(--accent); margin-left: 8px; font-weight: 600; }
@@ -243,8 +244,14 @@
   }
   function plural(n, one) { return n + ' ' + one + (n === 1 ? '' : 's'); }
 
-  function refreshLibrary() {
-    return callTool('library').then(function (r) { lib = sc(r); if (view === 'home') renderHome(); }, fail);
+  // redraw the home only when the library changed, so polling keeps focus and open menus in place
+  var libSeen = null;
+  function refreshLibrary(onlyIfChanged) {
+    return callTool('library').then(function (r) {
+      lib = sc(r);
+      var seen = JSON.stringify(lib);
+      if (view === 'home' && (!onlyIfChanged || seen !== libSeen)) { libSeen = seen; renderHome(); }
+    }, fail);
   }
   function goHome() { show('home'); return refreshLibrary(); }
 
@@ -274,8 +281,10 @@
     if (r.report === (slug || (follow === 'last' ? lib.last : lib.current))) t.appendChild(el('span', 'badge', 'current'));
     main.appendChild(t);
     main.appendChild(el('div', 'm', ['edited ' + ago(r.saved_at), plural(r.charts, 'chart'), plural(r.rows, 'row')].join(' · ')));
+    main.setAttribute('role', 'button'); main.tabIndex = 0; main.setAttribute('aria-label', 'Open ' + r.title);
     main.onclick = function () { openReport(r.report); };
-    var dots = el('button', 'dots', '⋯'); dots.title = 'More';
+    main.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openReport(r.report); } };
+    var dots = el('button', 'dots', '⋯'); dots.title = 'More'; dots.setAttribute('aria-label', 'More actions for ' + r.title);
     dots.onclick = function (e) {
       e.stopPropagation();
       openMenu(dots, [
@@ -589,7 +598,7 @@
     setInterval(function () {
       if (document.hidden) return;
       if (view === 'editor') poll(false);
-      else if (view === 'home' && !busy && !$('menu') && $('newform').hidden) refreshLibrary();
+      else if (view === 'home' && !busy && !$('menu') && $('newform').hidden) refreshLibrary(true);
     }, 4000);
   }, function () { status('Not connected'); });
 })();
