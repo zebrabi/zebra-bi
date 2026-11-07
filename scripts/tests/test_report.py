@@ -226,6 +226,12 @@ class Draft(unittest.TestCase):
         self.assertEqual(story["rows"][0]["cells"][0]["message"], "Revenue missed plan by **39.2k**")
         self.assertNotIn("kicker", R.to_story(self.rep))  # no key message: the title is the heading, no label above it
 
+    def test_the_key_message_heading_has_no_bold_marks(self):
+        rep, cell = self.checked()
+        cell["kept"] = ["99.0k"]
+        R.set_key_message(rep, "Revenue missed plan by **39.2k**.")
+        self.assertEqual(R.to_story(rep)["title"], "Revenue missed plan by 39.2k.")  # a story title is plain text
+
     def test_the_story_refuses_untraced_numbers(self):
         rep, _ = self.checked()
         with self.assertRaisesRegex(ValueError, "not in their charts: c1 note: 99.0k"):
