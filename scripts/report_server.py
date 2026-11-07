@@ -43,7 +43,8 @@ def app_uri():
 APP_URI = app_uri()
 MIME = "text/html;profile=mcp-app"
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26")
-CSP = {"connectDomains": [], "resourceDomains": [], "frameDomains": []}
+FONTS = ["https://fonts.googleapis.com", "https://fonts.gstatic.com"]  # Open Sans, the Zebra BI typeface
+CSP = {"connectDomains": [], "resourceDomains": FONTS, "frameDomains": []}
 SCHEMA_CACHE = os.path.join(os.path.dirname(S.CACHE), "render_visual.schema.json")
 GENERIC_CHART = {"type": "object", "description": "The render_visual arguments: title, subtitle, chart_type, "
                  "category_columns, time_axis, measure {name, Val, PY, PM, PL, FC}, columns and rows."}
@@ -482,7 +483,7 @@ def handle(method, params):
             page = f.read()
         return {"contents": [{"uri": APP_URI, "mimeType": MIME, "text": page,
                               "_meta": {"ui": {"csp": CSP, "prefersBorder": False},
-                                        "openai/widgetCSP": {"connect_domains": [], "resource_domains": [], "frame_domains": []},
+                                        "openai/widgetCSP": {"connect_domains": [], "resource_domains": FONTS, "frame_domains": []},
                                         "openai/widgetDescription": "The Zebra BI report builder: charts and text in rows."}}]}
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
