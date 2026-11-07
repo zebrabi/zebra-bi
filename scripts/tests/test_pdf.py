@@ -113,6 +113,16 @@ class Page(Base):
         self.assertIn("section.row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}", page)
         self.assertEqual(S.story_visuals(story), ["v1", "v2", "v3"])
 
+    def test_a_chart_message_sits_above_its_chart(self):
+        story = rows_story()
+        story["rows"][0]["cells"][0]["message"] = "V1 rose **+5%**"
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = S.render_visuals(self.story_dir, story)
+        path, meta = S.renderer()
+        page = S.assemble(story, results, meta, path, B.load(start=self.tmp))
+        self.assertIn('<div class="cell"><div class="msg">V1 rose <b>+5%</b></div><iframe data-v="v1"', page)
+        self.assertIn("section.row .msg{", page)
+
     def test_a_row_holds_one_to_three_cells(self):
         for cells in ([], [{"visual": "v1"}] * 4, [{"heading": "no visual or text"}]):
             with self.subTest(cells=cells), self.assertRaises(SystemExit):

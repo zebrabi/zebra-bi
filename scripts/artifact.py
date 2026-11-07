@@ -174,9 +174,13 @@ def assemble_page(story, results, brand, sizes, live=False, renderer_sha=None):
         sections.append('<section class="zs-section"><div class="zs-text"><h2>%s</h2>\n%s</div>%s</section>'
                         % (e(s.get("heading", "")), S.para(s.get("body", "")), fig))
     for row in S.rows(story):
-        cells = [('<div class="zs-cell">%s<div class="zs-text zs-note">%s</div></div>' % (figure(c["visual"], ""), S.para(c["note"]))
-                  if c.get("note") else figure(c["visual"], "")) if c.get("visual")
-                 else '<div class="zs-text">%s</div>' % S.para(c["text"]) for c in row["cells"]]
+        def chart_cell(c):
+            if not (c.get("message") or c.get("note")):
+                return figure(c["visual"], "")
+            msg = '<p class="zs-msg">%s</p>' % S.inline(c["message"]) if c.get("message") else ""
+            note = '<div class="zs-text zs-note">%s</div>' % S.para(c["note"]) if c.get("note") else ""
+            return '<div class="zs-cell">%s%s%s</div>' % (msg, figure(c["visual"], ""), note)
+        cells = [chart_cell(c) if c.get("visual") else '<div class="zs-text">%s</div>' % S.para(c["text"]) for c in row["cells"]]
         sections.append('<section class="zs-section zs-row zs-cols-%d">%s</section>' % (len(cells), "".join(cells)))
     nxt = ""
     if story.get("next"):
