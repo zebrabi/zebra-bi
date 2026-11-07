@@ -47,7 +47,7 @@ SCHEMA_CACHE = os.path.join(os.path.dirname(S.CACHE), "render_visual.schema.json
 GENERIC_CHART = {"type": "object", "description": "The render_visual arguments: title, subtitle, chart_type, "
                  "category_columns, time_axis, measure {name, Val, PY, PM, PL, FC}, columns and rows."}
 
-state = {"path": None}
+state = {}
 
 
 def log(*parts):
@@ -87,43 +87,87 @@ def ui(entrypoints=False, app_only=False):
     return meta
 
 
+def opt_report():
+    return {"type": "string", "description": "Report name (slug) or title; omit for the report open in this chat."}
+
+
 def tools():
+    ui_open, app = ui(entrypoints=True), ui(app_only=True)
+    obj = lambda props, req=(): dict({"type": "object", "properties": props}, **({"required": list(req)} if req else {}))
+    write = {"readOnlyHint": False}
     return [
         {"name": "open_report", "title": "Zebra BI report",
-         "description": "Open the Zebra BI report builder on a report: an existing one by name, or a new one with this "
-                        "title. Without arguments it opens the most recent report. The user arranges charts and text "
-                        "in the builder; add content with add_chart and add_text.",
-         "inputSchema": {"type": "object", "properties": {
-             "title": {"type": "string", "description": "Title of a new report, or of the report to open."},
-             "report": {"type": "string", "description": "Name (slug) of an existing report, from list_reports."}}},
-         "annotations": {"readOnlyHint": False, "idempotentHint": True}, "_meta": ui(entrypoints=True)},
+         "description": "Open the Zebra BI report builder. With `report` (slug or title) it opens that report; without "
+                        "it, the report open in this chat, else the one opened last. Prints the report's cells with "
+                        "their ids ([c1] ...) so you can name them. To start new work use create_report.",
+         "inputSchema": obj({"report": opt_report()}), "annotations": {"readOnlyHint": False, "idempotentHint": True},
+         "_meta": ui_open},
+        {"name": "create_report", "title": "New Zebra BI report",
+         "description": "Create an empty report with this title and open it in the builder. A title that is already "
+                        "taken still makes a new report.",
+         "inputSchema": obj({"title": {"type": "string"}}, ["title"]), "annotations": write, "_meta": ui(entrypoints=False)},
         {"name": "list_reports", "title": "List Zebra BI reports",
-         "description": "List the Zebra BI reports on this computer, newest first.",
-         "inputSchema": {"type": "object", "properties": {}}, "annotations": {"readOnlyHint": True}},
+         "description": "The reports on this computer, last edited first, with their charts and rows. deleted=true "
+                        "lists Recently deleted instead (kept for %d days)." % R.KEEP_DAYS,
+         "inputSchema": obj({"deleted": {"type": "boolean"}}), "annotations": {"readOnlyHint": True}},
+        {"name": "rename_report", "title": "Rename a Zebra BI report",
+         "description": "Give a report a new title. Its folder keeps its name.",
+         "inputSchema": obj({"title": {"type": "string"}, "report": opt_report()}, ["title"]), "annotations": write},
+        {"name": "duplicate_report", "title": "Duplicate a Zebra BI report",
+         "description": "Copy a report with its text and charts as a new report and open the copy, for example to "
+                        "make next month's report from this month's. Then replace_chart updates its charts.",
+         "inputSchema": obj({"title": {"type": "string"}, "report": opt_report()}), "annotations": write},
+        {"name": "delete_report", "title": "Delete a Zebra BI report",
+         "description": "Move a report to Recently deleted, where it stays restorable for %d days. Only when the user "
+                        "asks to delete it." % R.KEEP_DAYS,
+         "inputSchema": obj({"report": {"type": "string", "description": "Report name (slug) or title."}}, ["report"]),
+         "annotations": {"readOnlyHint": False, "destructiveHint": False}},
+        {"name": "restore_report", "title": "Restore a deleted Zebra BI report",
+         "description": "Bring a report back from Recently deleted and open it.",
+         "inputSchema": obj({"report": {"type": "string", "description": "Name or title from list_reports deleted=true."}}, ["report"]),
+         "annotations": write},
         {"name": "add_chart", "title": "Add a Zebra BI chart to the report",
-         "description": "Draw a Zebra BI chart with render_visual and add it to the open report. Send aggregated "
-                        "rows only, one per category. It joins the given row when that row has room (at most 3 cells), "
-                        "else starts a new row. Returns the server's notes on the chart, not the chart itself.",
-         "inputSchema": {"type": "object", "required": ["chart"], "properties": {
-             "chart": chart_schema(),
-             "row": {"type": "integer", "minimum": 1, "description": "Row to join (1-based). Omit for a new row."}}},
-         "annotations": {"readOnlyHint": False}},
+         "description": "Draw a Zebra BI chart with render_visual and add it to the report. Send aggregated rows only, "
+                        "one per category. It joins `row` when that row has room (at most 3 cells), else starts a new "
+                        "row. Returns Zebra BI's notes on the chart, not the chart itself.",
+         "inputSchema": obj({"chart": chart_schema(), "row": {"type": "integer", "minimum": 1}, "report": opt_report()}, ["chart"]),
+         "annotations": write},
         {"name": "add_text", "title": "Add text to the report",
-         "description": "Add a narrative paragraph to the open report (**bold** allowed). It joins the given row when "
-                        "that row has room, else starts a new row.",
-         "inputSchema": {"type": "object", "required": ["text"], "properties": {
-             "text": {"type": "string", "maxLength": R.MAX_TEXT},
-             "row": {"type": "integer", "minimum": 1}}},
-         "annotations": {"readOnlyHint": False}},
-        {"name": "get_report", "title": "Report for the builder", "description": "App only: the open report with chart results.",
-         "inputSchema": {"type": "object", "properties": {"since": {"type": "integer"}}},
-         "annotations": {"readOnlyHint": True}, "_meta": ui(app_only=True)},
+         "description": "Add a narrative paragraph (**bold** allowed). It joins `row` when that row has room, else "
+                        "starts a new row.",
+         "inputSchema": obj({"text": {"type": "string", "maxLength": R.MAX_TEXT}, "row": {"type": "integer", "minimum": 1},
+                             "report": opt_report()}, ["text"]), "annotations": write},
+        {"name": "update_text", "title": "Change a text cell",
+         "description": "Replace the text of a text cell, by its id from open_report.",
+         "inputSchema": obj({"cell": {"type": "string"}, "text": {"type": "string", "maxLength": R.MAX_TEXT},
+                             "report": opt_report()}, ["cell", "text"]), "annotations": write},
+        {"name": "remove_cell", "title": "Remove a cell",
+         "description": "Remove a chart or text cell from the report, by its id from open_report.",
+         "inputSchema": obj({"cell": {"type": "string"}, "report": opt_report()}, ["cell"]), "annotations": write},
+        {"name": "move_cell", "title": "Move a cell",
+         "description": "Move a cell to `row` (1-based, as open_report numbers them; one past the last row makes a new "
+                        "row) at `position` within the row (1-based, default last). A row holds at most 3 cells.",
+         "inputSchema": obj({"cell": {"type": "string"}, "row": {"type": "integer", "minimum": 1},
+                             "position": {"type": "integer", "minimum": 1}, "report": opt_report()}, ["cell", "row"]),
+         "annotations": write},
+        {"name": "replace_chart", "title": "Replace a chart",
+         "description": "Redraw a chart cell with new render_visual arguments (new data, period or chart type). The "
+                        "cell keeps its place.",
+         "inputSchema": obj({"cell": {"type": "string"}, "chart": chart_schema(), "report": opt_report()}, ["cell", "chart"]),
+         "annotations": write},
+        {"name": "library", "title": "Reports for the builder", "description": "App only: reports and Recently deleted.",
+         "inputSchema": obj({}), "annotations": {"readOnlyHint": True}, "_meta": app},
+        {"name": "get_report", "title": "Report for the builder", "description": "App only: one report with chart results.",
+         "inputSchema": obj({"report": {"type": "string"}, "follow": {"type": "string", "enum": ["last", "thread", "none"]},
+                             "since": {"type": "integer"}}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "get_renderer", "title": "Zebra BI renderer", "description": "App only: the Zebra BI chart renderer page.",
-         "inputSchema": {"type": "object", "properties": {}}, "annotations": {"readOnlyHint": True}, "_meta": ui(app_only=True)},
+         "inputSchema": obj({}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "save_layout", "title": "Save the report layout", "description": "App only: save the builder's rows and title.",
-         "inputSchema": {"type": "object", "required": ["rev", "rows"], "properties": {
-             "rev": {"type": "integer"}, "title": {"type": "string"}, "rows": {"type": "array"}}},
-         "annotations": {"readOnlyHint": False}, "_meta": ui(app_only=True)},
+         "inputSchema": obj({"report": {"type": "string"}, "rev": {"type": "integer"}, "title": {"type": "string"},
+                             "rows": {"type": "array"}}, ["report", "rev", "rows"]), "annotations": write, "_meta": app},
+        {"name": "purge_report", "title": "Delete a report forever", "description": "App only: remove a Recently deleted report for good.",
+         "inputSchema": obj({"entry": {"type": "string"}}, ["entry"]), "annotations": {"readOnlyHint": False, "destructiveHint": True},
+         "_meta": app},
     ]
 
 
@@ -136,91 +180,145 @@ def text(t, structured=None, error=False):
     return out
 
 
-def current(create_title=None):
-    """Path of the open report: the one opened last by any process (the host runs one server per surface, so
-    the chat and the sidebar builder are different processes), else the newest on disk, else a new one."""
-    path = R.remembered()
-    if path:
-        state["path"] = path
-        return path
-    found = R.reports()
-    if found and not create_title:
-        state["path"] = found[0][2]
-        R.remember(found[0][0])
-        return state["path"]
-    return open_or_create(create_title or "Untitled report")
+def thread_of(meta):
+    """The host's chat thread id from a call's _meta (ChatGPT and Codex send threadId / thread_id), else None."""
+    meta = meta if isinstance(meta, dict) else {}
+    t = meta.get("threadId") or meta.get("thread_id")
+    if not t and isinstance(meta.get("x-codex-turn-metadata"), dict):
+        t = meta["x-codex-turn-metadata"].get("thread_id")
+    return str(t)[:120] if t else None
 
 
-def open_or_create(title=None, slug=None):
-    if slug:
-        path = R.path_for(slug)
-        if not os.path.isfile(path):
-            raise ValueError("no report named %r; list_reports shows the names" % slug)
-    else:
-        slug = R.slugify(title or "Untitled report")
-        path = R.path_for(slug)
-        if not os.path.isfile(path):
-            R.save(path, R.new(title))
-    state["path"] = path
-    R.remember(os.path.basename(os.path.dirname(path)))
-    return path
+def target(args, thread):
+    """The report a model tool acts on: `report` when given, else this chat's report. Raises when there is none."""
+    if args.get("report"):
+        return R.find(args["report"])
+    slug = R.resolve(thread)
+    if not slug:
+        raise ValueError("there is no report yet; create_report starts one")
+    return slug
 
 
-def results_for(rep, path):
+def opened(slug, thread, lead=""):
+    """Result of a tool that opens a report in the builder: its outline for the model, its slug for the builder."""
+    R.remember(slug, thread)
+    rep = R.load(R.path_for(slug))
+    return text((lead + "\n" if lead else "") + R.summary(rep),
+                {"report": slug, "title": rep["title"], "rev": rep["rev"], "follow": "thread" if thread else "last"})
+
+
+def edit(slug, change):
+    """Load, change, save one report. change(rep) returns the message; the rev guards the builder's own saves."""
+    path = R.path_for(slug)
+    rep = R.load(path)
+    msg = change(rep)
+    R.save(path, rep)
+    return text("%s (report %r)." % (msg, rep["title"]), {"report": slug, "rev": rep["rev"]})
+
+
+def draw(slug, vid, args):
+    """Render one chart into the report's cache; a readable error result when Zebra BI cannot draw it."""
+    try:
+        return R.render(os.path.dirname(R.path_for(slug)), vid, args), None
+    except S.SignIn:
+        return None, text("Zebra BI needs sign-in before charts can be drawn. Ask the user to run: %s" % S.SIGN_IN_CMD, error=True)
+    except (S.Unavailable, ValueError, SystemExit) as e:
+        return None, text("The chart was not drawn: %s" % S.clean(e, 600), error=True)
+
+
+def results_for(rep, slug):
     """render_visual results for every chart in the report, drawing the ones not cached yet."""
     out, errors = {}, {}
     for vid, v in rep["visuals"].items():
-        try:
-            out[vid] = R.render(os.path.dirname(path), vid, v["args"])
-        except S.SignIn:
-            errors[vid] = "Zebra BI needs sign-in: run %s" % S.SIGN_IN_CMD
-        except (S.Unavailable, ValueError, SystemExit) as e:
-            errors[vid] = S.clean(e, 300)
+        res, err = draw(slug, vid, v["args"])
+        if res is not None:
+            out[vid] = res
+        else:
+            errors[vid] = err["content"][0]["text"]
     return out, errors
 
 
-def call(name, args):
+def call(name, args, thread):
     if name == "open_report":
-        if args.get("report"):
-            path = open_or_create(slug=str(args["report"]))
-        elif args.get("title"):
-            path = open_or_create(title=str(args["title"]))
-        else:
-            path = current()
-        rep = R.load(path)
-        return text(R.summary(rep) + "\nThe builder is open; the user can arrange it there.",
-                    {"report": os.path.basename(os.path.dirname(path)), "title": rep["title"], "rev": rep["rev"]})
+        slug = R.find(args["report"]) if args.get("report") else R.resolve(thread)
+        if not slug:
+            return text("There are no reports yet. create_report starts one; the builder shows its empty home.",
+                        {"report": None, "follow": "thread" if thread else "last"})
+        return opened(slug, thread, "The builder shows this report; the user can arrange it there.")
+    if name == "create_report":
+        return opened(R.create(args.get("title")), thread, "Created a new, empty report.")
     if name == "list_reports":
-        found = R.reports()
-        if not found:
-            return text("No reports yet in %s. open_report with a title starts one." % R.root())
-        return text("\n".join("%s: %s" % (slug, title) for slug, title, _, _ in found))
+        if args.get("deleted"):
+            items = R.deleted()
+            if not items:
+                return text("Recently deleted is empty.")
+            return text("\n".join("%s: %s (deleted %s)" % (d["report"], d["title"], d["deleted_at"]) for d in items))
+        items = R.reports()
+        if not items:
+            return text("No reports yet in %s. create_report starts one." % R.root())
+        cur = R.resolve(thread)
+        return text("\n".join("%s%s: %s (%d charts, %d rows, saved %s)" % ("* " if r["report"] == cur else "", r["report"],
+                                r["title"], r["charts"], r["rows"], r["saved_at"]) for r in items) +
+                    "\n* is the report open in this chat.")
+    if name == "rename_report":
+        slug = target(args, thread)
+        title = R.rename(slug, args.get("title"))
+        return text("Renamed the report to %r (its folder stays %s)." % (title, slug), {"report": slug})
+    if name == "duplicate_report":
+        slug = R.duplicate(target(args, thread), args.get("title"))
+        return opened(slug, thread, "Made a copy and opened it.")
+    if name == "delete_report":
+        slug = R.find(args.get("report"))
+        title = R.load(R.path_for(slug))["title"]
+        R.trash(slug)
+        return text("Moved %r to Recently deleted; restore_report brings it back within %d days." % (title, R.KEEP_DAYS),
+                    {"deleted": slug})
+    if name == "restore_report":
+        return opened(R.restore(R.deleted_entry(args.get("report"))), thread, "Restored from Recently deleted.")
     if name == "add_chart":
-        path = current(None)
-        rep = R.load(path)
+        slug = target(args, thread)
+        rep = R.load(R.path_for(slug))
         vid, row = R.add_chart(rep, args.get("chart"), args.get("row"))
-        try:
-            res = R.render(os.path.dirname(path), vid, rep["visuals"][vid]["args"])
-        except S.SignIn:
-            return text("Zebra BI needs sign-in before charts can be drawn. Ask the user to run: %s" % S.SIGN_IN_CMD, error=True)
-        except (S.Unavailable, ValueError, SystemExit) as e:
-            return text("The chart was not added: %s" % S.clean(e, 600), error=True)
-        R.save(path, rep)
-        return text("Added chart %r to row %d of %r. Zebra BI: %s" % (R.chart_title(rep, vid), row, rep["title"], R.server_note(res)))
+        res, err = draw(slug, vid, rep["visuals"][vid]["args"])
+        if err:
+            return err
+        R.save(R.path_for(slug), rep)
+        return text("Added chart %r to row %d of %r. Zebra BI: %s" % (R.chart_title(rep, vid), row, rep["title"], R.server_note(res)),
+                    {"report": slug, "rev": rep["rev"]})
     if name == "add_text":
-        path = current(None)
-        rep = R.load(path)
-        row = R.add_text(rep, args.get("text"), args.get("row"))
-        R.save(path, rep)
-        return text("Added text to row %d of %r." % (row, rep["title"]))
+        return edit(target(args, thread), lambda rep: "Added text to row %d" % R.add_text(rep, args.get("text"), args.get("row")))
+    if name == "update_text":
+        return edit(target(args, thread), lambda rep: R.update_text(rep, args.get("cell"), args.get("text")) or "Changed text %s" % args.get("cell"))
+    if name == "remove_cell":
+        return edit(target(args, thread), lambda rep: R.remove_cell(rep, args.get("cell")) or "Removed %s" % args.get("cell"))
+    if name == "move_cell":
+        return edit(target(args, thread), lambda rep: R.move_cell(rep, args.get("cell"), args.get("row"), args.get("position"))
+                    or "Moved %s; now:\n%s" % (args.get("cell"), R.summary(rep)))
+    if name == "replace_chart":
+        slug = target(args, thread)
+        rep = R.load(R.path_for(slug))
+        vid = R.replace_chart(rep, args.get("cell"), args.get("chart"))
+        res, err = draw(slug, vid, rep["visuals"][vid]["args"])
+        if err:
+            return err
+        R.save(R.path_for(slug), rep)
+        return text("Replaced chart %s with %r in %r. Zebra BI: %s" % (args.get("cell"), R.chart_title(rep, vid), rep["title"],
+                    R.server_note(res)), {"report": slug, "rev": rep["rev"]})
+    # ----- app only -----
+    if name == "library":
+        return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last()})
     if name == "get_report":
-        path = current(None)
-        rep = R.load(path)
+        slug, follow = args.get("report"), args.get("follow") or "none"
+        followed = R.last() if follow == "last" else R.resolve(thread) if follow == "thread" else None
+        if followed and followed != slug:
+            return text("switched", {"switched": followed})
+        if not slug or not R.exists(slug):
+            return text("gone", {"gone": True, "report": slug})
+        rep = R.load(R.path_for(slug))
         if args.get("since") is not None and args["since"] == rep["rev"]:
             return text("unchanged", {"unchanged": True, "rev": rep["rev"]})
-        results, errors = results_for(rep, path)
-        return text("report %s rev %d" % (rep["title"], rep["rev"]),
-                    {"report": rep, "results": results, "errors": errors, "path": path})
+        results, errors = results_for(rep, slug)
+        return text("report %s rev %d" % (rep["title"], rep["rev"]), {"report": rep, "slug": slug, "results": results, "errors": errors})
     if name == "get_renderer":
         try:
             rpath, meta = S.renderer()
@@ -229,18 +327,35 @@ def call(name, args):
         with open(rpath, encoding="utf-8") as f:
             return text("renderer %s" % meta.get("sha256", "")[:12], {"renderer": f.read(), "sha256": meta.get("sha256")})
     if name == "save_layout":
-        path = current(None)
+        slug = args.get("report")
+        if not R.exists(slug):
+            return text("this report was deleted", {"gone": True}, error=True)
+        path = R.path_for(slug)
         rep = R.load(path)
         try:
             new = R.apply_layout(rep, args.get("title"), args.get("rows"), args.get("rev"))
         except R.Conflict as e:
             return text(str(e), {"conflict": True, "rev": rep["rev"]}, error=True)
-        rev = R.save(path, new)
-        return text("saved rev %d" % rev, {"rev": rev})
+        return text("saved", {"rev": R.save(path, new)})
+    if name == "purge_report":
+        R.purge(args.get("entry"))
+        return text("deleted for good", {"purged": args.get("entry")})
     raise KeyError("unknown tool %r" % name)
 
 
+def debug(method, params):
+    """With $ZEBRA_BI_REPORT_LOG set, one JSON line per request: method, tool and _meta (never arguments)."""
+    path = os.environ.get("ZEBRA_BI_REPORT_LOG")
+    if path:
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"method": method, "tool": params.get("name"), "_meta": params.get("_meta")}) + "\n")
+        except OSError:
+            pass
+
+
 def handle(method, params):
+    debug(method, params)
     if method == "initialize":
         want = params.get("protocolVersion")
         return {"protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
@@ -267,7 +382,7 @@ def handle(method, params):
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
         try:
-            return call(name, args if isinstance(args, dict) else {})
+            return call(name, args if isinstance(args, dict) else {}, thread_of(params.get("_meta")))
         except KeyError:
             raise
         except (ValueError, OSError, SystemExit) as e:
