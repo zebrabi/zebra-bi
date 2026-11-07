@@ -8,9 +8,17 @@ on a Zebra BI server. Its charts are drawn by render_visual on the Zebra BI MCP,
 and each result is cached in visuals/<id>.json next to the file. The format:
 
   {"format": "zebra-bi-report", "version": 1, "title": "...", "rev": 3,
-   "rows": [{"cells": [{"id": "c1", "type": "chart", "visual": "sales-by-month"},
+   "key_message": "Sales are **12%** ahead of plan.", "kpis": [{"value": "1.2M", "label": "Sales, ΔPL +12%"}],
+   "layout": "one-pager", "kept": [],
+   "rows": [{"cells": [{"id": "c1", "type": "chart", "visual": "sales-by-month", "message": "...", "note": "...",
+                        "why": "...", "recipe": {"source": "...", "query": "...", "code": "...", "period": "..."},
+                        "kept": []},
                        {"id": "c2", "type": "text", "text": "Sales are **12%** ahead of plan."}]}],
    "visuals": {"sales-by-month": {"args": { ...render_visual arguments... }}}}
+
+A chart cell's `message` sits above the chart and its `note` (the evidence) under it; `why` says why this chart
+type; `recipe` is how its rows were made, so a later rebuild can make them again. `kept` lists numbers the user
+chose to keep although no chart holds them (numbercheck.py traces every other number in the text).
 
 `visuals` is the same map story.json has, so the story exports can read a report. `rev` goes up by one on every
 save; the builder sends the rev it last saw, and a save against an older rev is refused so two editors do not
@@ -18,6 +26,7 @@ overwrite each other.
 """
 import datetime as dt, json, os, re, shutil, time
 
+import numbercheck as N
 import story as S
 
 FORMAT = "zebra-bi-report"
@@ -29,6 +38,12 @@ MAX_TEXT = 5000
 MAX_TITLE = 200
 ID = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 CELL_ID = re.compile(r"c[0-9]{1,6}")
+MAX_MESSAGE = 300  # the message above a chart, and its why
+MAX_KEY = 600  # the key message
+MAX_KPIS = 4
+MAX_KEPT = 50
+LAYOUTS = ("one-pager", "variance-walk", "board-pack")
+RECIPE_KEYS = ("source", "query", "code", "period")
 
 
 class Conflict(Exception):
@@ -66,6 +81,15 @@ def validate(rep):
         raise ValueError("not a Zebra BI report (format must be %r)" % FORMAT)
     if not isinstance(rep.get("show_notes", True), bool):
         raise ValueError("show_notes must be true or false")
+    if not _text_ok(rep.get("key_message", ""), MAX_KEY):
+        raise ValueError("key_message must be a string of at most %d characters" % MAX_KEY)
+    kpis = rep.get("kpis", [])
+    if not isinstance(kpis, list) or len(kpis) > MAX_KPIS or not all(_kpi_ok(k) for k in kpis):
+        raise ValueError("kpis must be at most %d tiles of value (40 characters) and label (120)" % MAX_KPIS)
+    if rep.get("layout") is not None and rep["layout"] not in LAYOUTS:
+        raise ValueError("layout must be one of %s" % ", ".join(LAYOUTS))
+    if not _kept_ok(rep.get("kept", [])):
+        raise ValueError("kept must be a list of at most %d numbers" % MAX_KEPT)
     if not isinstance(rep.get("rows"), list) or len(rep["rows"]) > MAX_ROWS:
         raise ValueError("rows must be a list of at most %d rows" % MAX_ROWS)
     visuals = rep.get("visuals")
@@ -90,12 +114,42 @@ def validate(rep):
                 note = cell.get("note", "")
                 if not isinstance(note, str) or len(note) > MAX_TEXT:
                     raise ValueError("cell %s: the note must be a string of at most %d characters" % (cid, MAX_TEXT))
+                if not (_text_ok(cell.get("message", ""), MAX_MESSAGE) and _text_ok(cell.get("why", ""), MAX_MESSAGE)):
+                    raise ValueError("cell %s: message and why must be strings of at most %d characters" % (cid, MAX_MESSAGE))
+                recipe = cell.get("recipe", {})
+                if not isinstance(recipe, dict) or any(k not in RECIPE_KEYS or not _text_ok(v, MAX_TEXT) for k, v in recipe.items()):
+                    raise ValueError("cell %s: recipe holds only %s, as strings" % (cid, ", ".join(RECIPE_KEYS)))
             elif cell.get("type") == "text":
                 if not isinstance(cell.get("text"), str) or len(cell["text"]) > MAX_TEXT:
                     raise ValueError("cell %s: text must be a string of at most %d characters" % (cid, MAX_TEXT))
             else:
                 raise ValueError("cell %s: type must be chart or text" % cid)
+            if not _kept_ok(cell.get("kept", [])):
+                raise ValueError("cell %s: kept must be a list of at most %d numbers" % (cid, MAX_KEPT))
     return rep
+
+
+def _text_ok(v, limit):
+    return isinstance(v, str) and len(v) <= limit
+
+
+def _kpi_ok(k):
+    return isinstance(k, dict) and set(k) <= {"value", "label"} and _text_ok(k.get("value", ""), 40) \
+        and _text_ok(k.get("label", ""), 120)
+
+
+def _kept_ok(v):
+    return isinstance(v, list) and len(v) <= MAX_KEPT and all(isinstance(x, str) and len(x) <= 40 for x in v)
+
+
+def _set_text(obj, key, text, limit, what):
+    """Set obj[key] to the stripped text, or drop the key when the text is empty."""
+    text = str(text or "").strip()
+    if len(text) > limit:
+        raise ValueError("%s must hold at most %d characters" % (what, limit))
+    obj.pop(key, None)
+    if text:
+        obj[key] = text
 
 
 def load(path):
@@ -371,13 +425,41 @@ def with_note(cell, note):
     return cell
 
 
-def add_chart(rep, args, row=None, note=None):
-    """Add a chart cell for render_visual args, with the narrative under it. Returns (visual id, row number)."""
+def add_chart(rep, args, row=None, note=None, message=None, why=None, recipe=None):
+    """Add a chart cell for render_visual args: its message above, its evidence (note) under, why this chart type,
+    and the recipe its rows came from. Returns (visual id, row number)."""
     if not isinstance(args, dict) or not args:
         raise ValueError("chart needs the render_visual arguments")
+    cell = with_note({"id": next_cell_id(rep), "type": "chart"}, note)
+    _set_text(cell, "message", message, MAX_MESSAGE, "the message")
+    _set_text(cell, "why", why, MAX_MESSAGE, "why")
+    recipe = {k: str(v) for k, v in (recipe or {}).items() if k in RECIPE_KEYS and v not in (None, "")}
+    if any(len(v) > MAX_TEXT for v in recipe.values()):
+        raise ValueError("a recipe part must hold at most %d characters" % MAX_TEXT)
+    if recipe:
+        cell["recipe"] = recipe
     vid = unique_visual_id(rep, args.get("title"))
     rep["visuals"][vid] = {"args": args}
-    return vid, place(rep, with_note({"id": next_cell_id(rep), "type": "chart", "visual": vid}, note), row)
+    cell["visual"] = vid
+    return vid, place(rep, cell, row)
+
+
+def set_key_message(rep, text):
+    """The report's key message, shown on top; empty text removes it."""
+    _set_text(rep, "key_message", text, MAX_KEY, "the key message")
+
+
+def set_kpis(rep, kpis):
+    """Up to four KPI tiles, each a short value and a one-line label; an empty list removes them."""
+    if not isinstance(kpis, list) or len(kpis) > MAX_KPIS:
+        raise ValueError("at most %d KPI tiles" % MAX_KPIS)
+    tiles = [{"value": str(k.get("value") or "").strip(), "label": str(k.get("label") or "").strip()}
+             for k in kpis if isinstance(k, dict)]
+    if not all(_kpi_ok(t) and t["value"] for t in tiles):
+        raise ValueError("each KPI tile needs a value (at most 40 characters) and a label (at most 120)")
+    rep.pop("kpis", None)
+    if tiles:
+        rep["kpis"] = tiles
 
 
 def add_text(rep, text, row=None):
@@ -387,30 +469,46 @@ def add_text(rep, text, row=None):
     return place(rep, {"id": next_cell_id(rep), "type": "text", "text": text}, row)
 
 
-def apply_layout(rep, title, rows, rev, show_notes=None):
+def apply_layout(rep, title, rows, rev, show_notes=None, key_message=None, kpis=None, kept=None):
     """The builder's edit: a new title and the rows as it shows them. Cells keep their ids; a chart cell may only
     name a chart the report holds, so the editor can move and drop charts but never invent one. Charts no cell
     shows any more are dropped from visuals."""
     if rev != rep.get("rev"):
         raise Conflict("the report changed since it was opened (rev %s, now %s)" % (rev, rep.get("rev")))
-    old_notes = {c["id"]: c.get("note") for r in rep["rows"] for c in r["cells"] if c["type"] == "chart"}
+    old = {c["id"]: c for r in rep["rows"] for c in r["cells"]}
     new_rows = []
     for row in rows if isinstance(rows, list) else []:
         cells = [c for c in (row.get("cells") if isinstance(row, dict) else None) or [] if isinstance(c, dict)]
         if not cells:
             continue  # an emptied row disappears
-        kept = []
+        out_cells = []
         for c in cells:
+            was = old.get(c.get("id"), {})
+            # a field the save leaves out (an older builder) keeps its stored value; "" removes it
+            have = lambda key: c[key] if key in c else was.get(key)
             if c.get("type") == "chart":
-                # a save without the note field (an older builder) keeps the note; "" removes it
-                note = c["note"] if "note" in c else old_notes.get(c.get("id"))
-                kept.append(with_note({"id": c.get("id"), "type": "chart", "visual": c.get("visual")}, note))
+                cell = with_note({"id": c.get("id"), "type": "chart", "visual": c.get("visual")}, have("note"))
+                _set_text(cell, "message", have("message"), MAX_MESSAGE, "the message")
+                _set_text(cell, "why", have("why"), MAX_MESSAGE, "why")
+                if was.get("recipe") and was.get("visual") == cell["visual"]:
+                    cell["recipe"] = was["recipe"]  # the builder never edits a recipe
             else:
-                kept.append({"id": c.get("id"), "type": "text", "text": str(c.get("text") or "")})
-        new_rows.append({"cells": kept})
+                cell = {"id": c.get("id"), "type": "text", "text": str(c.get("text") or "")}
+            if have("kept"):
+                cell["kept"] = list(have("kept"))
+            out_cells.append(cell)
+        new_rows.append({"cells": out_cells})
     out = dict(rep, title=clean_title(title if title is not None else rep["title"]), rows=new_rows)
     if show_notes is not None:
         out["show_notes"] = bool(show_notes)
+    if key_message is not None:
+        set_key_message(out, key_message)
+    if kpis is not None:
+        set_kpis(out, kpis)
+    if kept is not None:
+        out.pop("kept", None)
+        if kept:
+            out["kept"] = list(kept)
     shown = {c["visual"] for r in new_rows for c in r["cells"] if c["type"] == "chart"}
     out["visuals"] = {k: v for k, v in rep["visuals"].items() if k in shown}
     validate(out)
@@ -439,12 +537,20 @@ def remove_cell(rep, cell):
     drop_unshown(rep)
 
 
-def update_text(rep, cell, text):
+def update_text(rep, cell, text, field=None):
+    """Change a text cell, or a chart cell's note (the default), message or why; empty text removes the latter."""
     ri, ci = locate(rep, cell)
     c = rep["rows"][ri]["cells"][ci]
-    if c["type"] == "chart":  # a chart's text is its note; empty text removes the note
-        with_note(c, text)
+    if c["type"] == "chart":
+        if field in (None, "note"):
+            with_note(c, text)
+        elif field in ("message", "why"):
+            _set_text(c, field, text, MAX_MESSAGE, "the " + field)
+        else:
+            raise ValueError("a chart cell's field is message, note or why")
         return
+    if field not in (None, "text"):
+        raise ValueError("cell %s is text; it has no %s" % (cell, field))
     text = str(text or "").strip()
     if not text or len(text) > MAX_TEXT:
         raise ValueError("text must hold 1 to %d characters" % MAX_TEXT)
@@ -492,20 +598,64 @@ def chart_title(rep, vid):
     return str(args.get("title") or vid)
 
 
+def checks(rep):
+    """Numbers in the report's text that no chart holds: {"cells": {cell id: {field: [raw]}}, "key_message": [raw],
+    "kpis": [[raw] per tile]}, only where there are some. A chart's message and note are checked against that
+    chart; the key message, KPI tiles and text cells against every chart in the report."""
+    every = [v["args"] for v in rep["visuals"].values()]
+    cells = {}
+    for row in rep["rows"]:
+        for c in row["cells"]:
+            if c["type"] == "chart":
+                own = [rep["visuals"][c["visual"]]["args"]]
+                found = {f: N.untraced(c.get(f, ""), own, c.get("kept", ())) for f in ("message", "note")}
+            else:
+                found = {"text": N.untraced(c["text"], every, c.get("kept", ()))}
+            found = {f: v for f, v in found.items() if v}
+            if found:
+                cells[c["id"]] = found
+    out = {"cells": cells} if cells else {}
+    key = N.untraced(rep.get("key_message", ""), every, rep.get("kept", ()))
+    if key:
+        out["key_message"] = key
+    kpis = [N.untraced("%s %s" % (k["value"], k["label"]), every, rep.get("kept", ())) for k in rep.get("kpis", [])]
+    if any(kpis):
+        out["kpis"] = kpis
+    return out
+
+
+def flags(rep):
+    """One line per untraced number, for a person: "c3 note: 99.0k". Empty when every number is traced or kept."""
+    found = checks(rep)
+    lines = ["%s %s: %s" % (cid, field, raw) for cid, fields in found.get("cells", {}).items()
+             for field, raws in fields.items() for raw in raws]
+    lines += ["key message: %s" % raw for raw in found.get("key_message", [])]
+    lines += ["KPI %d: %s" % (i, raw) for i, raws in enumerate(found.get("kpis", []), 1) for raw in raws]
+    return lines
+
+
 def summary(rep):
-    """What the model sees: the title and, per row, the chart titles and the start of each text. Never the data."""
+    """What the model sees: the title, key message and tiles and, per row, the chart titles with their message and
+    note and the start of each text, plus any number no chart holds. Never the data."""
+    short = lambda t, n: (lambda t: repr(t[:n] + ("..." if len(t) > n else "")) if t else "MISSING")(" ".join((t or "").split()))
+    found = checks(rep)
     lines = ["Report: %s (%d rows)%s" % (rep["title"], len(rep["rows"]),
-                                        "" if rep.get("show_notes", True) else ", chart notes hidden")]
+                                        "" if rep.get("show_notes", True) else ", chart notes hidden"),
+             "Key message: %s" % short(rep.get("key_message"), 120)
+             + ("; unchecked: %s" % ", ".join(found["key_message"]) if found.get("key_message") else "")]
+    if rep.get("kpis"):
+        lines.append("KPI tiles: " + "; ".join("%s %s" % (k["value"], k["label"]) for k in rep["kpis"])
+                     + ("; unchecked: %s" % ", ".join(r for t in found.get("kpis", []) for r in t) if found.get("kpis") else ""))
     for i, row in enumerate(rep["rows"], 1):
         parts = []
         for c in row["cells"]:
             if c["type"] == "chart":
-                note = " ".join(c.get("note", "").split())
-                parts.append("[%s] chart %r, note %s" % (c["id"], chart_title(rep, c["visual"]),
-                                                        repr(note[:60] + ("..." if len(note) > 60 else "")) if note else "MISSING"))
+                part = "[%s] chart %r, message %s, note %s" % (c["id"], chart_title(rep, c["visual"]),
+                                                               short(c.get("message"), 60), short(c.get("note"), 60))
             else:
-                t = " ".join(c["text"].split())
-                parts.append("[%s] text %r" % (c["id"], t[:80] + ("..." if len(t) > 80 else "")))
+                part = "[%s] text %s" % (c["id"], short(c["text"], 80))
+            raws = [r for v in found.get("cells", {}).get(c["id"], {}).values() for r in v]
+            parts.append(part + (", unchecked: %s" % ", ".join(raws) if raws else ""))
         lines.append("Row %d: %s" % (i, "; ".join(parts)))
     return "\n".join(lines)
 
