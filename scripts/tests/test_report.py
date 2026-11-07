@@ -394,6 +394,14 @@ class Server(unittest.TestCase):
         finally:
             sidebar.close()
 
+    def test_open_without_a_report_does_not_pin_the_thread(self):
+        # ChatGPT gives the plugin's own surface a thread id; opening it is a look, not a choice
+        self.tool("create_report", {"title": "October"})
+        self.assertEqual(self.tool("open_report", {}, thread="plugin")["structuredContent"]["report"], "october")
+        self.tool("create_report", {"title": "November"}, thread="chat-1")
+        self.assertEqual(self.tool("open_report", {}, thread="plugin")["structuredContent"]["report"], "november")
+        self.assertEqual(self.tool("library", {}, thread="plugin")["structuredContent"]["last"], "november")
+
     def test_debug_log_records_meta_not_arguments(self):
         log = os.path.join(self.tmp, "calls.jsonl")
         self.server.close()
