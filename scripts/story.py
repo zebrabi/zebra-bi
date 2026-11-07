@@ -631,7 +631,8 @@ def rows(story):
         if not isinstance(cells, list) or not 1 <= len(cells) <= MAX_CELLS:
             sys.exit("row %d needs 1 to %d cells side by side" % (i, MAX_CELLS))
         for c in cells:
-            if not isinstance(c, dict) or not (c.get("visual") or isinstance(c.get("text"), str)):
+            if not isinstance(c, dict) or not (c.get("visual") or isinstance(c.get("text"), str)) \
+                    or not isinstance(c.get("note", ""), str):
                 sys.exit("row %d: each cell is {\"visual\": id} or {\"text\": ...}" % i)
     return out
 
@@ -722,7 +723,8 @@ def assemble(story, results, meta, renderer_path, brand):
                 if vid not in results:
                     sys.exit("a row names visual %r, which is not in visuals" % vid)
                 title = ((story.get("visuals", {}).get(vid) or {}).get("args") or {}).get("title") or vid
-                cells.append('<div class="cell"><iframe data-v="%s" title="%s"></iframe></div>' % (e(vid), e(title)))
+                note = '<div class="note">%s</div>' % para(c["note"]) if c.get("note") else ""
+                cells.append('<div class="cell"><iframe data-v="%s" title="%s"></iframe>%s</div>' % (e(vid), e(title), note))
             else:
                 cells.append('<div class="cell">%s</div>' % para(c["text"]))
         sections.append('<section class="row cols-%d">%s</section>' % (len(cells), "".join(cells)))

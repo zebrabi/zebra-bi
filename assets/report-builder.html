@@ -82,6 +82,8 @@
   .text { min-height: 2.6em; padding: 4px 6px; outline: none; border-radius: 4px; white-space: pre-wrap; max-width: 75ch; }
   .text:focus { box-shadow: 0 0 0 2px var(--accent); }
   .text:empty::before { content: 'Write here…'; color: var(--muted); }
+  .chart-note { min-height: 1.6em; margin-top: 8px; font-size: 13px; }
+  .chart-note:empty::before { content: 'Add the message for this chart and the numbers that prove it…'; }
   .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
 
   /* toast, at the top: ChatGPT lays its own composer over the bottom of the app */
@@ -441,6 +443,17 @@
     return s;
   }
 
+  // Text the user edits in place: plain text with **bold** marks while focused, formatted otherwise.
+  function editable(cell, key, cls) {
+    var t = el('div', cls); t.contentEditable = 'true';
+    var shown = function () { t.innerHTML = formatted(cell[key] || ''); };
+    shown();
+    t.addEventListener('focus', function () { t.textContent = cell[key] || ''; });
+    t.addEventListener('blur', shown);
+    t.addEventListener('input', function () { cell[key] = t.innerText.replace(/\n$/, ''); scheduleSave(); });
+    return t;
+  }
+
   function cellEl(cell, ri) {
     var c = el('div', 'cell'); c.dataset.cell = cell.id;
     var tools = el('div', 'tools');
@@ -455,14 +468,9 @@
     tools.appendChild(grip); tools.appendChild(del); c.appendChild(tools);
     if (cell.type === 'chart') {
       var box = el('div', 'chart'); box.dataset.cell = cell.id; c.appendChild(box);
+      c.appendChild(editable(cell, 'note', 'text chart-note'));  // the narrative under the chart
     } else {
-      var t = el('div', 'text'); t.contentEditable = 'true';
-      var shown = function () { t.innerHTML = formatted(cell.text); };
-      shown();
-      t.addEventListener('focus', function () { t.textContent = cell.text; });  // edit the plain text, **bold** marks and all
-      t.addEventListener('blur', shown);
-      t.addEventListener('input', function () { cell.text = t.innerText.replace(/\n$/, ''); scheduleSave(); });
-      c.appendChild(t);
+      c.appendChild(editable(cell, 'text', 'text'));
     }
     c.addEventListener('dragover', function (e) {
       if (!dragId || dragId === cell.id) return;
@@ -523,7 +531,7 @@
     if (saving) { saveTimer = setTimeout(saveNow, 300); return; }
     saving = true; status('Saving…');
     var rows = rep.rows.map(function (r) { return { cells: r.cells.map(function (c) {
-      return c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual } : { id: c.id, type: 'text', text: c.text };
+      return c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual, note: c.note || '' } : { id: c.id, type: 'text', text: c.text };
     }) }; });
     callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows }).then(function (r) {
       rep.rev = sc(r).rev; dirty = false; saving = false; status('Saved');

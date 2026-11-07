@@ -40,7 +40,7 @@ STORY = {
     "next": ["Look at **this**."], "source": {"label": "Test data"},
 }
 # The report builder's layout: a chart beside its message, then three cells side by side.
-ROWS = [{"cells": [{"visual": "v1"}, {"text": "Key **message**."}]},
+ROWS = [{"cells": [{"visual": "v1", "note": "V1 rose **+5%**."}, {"text": "Key **message**."}]},
         {"cells": [{"visual": "v2"}, {"visual": "v3"}, {"text": "Note."}]}]
 
 
@@ -106,7 +106,8 @@ class Page(Base):
             results = S.render_visuals(self.story_dir, story)
         path, meta = S.renderer()
         page = S.assemble(story, results, meta, path, B.load(start=self.tmp))
-        self.assertIn('<section class="row cols-2"><div class="cell"><iframe data-v="v1" title="Chart 1"></iframe></div>'
+        self.assertIn('<section class="row cols-2"><div class="cell"><iframe data-v="v1" title="Chart 1"></iframe>'
+                      '<div class="note"><p>V1 rose <b>+5%</b>.</p></div></div>'
                       '<div class="cell"><p>Key <b>message</b>.</p></div></section>', page)
         self.assertIn('<section class="row cols-3"><div class="cell"><iframe data-v="v2"', page)
         self.assertIn("section.row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}", page)

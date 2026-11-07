@@ -114,6 +114,24 @@ class Cells(unittest.TestCase):
             R.move_cell(self.rep, "c1", 9)
         self.assertEqual(ids(self.rep), [["c1"], ["c2", "c3", "c4"]])  # untouched after a refusal
 
+    def test_a_chart_carries_its_note_through_edits_and_exports(self):
+        vid, _ = R.add_chart(self.rep, dict(ARGS, title="Sales by month"), note="  Sales grew **+4%** on PY.  ")
+        cell = self.rep["rows"][-1]["cells"][0]
+        self.assertEqual(cell["note"], "Sales grew **+4%** on PY.")
+        R.validate(self.rep)
+        self.assertIn("note 'Sales grew **+4%** on PY.'", R.summary(self.rep))
+        self.assertIn("note MISSING", R.summary(self.rep))  # c1 has none yet
+        moved = R.apply_layout(self.rep, None, self.rep["rows"], self.rep["rev"])
+        self.assertEqual(moved["rows"][-1]["cells"][0]["note"], "Sales grew **+4%** on PY.")
+        self.assertEqual(R.to_story(moved)["rows"][-1]["cells"][0], {"visual": vid, "note": "Sales grew **+4%** on PY."})
+        bare = [{"cells": [{k: v for k, v in c.items() if k != "note"} for c in r["cells"]]} for r in self.rep["rows"]]
+        kept = R.apply_layout(self.rep, None, bare, self.rep["rev"])  # a save without notes keeps them
+        self.assertEqual(kept["rows"][-1]["cells"][0]["note"], "Sales grew **+4%** on PY.")
+        R.update_text(self.rep, cell["id"], "")
+        self.assertNotIn("note", cell)  # an empty note is no note
+        with self.assertRaises(ValueError):
+            R.validate(dict(self.rep, rows=[{"cells": [dict(cell, note="x" * (R.MAX_TEXT + 1))]}]))
+
     def test_remove_drops_the_chart_and_an_empty_row(self):
         R.remove_cell(self.rep, "c1")
         self.assertEqual(ids(self.rep), [["c2", "c3"]])
@@ -122,8 +140,8 @@ class Cells(unittest.TestCase):
     def test_update_text_and_replace_chart_check_the_cell_type(self):
         R.update_text(self.rep, "c2", "new")
         self.assertEqual(self.rep["rows"][1]["cells"][0]["text"], "new")
-        with self.assertRaises(ValueError):
-            R.update_text(self.rep, "c1", "x")
+        R.update_text(self.rep, "c1", "West led **+37.9k**.")  # a chart's text is the note under it
+        self.assertEqual(self.rep["rows"][0]["cells"][0]["note"], "West led **+37.9k**.")
         vid = R.replace_chart(self.rep, "c1", dict(ARGS, title="Sales by product"))
         self.assertEqual(vid, "sales-by-product")
         self.assertEqual(list(self.rep["visuals"]), ["sales-by-product"])
