@@ -1,6 +1,6 @@
 ---
 name: report-builder
-description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'put these side by side', 'move this chart next to that one', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
+description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
 license: Apache-2.0
 ---
 
@@ -37,4 +37,8 @@ The user can do all of this in the builder too: drag cells by the grip, edit tex
 
 ## Sharing
 
-The report is a file on this computer. To share it as a page, PDF or PowerPoint, use `story-artifact`, `story-pdf` or `story-office` on its charts.
+The report is a file on this computer, in its folder `~/Documents/Zebra BI Reports/<name>` (or under `ZEBRA_BI_REPORTS` when that is set).
+
+- "Save it as a PDF": `save_pdf`. It prints an A4 PDF into the report's folder, its charts and texts side by side as in the builder, and returns the path; give the path, and say in one line that the PDF holds the report's aggregated numbers, so it goes only where the data may go. In the builder the same is ⋯ → Save as PDF.
+- A page to share (Claude Code only): `story-artifact` builds the report from its folder, rows included.
+- PowerPoint and Excel (`story-office`) are built from data stories, not from reports yet.

@@ -12,7 +12,8 @@
   scripts/pdf.py. Placeholders: LANG, TITLE, FONT_LINK, BRAND_CSS, KICKER, LOGO, SUBTITLE, KPIS,
   SECTIONS, NEXT, FOOTER, VERSION, RENDERER_SHA (the renderer's sha256), VISUALS_JSON, RENDERER_JSON.
   The brand sets the page around the charts: colours, fonts, kicker, logo, credit. The charts keep
-  their IBCS colours. The Zebra BI renderer (the ui:// page render_visual names) and every chart's tool
+  their IBCS colours. A story's rows (a report from the report builder) put up to three cells, charts or
+  text, side by side; each chart is drawn at its cell's width. The Zebra BI renderer (the ui:// page render_visual names) and every chart's tool
   result are embedded as JSON. Each <iframe data-v="id"> loads the renderer from a blob URL and gets
   its data from window.__VISUALS[id] through the minimal MCP Apps host at the bottom, which sets
   data-status="ready" on the iframe once the chart has its data and has reported its size. The page
@@ -38,6 +39,12 @@
   section h2{font:600 20px/1.25 var(--font-headline);letter-spacing:-.01em;margin:0 0 8px;break-after:avoid}
   section p{margin:0 0 10px}
   iframe{border:0;display:block;width:100%;height:420px;background:#fff;margin-top:14px;break-inside:avoid}
+  section.row{display:grid;gap:20px;align-items:start}
+  section.row.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  section.row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  section.row .cell{min-width:0}
+  section.row iframe{margin-top:0}
+  section.row p:last-child{margin-bottom:0}
   .next ul{padding-left:20px}
   .next li{margin:0 0 6px}
   section:last-of-type{margin-bottom:20px}

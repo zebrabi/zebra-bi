@@ -39,6 +39,13 @@ STORY = {
     "visuals": {vid: {"args": a} for vid, a in ARGS.items()},
     "next": ["Look at **this**."], "source": {"label": "Test data"},
 }
+# The report builder's layout: a chart beside its message, then three cells side by side.
+ROWS = [{"cells": [{"visual": "v1"}, {"text": "Key **message**."}]},
+        {"cells": [{"visual": "v2"}, {"visual": "v3"}, {"text": "Note."}]}]
+
+
+def rows_story():
+    return dict(json.loads(json.dumps(STORY)), sections=[], rows=json.loads(json.dumps(ROWS)))
 
 
 class Base(unittest.TestCase):
@@ -93,6 +100,27 @@ class Page(Base):
         for vid in ARGS:
             self.assertIn('<iframe data-v="%s"' % vid, page)
 
+    def test_rows_put_cells_side_by_side(self):
+        story = rows_story()
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = S.render_visuals(self.story_dir, story)
+        path, meta = S.renderer()
+        page = S.assemble(story, results, meta, path, B.load(start=self.tmp))
+        self.assertIn('<section class="row cols-2"><div class="cell"><iframe data-v="v1" title="Chart 1"></iframe></div>'
+                      '<div class="cell"><p>Key <b>message</b>.</p></div></section>', page)
+        self.assertIn('<section class="row cols-3"><div class="cell"><iframe data-v="v2"', page)
+        self.assertIn("section.row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}", page)
+        self.assertEqual(S.story_visuals(story), ["v1", "v2", "v3"])
+
+    def test_a_row_holds_one_to_three_cells(self):
+        for cells in ([], [{"visual": "v1"}] * 4, [{"heading": "no visual or text"}]):
+            with self.subTest(cells=cells), self.assertRaises(SystemExit):
+                S.rows({"rows": [{"cells": cells}]})
+
+    def test_footer_names_the_source_only_when_there_is_one(self):
+        self.assertTrue(S.footer(STORY, {}).startswith("Source: Test data. Built "))
+        self.assertTrue(S.footer({"title": "Report"}, {}).startswith("Built "))
+
     def test_footer_colour_is_a_hex_colour_or_the_default(self):
         self.assertIn("color:#123456", P.footer_template({"colors": {"muted": "#123456"}}))
         self.assertIn("color:#616161", P.footer_template({"colors": {"muted": "red;background:url(x)"}}))
@@ -135,6 +163,19 @@ class Build(Base):
             last = subprocess.run(["pdftotext", "-f", "5", "-l", "5", self.pdf_path(), "-"], capture_output=True, text=True).stdout
             self.assertIn("Where to look next", last)
             self.assertIn("Source: Test data.", last)
+
+    @unittest.skipUnless(shutil.which("pdftotext"), "needs pdftotext")
+    def test_rows_print_side_by_side(self):
+        import subprocess
+        self.renderer(300)
+        with open(os.path.join(self.story_dir, "story.json"), "w") as f:
+            json.dump(rows_story(), f)
+        info = self.build()
+        self.assertEqual(info["visuals"], 3)
+        text = subprocess.run(["pdftotext", "-layout", self.pdf_path(), "-"], capture_output=True, text=True).stdout
+        line = lambda label: next(i for i, l in enumerate(text.splitlines()) if label in l)
+        self.assertEqual(line("Chart 2"), line("Chart 3"))  # same row, so the same printed line
+        self.assertNotEqual(line("Chart 1"), line("Chart 2"))
 
     def test_chart_that_never_draws_writes_no_pdf(self):
         self.renderer(0)

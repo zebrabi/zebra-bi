@@ -155,6 +155,10 @@ def tools():
                         "cell keeps its place.",
          "inputSchema": obj({"cell": {"type": "string"}, "chart": chart_schema(), "report": opt_report()}, ["cell", "chart"]),
          "annotations": write},
+        {"name": "save_pdf", "title": "Save the report as a PDF",
+         "description": "Print the report to an A4 PDF in its folder on this computer, its charts and texts side by side "
+                        "as in the builder. Needs Chrome, Edge or Chromium. Returns the file's path.",
+         "inputSchema": obj({"report": opt_report()}), "annotations": {"readOnlyHint": False, "destructiveHint": False}},
         {"name": "library", "title": "Reports for the builder", "description": "App only: reports and Recently deleted.",
          "inputSchema": obj({}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "get_report", "title": "Report for the builder", "description": "App only: one report with chart results.",
@@ -307,6 +311,17 @@ def call(name, args, thread):
         R.save(R.path_for(slug), rep)
         return text("Replaced chart %s with %r in %r. Zebra BI: %s" % (args.get("cell"), R.chart_title(rep, vid), rep["title"],
                     R.server_note(res)), {"report": slug, "rev": rep["rev"]})
+    if name == "save_pdf":
+        slug = target(args, thread)
+        import pdf as P  # starts nothing until a PDF is asked for
+        try:
+            out = P.build(os.path.dirname(R.path_for(slug)))
+        except SystemExit as e:
+            return text("No PDF was saved: %s" % S.clean(e, 600), error=True)
+        with open(out, "rb") as f:
+            pages = P.pages(f.read())
+        return text("Saved %s (%d page%s). It holds the report's aggregated numbers, so share it only where the data may go."
+                    % (out, pages, "" if pages == 1 else "s"), {"report": slug, "file": out, "pages": pages})
     # ----- app only -----
     if name == "library":
         return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last()})

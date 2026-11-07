@@ -31,7 +31,10 @@ One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it
 | `kpis` | 0-4 tiles, `value` short, `label` one line |
 | `sections[].body` | plain text; a blank line starts a new paragraph; `**bold**` is the only markup |
 | `sections[].visual` | a key of `visuals`, or omitted for a text-only section |
+| `rows` | optional, after the sections: the report builder's layout. Each row is `{"cells": [...]}` with 1 to 3 cells side by side, each `{"visual": id}` or `{"text": "..."}` (`**bold**` allowed). `story-pdf` and `story-artifact` keep the cells side by side, each chart drawn at its cell's width; `story-office` lays out sections only |
 | `visuals` keys | lowercase letters, digits, dashes |
 | `visuals.<id>.args` | exactly what `render_visual` takes; see `chart-rules.md` |
+
+A report builder folder (`report.zbreport`, no `story.json`) builds as a story: its title as `title`, its rows as `rows`, no sections and no source.
 
 What a build adds next to it: `visuals/<id>.json` (the MCP's result plus a hash of the arguments, so unchanged visuals are not re-rendered), `<slug>.pdf` from `story-pdf`, `artifact/` (the page, `charts/<id>.png`, `build.json`) and `artifact.json` (the published URL) from `story-artifact`, and `snapshots/<id>.png`, `<slug>.pptx` and `<slug>.xlsx` from `story-office`.

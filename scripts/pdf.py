@@ -7,7 +7,8 @@
 then the branded page (story.assemble) is opened in headless Chrome, Edge or Chromium
 (ZEBRA_BI_CHROME picks one) at the A4 printable width, so the Zebra BI renderer draws each chart
 at the width it is printed at. Once every chart has drawn and held its size, the page is printed to
-<slug>.pdf in the story folder. Chart labels and values stay text in the PDF. The page follows the
+<slug>.pdf in the story folder. <story-dir> may also be a report builder folder (report.zbreport): its
+rows put up to three charts or texts side by side, each chart drawn at its cell's width. Chart labels and values stay text in the PDF. The page follows the
 brand (brand.py: .zebra/brand/, else the editorial default); the charts never change.
 
 Without a browser, or when a chart does not draw, build stops with one line and writes no PDF.
@@ -106,8 +107,7 @@ def build(story_dir, brand_dir=None):
     if not binary:
         sys.exit("The PDF needs Google Chrome, Microsoft Edge or Chromium to draw the charts, and none was found "
                  "(set ZEBRA_BI_CHROME to its path). No PDF was written.")
-    with open(os.path.join(story_dir, "story.json"), encoding="utf-8") as f:
-        story = json.load(f)
+    story = S.load(story_dir)
     results = S.render_visuals(story_dir, story)
     renderer_path, meta = S.renderer()
     pdf = print_page(S.assemble(story, results, meta, renderer_path, brand), binary, brand)
