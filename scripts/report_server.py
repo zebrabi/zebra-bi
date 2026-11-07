@@ -128,22 +128,49 @@ def tools():
          "inputSchema": obj({"report": {"type": "string", "description": "Name or title from list_reports deleted=true."}}, ["report"]),
          "annotations": write},
         {"name": "add_chart", "title": "Add a Zebra BI chart to the report",
-         "description": "Draw a Zebra BI chart with render_visual and add it to the report with `note`, the narrative "
-                        "under the chart: its message with the numbers in **bold**, then one or two sentences of evidence "
-                        "from the chart (IBCS: AC, PL, PY, ΔPY%; no cause the data does not show). Send aggregated rows only, "
-                        "one per category. It joins `row` when that row has room (at most 3 cells), else starts a new "
-                        "row. Returns Zebra BI's notes on the chart, not the chart itself.",
-         "inputSchema": obj({"chart": chart_schema(), "note": {"type": "string", "maxLength": R.MAX_TEXT},
-                             "row": {"type": "integer", "minimum": 1}, "report": opt_report()}, ["chart", "note"]),
+         "description": "Draw a Zebra BI chart with render_visual and add it to the report: `message` goes above the "
+                        "chart (its supporting message, numbers in **bold**), `note` under it (two or three sentences of "
+                        "evidence read from the chart), `why` says in one sentence why this chart type, `recipe` keeps how "
+                        "the rows were made (source, query or sheet, the code you ran, the period). Every number in the "
+                        "text must come from the chart's rows (IBCS: AC, PL, PY, ΔPL%; no cause the data does not show). "
+                        "Send aggregated rows only, one per category. It joins `row` when that row has room (at most 3 "
+                        "cells), else starts a new row. Returns Zebra BI's notes on the chart and any number in your text "
+                        "the chart does not hold.",
+         "inputSchema": obj({"chart": chart_schema(), "message": {"type": "string", "maxLength": R.MAX_MESSAGE},
+                             "note": {"type": "string", "maxLength": R.MAX_TEXT},
+                             "why": {"type": "string", "maxLength": R.MAX_MESSAGE},
+                             "recipe": obj({k: {"type": "string"} for k in R.RECIPE_KEYS}),
+                             "row": {"type": "integer", "minimum": 1}, "report": opt_report()}, ["chart", "message", "note"]),
+         "annotations": write},
+        {"name": "set_key_message", "title": "Set the report's key message",
+         "description": "The key message on top of the report: what happened, how big, against what, numbers in **bold**, "
+                        "each from one of the report's charts. Empty text removes it.",
+         "inputSchema": obj({"text": {"type": "string", "maxLength": R.MAX_KEY}, "report": opt_report()}, ["text"]),
+         "annotations": write},
+        {"name": "set_kpis", "title": "Set the KPI tiles",
+         "description": "Up to four KPI tiles under the key message, each a short value (\"1.0M\") and a one-line label "
+                        "with its variance (\"Revenue, ΔPL −39.2k (−3.7%)\"); every number from the report's charts. "
+                        "An empty list removes them.",
+         "inputSchema": obj({"kpis": {"type": "array", "maxItems": R.MAX_KPIS,
+                                      "items": obj({"value": {"type": "string", "maxLength": 40},
+                                                    "label": {"type": "string", "maxLength": 120}}, ["value", "label"])},
+                             "report": opt_report()}, ["kpis"]), "annotations": write},
+        {"name": "arrange_report", "title": "Lay out the report",
+         "description": "Rearrange the same cells as a named layout, largest variance first: one-pager (the main chart, "
+                        "then two per row), variance-walk (one chart per row), board-pack (the main chart, then three per "
+                        "row). Text stays after its chart.",
+         "inputSchema": obj({"layout": {"type": "string", "enum": list(R.LAYOUTS)}, "report": opt_report()}, ["layout"]),
          "annotations": write},
         {"name": "add_text", "title": "Add text to the report",
          "description": "Add a narrative paragraph (**bold** allowed). It joins `row` when that row has room, else "
                         "starts a new row.",
          "inputSchema": obj({"text": {"type": "string", "maxLength": R.MAX_TEXT}, "row": {"type": "integer", "minimum": 1},
                              "report": opt_report()}, ["text"]), "annotations": write},
-        {"name": "update_text", "title": "Change a text cell or a chart's note",
-         "description": "Replace the text of a text cell, or the note under a chart, by its id from open_report.",
+        {"name": "update_text", "title": "Change a text cell or a chart's text",
+         "description": "Replace the text of a text cell, or of a chart cell's `field`: message (above the chart), note "
+                        "(the evidence under it, the default) or why. By the cell's id from open_report.",
          "inputSchema": obj({"cell": {"type": "string"}, "text": {"type": "string", "maxLength": R.MAX_TEXT},
+                             "field": {"type": "string", "enum": ["message", "note", "why"]},
                              "report": opt_report()}, ["cell", "text"]), "annotations": write},
         {"name": "remove_cell", "title": "Remove a cell",
          "description": "Remove a chart or text cell from the report, by its id from open_report.",
@@ -225,6 +252,15 @@ def opened(slug, thread, lead="", pin=True):
                 {"report": slug, "title": rep["title"], "rev": rep["rev"], "follow": "thread" if thread else "last"})
 
 
+def unchecked(rep, where):
+    """", Unchecked numbers: ..." for a cell id, "key_message" or "kpis" when its text holds numbers no chart has."""
+    found = R.checks(rep)
+    raws = (found.get("key_message", []) if where == "key_message"
+            else [r for t in found.get("kpis", []) for r in t] if where == "kpis"
+            else [r for v in found.get("cells", {}).get(where, {}).values() for r in v])
+    return ". Unchecked numbers: %s" % ", ".join(raws) if raws else ""
+
+
 def edit(slug, change):
     """Load, change, save one report. change(rep) returns the message; the rev guards the builder's own saves."""
     path = R.path_for(slug)
@@ -297,17 +333,29 @@ def call(name, args, thread):
     if name == "add_chart":
         slug = target(args, thread)
         rep = R.load(R.path_for(slug))
-        vid, row = R.add_chart(rep, args.get("chart"), args.get("row"), args.get("note"))
+        vid, row = R.add_chart(rep, args.get("chart"), args.get("row"), args.get("note"), args.get("message"),
+                               args.get("why"), args.get("recipe") if isinstance(args.get("recipe"), dict) else None)
         res, err = draw(slug, vid, rep["visuals"][vid]["args"])
         if err:
             return err
         R.save(R.path_for(slug), rep)
-        return text("Added chart %r to row %d of %r. Zebra BI: %s" % (R.chart_title(rep, vid), row, rep["title"], R.server_note(res)),
-                    {"report": slug, "rev": rep["rev"]})
+        cid = next(c["id"] for r in rep["rows"] for c in r["cells"] if c.get("visual") == vid)
+        return text("Added chart %r to row %d of %r. Zebra BI: %s%s" % (R.chart_title(rep, vid), row, rep["title"],
+                    R.server_note(res), unchecked(rep, cid)), {"report": slug, "rev": rep["rev"]})
+    if name == "set_key_message":
+        return edit(target(args, thread), lambda rep: R.set_key_message(rep, args.get("text"))
+                    or "Key message set%s" % unchecked(rep, "key_message"))
+    if name == "set_kpis":
+        return edit(target(args, thread), lambda rep: R.set_kpis(rep, args.get("kpis") if isinstance(args.get("kpis"), list) else None)
+                    or "KPI tiles set%s" % unchecked(rep, "kpis"))
+    if name == "arrange_report":
+        return edit(target(args, thread), lambda rep: R.arrange(rep, args.get("layout"))
+                    or "Laid out as %s; now:\n%s" % (args.get("layout"), R.summary(rep)))
     if name == "add_text":
         return edit(target(args, thread), lambda rep: "Added text to row %d" % R.add_text(rep, args.get("text"), args.get("row")))
     if name == "update_text":
-        return edit(target(args, thread), lambda rep: R.update_text(rep, args.get("cell"), args.get("text")) or "Changed the text of %s" % args.get("cell"))
+        return edit(target(args, thread), lambda rep: R.update_text(rep, args.get("cell"), args.get("text"), args.get("field"))
+                    or "Changed the %s of %s%s" % (args.get("field") or "text", args.get("cell"), unchecked(rep, args.get("cell"))))
     if name == "remove_cell":
         return edit(target(args, thread), lambda rep: R.remove_cell(rep, args.get("cell")) or "Removed %s" % args.get("cell"))
     if name == "move_cell":
@@ -336,10 +384,18 @@ def call(name, args, thread):
         if cell["type"] != "chart":
             raise ValueError("cell %s is text, not a chart" % args.get("cell"))
         chart = rep["visuals"][cell["visual"]]["args"]
-        return text("Chart %s in %r (row %d), note: %s\n%s" % (cell["id"], rep["title"], ri + 1, cell.get("note") or "MISSING",
-                    json.dumps(chart, ensure_ascii=False)), {"report": slug, "cell": cell["id"], "chart": chart})
+        return text("Chart %s in %r (row %d), message: %s, note: %s, why: %s, recipe: %s\n%s" % (
+                    cell["id"], rep["title"], ri + 1, cell.get("message") or "MISSING", cell.get("note") or "MISSING",
+                    cell.get("why") or "MISSING", json.dumps(cell.get("recipe") or {}, ensure_ascii=False),
+                    json.dumps(chart, ensure_ascii=False)),
+                    {"report": slug, "cell": cell["id"], "chart": chart, "message": cell.get("message"),
+                     "note": cell.get("note"), "why": cell.get("why"), "recipe": cell.get("recipe")})
     if name == "save_pdf":
         slug = target(args, thread)
+        found = R.flags(R.load(R.path_for(slug)))
+        if found:
+            return text("No PDF was saved: these numbers are not in their charts: %s. Fix them, or the user keeps them "
+                        "in the builder." % "; ".join(found), {"report": slug, "flags": found}, error=True)
         import pdf as P  # starts nothing until a PDF is asked for
         try:
             out = P.build(os.path.dirname(R.path_for(slug)))
@@ -365,7 +421,8 @@ def call(name, args, thread):
         if args.get("since") is not None and args["since"] == rep["rev"]:
             return text("unchanged", {"unchanged": True, "rev": rep["rev"]})
         results, errors = results_for(rep, slug)
-        return text("report %s rev %d" % (rep["title"], rep["rev"]), {"report": rep, "slug": slug, "results": results, "errors": errors})
+        return text("report %s rev %d" % (rep["title"], rep["rev"]), {"report": rep, "slug": slug, "results": results, "errors": errors,
+                                                                     "checks": R.checks(rep)})
     if name == "get_renderer":
         try:
             rpath, meta = S.renderer()
@@ -380,7 +437,8 @@ def call(name, args, thread):
         path = R.path_for(slug)
         rep = R.load(path)
         try:
-            new = R.apply_layout(rep, args.get("title"), args.get("rows"), args.get("rev"), args.get("show_notes"))
+            new = R.apply_layout(rep, args.get("title"), args.get("rows"), args.get("rev"), args.get("show_notes"),
+                                 args.get("key_message"), args.get("kpis"), args.get("kept"))
         except R.Conflict as e:
             return text(str(e), {"conflict": True, "rev": rep["rev"]}, error=True)
         return text("saved", {"rev": R.save(path, new)})
