@@ -151,6 +151,80 @@ class Cells(unittest.TestCase):
             R.remove_cell(self.rep, "c42")
 
 
+class Draft(unittest.TestCase):
+    """The first draft's fields: a message above each chart, evidence under it, its reason and recipe; the key
+    message and KPI tiles; and the number checks over all of them."""
+
+    def setUp(self):
+        sys.path.insert(0, HERE)
+        from test_numbercheck import PNL
+        self.pnl = PNL
+        self.rep = R.new("r")
+        R.add_chart(self.rep, ARGS)  # an older chart cell: no message, no recipe
+
+    def checked(self):
+        rep = R.new("Checks")
+        R.add_chart(rep, self.pnl, message="Revenue missed plan by **39.2k**", note="That is **−3.7%**; COGS 99.0k under.")
+        R.set_key_message(rep, "Revenue missed plan by 39.2k.")
+        R.set_kpis(rep, [{"value": "1.0M", "label": "Revenue, ΔPL −39.2k"}])
+        return rep, rep["rows"][-1]["cells"][0]
+
+    def test_a_chart_carries_message_evidence_why_and_recipe(self):
+        R.add_chart(self.rep, ARGS, message="West led **+37.9k**", note="West AC 226.3 vs PL 226.8.",
+                    why="Regions compare best side by side.", recipe={"source": "sales.xlsx", "code": "df.groupby('Region')"})
+        cell = self.rep["rows"][-1]["cells"][0]
+        self.assertEqual((cell["message"], cell["why"], cell["recipe"]["source"]),
+                         ("West led **+37.9k**", "Regions compare best side by side.", "sales.xlsx"))
+        R.validate(self.rep)
+
+    def test_old_reports_stay_valid_and_say_message_missing(self):
+        R.validate(self.rep)
+        self.assertIn("message MISSING", R.summary(self.rep))
+        self.assertEqual(R.checks(self.rep), {})
+
+    def test_checks_flag_only_untraced_numbers(self):
+        rep, cell = self.checked()
+        self.assertEqual(R.checks(rep), {"cells": {cell["id"]: {"note": ["99.0k"]}}})
+        self.assertEqual(R.flags(rep), ["%s note: 99.0k" % cell["id"]])
+        self.assertIn("unchecked: 99.0k", R.summary(rep))
+
+    def test_kept_numbers_are_the_controllers(self):
+        rep, cell = self.checked()
+        cell["kept"] = ["99.0k"]
+        self.assertEqual(R.flags(rep), [])
+
+    def test_key_message_and_kpis_are_checked_against_every_chart(self):
+        rep, _ = self.checked()
+        R.set_key_message(rep, "Revenue missed plan by 41.0k.")
+        R.set_kpis(rep, [{"value": "1.0M", "label": "Revenue"}, {"value": "7.7M", "label": "Bogus"}])
+        self.assertEqual(R.checks(rep)["key_message"], ["41.0k"])
+        self.assertEqual(R.checks(rep)["kpis"], [[], ["7.7M"]])
+
+    def test_update_text_reaches_message_and_why(self):
+        R.update_text(self.rep, "c1", "Sales missed plan", field="message")
+        R.update_text(self.rep, "c1", "One bar per region.", field="why")
+        cell = self.rep["rows"][0]["cells"][0]
+        self.assertEqual((cell["message"], cell["why"]), ("Sales missed plan", "One bar per region."))
+        R.update_text(self.rep, "c1", "", field="message")
+        self.assertNotIn("message", cell)
+
+    def test_layout_saves_keep_and_change_the_new_fields(self):
+        R.update_text(self.rep, "c1", "Sales missed plan", field="message")
+        bare = [{"cells": [{"id": "c1", "type": "chart", "visual": self.rep["rows"][0]["cells"][0]["visual"]}]}]
+        out = R.apply_layout(self.rep, None, bare, self.rep["rev"], key_message="Key", kpis=[{"value": "1", "label": "x"}],
+                             kept=["1"])
+        self.assertEqual(out["rows"][0]["cells"][0]["message"], "Sales missed plan")  # absent in the save: kept
+        self.assertEqual((out["key_message"], out["kpis"], out["kept"]), ("Key", [{"value": "1", "label": "x"}], ["1"]))
+
+    def test_limits(self):
+        with self.assertRaises(ValueError):
+            R.set_kpis(self.rep, [{"value": "1", "label": "x"}] * 5)
+        with self.assertRaises(ValueError):
+            R.set_key_message(self.rep, "x" * 601)
+        with self.assertRaises(ValueError):
+            R.validate(dict(self.rep, layout="grid"))
+
+
 class Files(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
