@@ -115,6 +115,7 @@
     if (!results[vid] || !rendererText) { box.innerHTML = '<div class="wait">Drawing ' + escapeHtml(chartTitle(vid)) + '…</div>'; return; }
     var f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts');
+    f.setAttribute('scrolling', 'no');  // the frame takes the height the renderer reports; no inner scrollbar
     f.setAttribute('title', chartTitle(vid));
     box.appendChild(f);
     frames.set(f, { vid: vid, sent: false, width: box.clientWidth });
@@ -142,7 +143,7 @@
     } else if (m.method === 'ui/notifications/initialized') {
       sendData(f);
     } else if (m.method === 'ui/notifications/size-changed' && m.params && m.params.height) {
-      f.style.height = Math.ceil(m.params.height) + 'px';
+      f.style.height = Math.ceil(m.params.height) + 8 + 'px';  // a little slack: the reported height can trail the drawn one
       reportSize();
     }
   }

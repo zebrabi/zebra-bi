@@ -125,12 +125,16 @@ def text(t, structured=None, error=False):
 
 
 def current(create_title=None):
-    """Path of the open report: the one opened last in this session, else the newest on disk, else a new one."""
-    if state["path"] and os.path.isfile(state["path"]):
-        return state["path"]
+    """Path of the open report: the one opened last by any process (the host runs one server per surface, so
+    the chat and the sidebar builder are different processes), else the newest on disk, else a new one."""
+    path = R.remembered()
+    if path:
+        state["path"] = path
+        return path
     found = R.reports()
     if found and not create_title:
         state["path"] = found[0][2]
+        R.remember(found[0][0])
         return state["path"]
     return open_or_create(create_title or "Untitled report")
 
@@ -146,6 +150,7 @@ def open_or_create(title=None, slug=None):
         if not os.path.isfile(path):
             R.save(path, R.new(title))
     state["path"] = path
+    R.remember(os.path.basename(os.path.dirname(path)))
     return path
 
 
