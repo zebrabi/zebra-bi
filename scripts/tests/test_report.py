@@ -448,8 +448,61 @@ class Server(unittest.TestCase):
         self.assertFalse(tools["delete_report"]["annotations"]["destructiveHint"])  # restorable
         self.assertTrue(tools["purge_report"]["annotations"]["destructiveHint"])
         for model in ("create_report", "list_reports", "rename_report", "duplicate_report", "delete_report", "restore_report",
-                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf", "read_chart", "show_notes"):
+                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf", "read_chart", "show_notes",
+                      "set_key_message", "set_kpis", "arrange_report"):
             self.assertNotEqual(tools[model].get("_meta", {}).get("ui", {}).get("visibility"), ["app"], model)
+
+    def drafted(self):
+        """A report with one chart whose note holds a number the chart does not: 99.0."""
+        slug = self.tool("create_report", {"title": "Draft"})["structuredContent"]["report"]
+        cache(os.path.join(self.tmp, "reports", slug), "sales-by-region", ARGS, endpoint=FAKE_MCP)
+        out = self.tool("add_chart", {"chart": ARGS, "message": "West missed plan by **0.5**",
+                                      "note": "East came in 9.0 under plan; total 99.0.", "why": "Two regions side by side.",
+                                      "recipe": {"source": "sales.xlsx", "code": "df.groupby('Region').sum()"}})
+        return slug, out
+
+    def test_add_chart_needs_a_message_and_reports_unchecked_numbers(self):
+        tools = {t["name"]: t for t in self.rpc("tools/list")["result"]["tools"]}
+        self.assertIn("message", tools["add_chart"]["inputSchema"]["required"])
+        _, out = self.drafted()
+        self.assertFalse(out.get("isError"), out)
+        self.assertTrue(out["content"][0]["text"].endswith("Unchecked numbers: 99.0"), out["content"][0]["text"])
+
+    def test_key_message_kpis_layout_and_fields(self):
+        slug, _ = self.drafted()
+        self.assertFalse(self.tool("set_key_message", {"text": "Sales missed plan by 9.5."}).get("isError"))
+        self.assertTrue(self.tool("set_kpis", {"kpis": [{"value": "1", "label": "x"}] * 5}).get("isError"))
+        self.assertFalse(self.tool("set_kpis", {"kpis": [{"value": "411.7", "label": "Sales AC"}]}).get("isError"))
+        self.assertFalse(self.tool("arrange_report", {"layout": "variance-walk"}).get("isError"))
+        self.assertFalse(self.tool("update_text", {"cell": "c1", "text": "East missed plan by **9.0**", "field": "message"}).get("isError"))
+        rep = self.report(slug)["report"]
+        self.assertEqual((rep["key_message"], rep["kpis"][0]["value"], rep["layout"]), ("Sales missed plan by 9.5.", "411.7", "variance-walk"))
+        read = self.tool("read_chart", {"cell": "c1"})["structuredContent"]
+        self.assertEqual((read["message"], read["why"], read["recipe"]["source"]),
+                         ("East missed plan by **9.0**", "Two regions side by side.", "sales.xlsx"))
+
+    def test_get_report_carries_checks(self):
+        slug, _ = self.drafted()
+        self.assertEqual(self.report(slug)["checks"], {"cells": {"c1": {"note": ["99.0"]}}})
+
+    def test_save_layout_takes_the_new_fields(self):
+        slug, _ = self.drafted()
+        rep = self.report(slug)["report"]
+        rows = [{"cells": [dict(rep["rows"][0]["cells"][0], kept=["99.0"], message="Edited")]}]
+        out = self.tool("save_layout", {"report": slug, "rev": rep["rev"], "rows": rows, "key_message": "Key",
+                                        "kpis": [{"value": "411.7", "label": "AC"}]})
+        self.assertFalse(out.get("isError"), out)
+        got = self.report(slug)
+        self.assertEqual((got["report"]["key_message"], got["report"]["rows"][0]["cells"][0]["message"]), ("Key", "Edited"))
+        self.assertEqual(got["checks"], {})  # 99.0 is kept now
+
+    def test_save_pdf_refuses_while_numbers_are_flagged(self):
+        slug, _ = self.drafted()
+        out = self.tool("save_pdf")
+        self.assertTrue(out.get("isError"))
+        self.assertEqual(out["structuredContent"]["flags"], ["c1 note: 99.0"])
+        self.assertIn("not in their charts", out["content"][0]["text"])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "reports", slug, slug + ".pdf")))
 
     def test_app_page_nests_through_srcdoc(self):
         uri = self.rpc("resources/list")["result"]["resources"][0]["uri"]
