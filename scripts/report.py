@@ -593,6 +593,35 @@ def replace_chart(rep, cell, args):
     return vid
 
 
+def arrange(rep, layout):
+    """Lay the same cells out as a named layout. Charts go largest variance first; a text cell keeps to the chart
+    before it, in its own row right after that chart's row; text before the first chart stays on top.
+    one-pager: the first chart alone, then two per row. variance-walk: one chart per row. board-pack: the first
+    chart alone, then three per row."""
+    if layout not in LAYOUTS:
+        raise ValueError("layout must be one of %s" % ", ".join(LAYOUTS))
+    lead, charts = [], []  # charts: [(chart cell, [text cells after it])]
+    for row in rep["rows"]:
+        for c in row["cells"]:
+            if c["type"] == "chart":
+                charts.append((c, []))
+            elif charts:
+                charts[-1][1].append(c)
+            else:
+                lead.append(c)
+    size = lambda c: N.contribution(rep["visuals"][c["visual"]]["args"])
+    charts.sort(key=lambda pair: -size(pair[0]))  # stable for equal sizes
+    per_row = {"one-pager": 2, "variance-walk": 1, "board-pack": 3}[layout]
+    groups = [charts[i:i + 1] for i in range(len(charts))] if per_row == 1 else \
+        ([charts[:1]] if charts else []) + [charts[i:i + per_row] for i in range(1, len(charts), per_row)]
+    rows = [{"cells": [t]} for t in lead]
+    for group in groups:
+        rows.append({"cells": [c for c, _ in group]})
+        rows += [{"cells": [t]} for _, texts in group for t in texts]
+    rep["rows"] = rows
+    rep["layout"] = layout
+
+
 def chart_title(rep, vid):
     args = rep["visuals"].get(vid, {}).get("args", {})
     return str(args.get("title") or vid)
