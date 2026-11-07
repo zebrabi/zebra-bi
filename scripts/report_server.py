@@ -320,8 +320,10 @@ def call(name, args, thread):
             return text("No PDF was saved: %s" % S.clean(e, 600), error=True)
         with open(out, "rb") as f:
             pages = P.pages(f.read())
+        home = os.path.expanduser("~")
+        shown = "~" + out[len(home):] if out.startswith(home + os.sep) else out
         return text("Saved %s (%d page%s). It holds the report's aggregated numbers, so share it only where the data may go."
-                    % (out, pages, "" if pages == 1 else "s"), {"report": slug, "file": out, "pages": pages})
+                    % (out, pages, "" if pages == 1 else "s"), {"report": slug, "file": out, "shown": shown, "pages": pages})
     # ----- app only -----
     if name == "library":
         return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last()})
