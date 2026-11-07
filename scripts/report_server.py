@@ -9,8 +9,9 @@ through app-only tools. Reports are files on this machine (report.py); charts ar
 Zebra BI MCP with the sign-in that story.py keeps (`story.py sign-in`), and nothing about a report is stored on a
 Zebra BI server.
 
-The model sees report titles, chart titles and the start of each text, never the chart data: tool results that
-carry data are app-only (_meta.ui.visibility ["app"]).
+The model sees report titles, chart titles and the start of each text. Chart data reaches it only through
+read_chart, which returns the aggregated rows it sent itself; the builder's results with drawn charts are app-only
+(_meta.ui.visibility ["app"]).
 
 In ChatGPT and Codex desktop the builder opens from the sidebar (entrypoint "global") or beside a chat
 ("thread"). The renderer is nested in the builder through iframe srcdoc: the desktop hosts block blob: frames.
