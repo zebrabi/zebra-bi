@@ -90,3 +90,8 @@ step("layout", "const before=all('#rows .row').length; all('#layouts button').fi
      "await sleep(3500); return before+' -> '+all('#rows .row').length+' rows, pressed: '+"
      "all('#layouts button').filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.textContent).join(',')")
 ab("screenshot", os.path.join(OUT, "flows-draft.png"))
+step("fastlayout", "const m=$('.chart-msg'); m.focus(); m.textContent='Typed just now'; m.dispatchEvent(new w.Event('input',{bubbles:true}));"
+     "all('#layouts button').find(b=>b.dataset.layout==='board-pack').click(); await sleep(4000); $('#reload').click(); await sleep(3000);"
+     "return 'message after layout: ' + all('.chart-msg').map(x=>x.textContent).find(t=>t.indexOf('Typed')>=0)")
+step("badsave", "const l=$('#kpis .l'); l.focus(); l.textContent='x'.repeat(130); l.dispatchEvent(new w.Event('input',{bubbles:true}));"
+     "await sleep(2500); return 'toast: ' + ($('.toast')||{}).textContent")

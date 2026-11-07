@@ -3,10 +3,12 @@
 
 A number passes when one of the charts' rows supports it: a value, a total, the smallest or largest value, a
 variance to PL, PY, PM or FC, a variance in percent, a share of a total, or a move between two periods. Signs live
-in the words ("39.2k under plan"), so absolute values are compared, within the rounding the text shows. Rows may
-already be in thousands or millions, so "60.5k" passes against a row of 60.5. Numbers are read with English
-separators only; a European "359,7k" or "1.026.887,77" is reported as untraced, never read as another number.
-Standard library only.
+in the words ("39.2k under plan"), so absolute values are compared, within the rounding the text shows. The unit
+at the start of a chart's subtitle ("k, 2026 AC", "EUR millions") says what a row is worth, so "60.5k" passes
+against a row of 60.5 in thousands and "60.5M" does not; without one, rows of 10,000 or more are taken as units,
+and smaller rows may be units, thousands or millions. Numbers are read with English separators and the units k,
+M (or m, mn, mln) and bn; a European "359,7k" or "1.026.887,77", or a unit the check does not know ("2.1pp",
+"1.1x"), is reported whole as untraced, never read as another number. Standard library only.
 """
 import re
 from collections import namedtuple
@@ -14,19 +16,29 @@ from collections import namedtuple
 Num = namedtuple("Num", "raw value decimals suffix percent")
 
 REFS = ("PY", "PM", "PL", "FC")
-MULT = {"": 1.0, "k": 1e3, "K": 1e3, "M": 1e6, "bn": 1e9}
-# A run of digits with any separators, its sign and its unit; a digit right after a letter (Q4, FY26) is a label.
-TOKEN = re.compile(r"(?<![\w.,])([+\-−]?)(\d[\d.,]*\d|\d)(\s?%|bn|[kKM])?(?![\w])")
+MULT = {"": 1.0, "k": 1e3, "K": 1e3, "M": 1e6, "m": 1e6, "mn": 1e6, "mln": 1e6, "bn": 1e9}
+# A run of digits with any separators, its sign, its unit and any letters glued after it. A unit followed by more
+# letters ("39.7mo", "2.1pp", "1.1x") is not a unit this check knows, so the whole run is reported, never a part.
+TOKEN = re.compile(r"(?<![\d.,])([+\-−]?)(\d[\d.,]*\d|\d)(\s?%|bn|mln|mn|[kKMm])?([^\W\d_]*)")
 ENGLISH = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+# The unit a chart's rows are in, from the start of its subtitle ("k, 2026 AC", "EUR millions, Q1 2026").
+UNITS = ((re.compile(r"\b(k|thousands?|TEUR|TUSD|kEUR|kUSD|tsd)\b", re.I), 1e3),
+         (re.compile(r"\b(M|mio|mn|mln|millions?|MEUR|MUSD)\b"), 1e6),
+         (re.compile(r"\b(bn|billions?)\b", re.I), 1e9))
 
 
 def tokens(text):
-    """(raw, Num or None) for every number-like run in text; None when it is not an English number."""
+    """(raw, Num or None) for every number-like run in text; None when it is not an English number with a known
+    unit. A whole number right after a letter, with no unit (Q4, H1, FY26, W45), is a label and is left out."""
+    text = str(text or "")
     out = []
-    for m in TOKEN.finditer(str(text or "")):
-        sign, digits, unit = m.group(1), m.group(2), (m.group(3) or "").strip()
+    for m in TOKEN.finditer(text):
+        sign, digits, unit, tail = m.group(1), m.group(2), (m.group(3) or "").strip(), m.group(4)
         raw = m.group(0)
-        if not ENGLISH.fullmatch(digits):
+        after_letter = m.start() > 0 and text[m.start() - 1].isalpha()
+        if after_letter and not sign and not unit and not tail and "." not in digits and "," not in digits:
+            continue
+        if tail or not ENGLISH.fullmatch(digits):
             out.append((raw, None))
             continue
         value = float(digits.replace(",", ""))
@@ -57,6 +69,15 @@ def _scenarios(args):
         refs = [c for c in cols if c in REFS]
     index = {c: i for i, c in enumerate(cols)}
     return index.get(actual), [index[r] for r in refs if r in index]
+
+
+def unit(args):
+    """The multiplier the chart's rows are in, from the first part of its subtitle; None when it does not say."""
+    head = str(args.get("subtitle") or "").split(",")[0]
+    for pattern, mult in UNITS:
+        if pattern.search(head):
+            return mult
+    return None
 
 
 def _column(rows, i):
@@ -100,31 +121,40 @@ def candidates(args):
     return values, percents
 
 
-def _matches(n, values, percents):
+def _scales(args, values):
+    """What one row unit is worth: the subtitle's unit; else 1 when the rows are plainly in units (a value of
+    10,000 or more); else unknown, so units, thousands and millions are all tried."""
+    u = unit(args)
+    if u:
+        return (u,)
+    return (1.0,) if any(abs(v) >= 10000 for v in values) else (1.0, 1e3, 1e6)
+
+
+def _matches(n, values, percents, scales):
     tol = 0.5 * 10 ** -n.decimals + 1e-9
     d = abs(n.value)
     if n.percent:
         return any(abs(abs(p) - d) <= tol for p in percents)
     m = MULT[n.suffix]
-    return any(abs(abs(c) / scale - d) <= tol for scale in (m, m / 1e3, m / 1e6) for c in values)
+    return any(abs(abs(c) * worth / m - d) <= tol for worth in scales for c in values)
 
 
 def untraced(text, charts, kept=()):
     """The raw form of every number in text that none of the charts' rows supports, minus the kept ones."""
-    values, percents = [], []
+    sets = []
     for args in charts:
-        v, p = candidates(args if isinstance(args, dict) else {})
-        values += v
-        percents += p
+        args = args if isinstance(args, dict) else {}
+        v, p = candidates(args)
+        sets.append((v, p, _scales(args, v)))
     kept = set(kept or ())
     out = []
     for raw, n in tokens(text):
         if raw in kept or raw in out:
             continue
         if n is not None:
-            if not n.percent and not n.suffix and n.decimals == 0 and 1900 <= abs(n.value) <= 2100:
-                continue  # a year
-            if _matches(n, values, percents):
+            if re.fullmatch(r"\d{4}", raw) and 1900 <= n.value <= 2100:
+                continue  # a year: four bare digits, no sign, separator or unit
+            if any(_matches(n, v, p, scales) for v, p, scales in sets):
                 continue
         out.append(raw)
     return out
@@ -136,4 +166,5 @@ def contribution(args):
     if ai is None or not refs:
         return 0.0
     rows = [r for r in (args.get("rows") or []) if isinstance(r, (list, tuple))]
-    return float(sum(abs(a - r) for a, r in zip(_column(rows, ai), _column(rows, refs[0])) if a is not None and r is not None))
+    total = sum(abs(a - r) for a, r in zip(_column(rows, ai), _column(rows, refs[0])) if a is not None and r is not None)
+    return float(total * (unit(args) or 1.0))  # in units, so charts in thousands and in units compare
