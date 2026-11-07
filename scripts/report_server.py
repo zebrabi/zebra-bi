@@ -163,6 +163,10 @@ def tools():
          "description": "The aggregated rows and arguments of one chart cell, by its id from open_report: what you need "
                         "to write or check the note under it. Read only.",
          "inputSchema": obj({"cell": {"type": "string"}, "report": opt_report()}, ["cell"]), "annotations": {"readOnlyHint": True}},
+        {"name": "show_notes", "title": "Show or hide the notes under the charts",
+         "description": "Turn the notes under the charts on or off for the whole report, in the builder and in its PDF "
+                        "and page. Hidden notes are kept and come back when turned on. Text cells always show.",
+         "inputSchema": obj({"show": {"type": "boolean"}, "report": opt_report()}, ["show"]), "annotations": write},
         {"name": "save_pdf", "title": "Save the report as a PDF",
          "description": "Print the report to an A4 PDF in its folder on this computer, its charts and texts side by side "
                         "as in the builder. Needs Chrome, Edge or Chromium. Returns the file's path.",
@@ -176,7 +180,7 @@ def tools():
          "inputSchema": obj({}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "save_layout", "title": "Save the report layout", "description": "App only: save the builder's rows and title.",
          "inputSchema": obj({"report": {"type": "string"}, "rev": {"type": "integer"}, "title": {"type": "string"},
-                             "rows": {"type": "array"}}, ["report", "rev", "rows"]), "annotations": write, "_meta": app},
+                             "rows": {"type": "array"}, "show_notes": {"type": "boolean"}}, ["report", "rev", "rows"]), "annotations": write, "_meta": app},
         {"name": "purge_report", "title": "Delete a report forever", "description": "App only: remove a Recently deleted report for good.",
          "inputSchema": obj({"entry": {"type": "string"}}, ["entry"]), "annotations": {"readOnlyHint": False, "destructiveHint": True},
          "_meta": app},
@@ -319,6 +323,11 @@ def call(name, args, thread):
         R.save(R.path_for(slug), rep)
         return text("Replaced chart %s with %r in %r. Zebra BI: %s" % (args.get("cell"), R.chart_title(rep, vid), rep["title"],
                     R.server_note(res)), {"report": slug, "rev": rep["rev"]})
+    if name == "show_notes":
+        def change(rep):
+            rep["show_notes"] = bool(args.get("show"))
+            return "Chart notes %s" % ("shown" if rep["show_notes"] else "hidden")
+        return edit(target(args, thread), change)
     if name == "read_chart":
         slug = target(args, thread)
         rep = R.load(R.path_for(slug))
@@ -371,7 +380,7 @@ def call(name, args, thread):
         path = R.path_for(slug)
         rep = R.load(path)
         try:
-            new = R.apply_layout(rep, args.get("title"), args.get("rows"), args.get("rev"))
+            new = R.apply_layout(rep, args.get("title"), args.get("rows"), args.get("rev"), args.get("show_notes"))
         except R.Conflict as e:
             return text(str(e), {"conflict": True, "rev": rep["rev"]}, error=True)
         return text("saved", {"rev": R.save(path, new)})
