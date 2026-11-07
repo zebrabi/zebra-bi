@@ -125,6 +125,25 @@ def reports():
     return sorted(out, key=lambda r: -r[3])
 
 
+POINTER = ".open"  # under root(): the slug of the report opened last, shared by every builder and server process
+
+
+def remember(slug):
+    """Note slug as the open report, so a builder opened elsewhere (the sidebar, another chat) shows it too."""
+    os.makedirs(root(), exist_ok=True)
+    S.write_atomic(os.path.join(root(), POINTER), slug)
+
+
+def remembered():
+    """Path of the report opened last by any process, when it still exists."""
+    try:
+        with open(os.path.join(root(), POINTER), encoding="utf-8") as f:
+            path = path_for(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    return path if os.path.isfile(path) else None
+
+
 def next_cell_id(rep):
     used = [int(c["id"][1:]) for row in rep["rows"] for c in row["cells"]]
     return "c%d" % (max(used, default=0) + 1)

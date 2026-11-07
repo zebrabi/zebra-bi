@@ -118,35 +118,46 @@ class Files(unittest.TestCase):
         self.assertEqual(R.server_note(RESULT), "Rendered a variance table.")
 
 
-class Server(unittest.TestCase):
-    """report_server.py over stdio, as a host would drive it."""
+class Proc:
+    """One report_server.py process over stdio, as a host starts one per surface."""
 
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        env = dict(os.environ, ZEBRA_BI_REPORTS=os.path.join(self.tmp, "reports"),
-                   CLAUDE_PLUGIN_DATA=os.path.join(self.tmp, "data"), ZEBRA_BI_MCP_URL=FAKE_MCP)
+    def __init__(self, tmp):
+        env = dict(os.environ, ZEBRA_BI_REPORTS=os.path.join(tmp, "reports"),
+                   CLAUDE_PLUGIN_DATA=os.path.join(tmp, "data"), ZEBRA_BI_MCP_URL=FAKE_MCP)
         self.p = subprocess.Popen([sys.executable, "-I", SERVER], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, text=True, env=env)
         self.n = 0
         self.rpc("initialize", {"protocolVersion": "2025-06-18"})
 
-    def tearDown(self):
+    def close(self):
         self.p.stdin.close()
         self.p.wait(10)
         self.p.stdout.close()
         self.p.stderr.close()
-        shutil.rmtree(self.tmp)
 
     def rpc(self, method, params=None):
         self.n += 1
         self.p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.n, "method": method, "params": params or {}}) + "\n")
         self.p.stdin.flush()
         msg = json.loads(self.p.stdout.readline())  # every stdout line is one JSON-RPC message
-        self.assertEqual(msg["id"], self.n)
+        assert msg["id"] == self.n, msg
         return msg
 
     def tool(self, name, args=None):
         return self.rpc("tools/call", {"name": name, "arguments": args or {}})["result"]
+
+
+class Server(unittest.TestCase):
+    """report_server.py over stdio, as a host would drive it."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.server = Proc(self.tmp)
+        self.rpc, self.tool = self.server.rpc, self.server.tool
+
+    def tearDown(self):
+        self.server.close()
+        shutil.rmtree(self.tmp)
 
     def test_tools_entrypoints_and_visibility(self):
         tools = {t["name"]: t for t in self.rpc("tools/list")["result"]["tools"]}
@@ -194,6 +205,16 @@ class Server(unittest.TestCase):
         failed = self.tool("add_chart", {"chart": other})  # no cache, closed port: not drawn, not added
         self.assertTrue(failed["isError"])
         self.assertEqual(list(self.tool("get_report")["structuredContent"]["report"]["visuals"]), ["sales-by-region"])
+
+    def test_every_process_follows_the_report_opened_last(self):
+        self.tool("open_report", {"title": "First"})
+        sidebar = Proc(self.tmp)  # the builder in the sidebar runs in its own process
+        try:
+            self.assertEqual(sidebar.tool("get_report")["structuredContent"]["report"]["title"], "First")
+            sidebar.tool("open_report", {"title": "Second"})
+            self.assertEqual(self.tool("get_report")["structuredContent"]["report"]["title"], "Second")
+        finally:
+            sidebar.close()
 
     def test_unknown_method_and_tool(self):
         self.assertEqual(self.rpc("nope")["error"]["code"], -32601)
