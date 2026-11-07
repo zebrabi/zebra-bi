@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zebra BI report</title>
+<!--
+  The Zebra BI report builder, an MCP App served by report_server.py. It is two things at once:
+  - an MCP App to its host (ChatGPT, Codex, Claude): ui/initialize, tools/call of the server's app-only tools
+    get_report, get_renderer and save_layout, size-changed;
+  - a host to the Zebra BI renderer: every chart cell nests the renderer page in an iframe through srcdoc with
+    sandbox allow-scripts and answers its ui/initialize with the cell's width, then sends it the chart's
+    render_visual result. srcdoc, not a blob: URL, because the desktop hosts' CSP blocks blob: frames; the frame's
+    opaque origin also keeps the renderer off the location.origin path that throws in blob: frames.
+  The report is the server's file; the page keeps no state of its own beyond what it shows.
+-->
+<style>
+  :root { --ink:#242424; --muted:#616161; --hairline:#E0E0E0; --paper:#FFFFFF; --soft:#F5F5F5; --accent:#0F6CBD;
+    --font:'Segoe UI', system-ui, -apple-system, sans-serif; color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.5 var(--font); }
+  .bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 10px 20px;
+    background: rgba(255,255,255,.96); border-bottom: 1px solid var(--hairline); }
+  .bar .brand { font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-right: auto; }
+  button { font: inherit; font-size: 13px; padding: 5px 11px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--paper); color: var(--ink); cursor: pointer; }
+  button:hover { background: var(--soft); }
+  .status { font-size: 12px; color: var(--muted); min-width: 64px; text-align: right; }
+  main { max-width: 1280px; margin: 0 auto; padding: 20px 20px 80px; }
+  h1 { margin: 0 0 16px; font: 600 26px/1.2 var(--font); letter-spacing: -.01em; outline: none; border-radius: 4px; }
+  h1:focus { box-shadow: 0 0 0 2px var(--accent); }
+  .row { display: flex; gap: 16px; align-items: flex-start; }
+  .slot { height: 14px; margin: 2px 0; border-radius: 4px; }
+  .slot.over { height: 36px; background: rgba(15,108,189,.08); outline: 2px dashed var(--accent); }
+  .cell { position: relative; flex: 1 1 0; min-width: 0; border: 1px solid transparent; border-radius: 8px; padding: 6px; }
+  .cell:hover { border-color: var(--hairline); }
+  .cell.over-before { box-shadow: -3px 0 0 var(--accent); }
+  .cell.over-after { box-shadow: 3px 0 0 var(--accent); }
+  .cell.dragging { opacity: .4; }
+  .tools { position: absolute; top: 4px; right: 4px; display: none; gap: 4px; z-index: 2; }
+  .cell:hover .tools { display: flex; }
+  .tools span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; background: var(--paper);
+    border: 1px solid var(--hairline); font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+  .tools .grip { cursor: grab; }
+  .chart iframe { display: block; width: 100%; height: 0; border: 0; background: #fff; }
+  .chart .wait, .chart .err { padding: 24px 8px; color: var(--muted); font-size: 13px; }
+  .chart .err { color: #A4262C; }
+  .text { min-height: 2.6em; padding: 4px 6px; outline: none; border-radius: 4px; white-space: pre-wrap; max-width: 75ch; }
+  .text:focus { box-shadow: 0 0 0 2px var(--accent); }
+  .text:empty::before { content: 'Write here…'; color: var(--muted); }
+  .empty { margin: 40px 0; padding: 40px; border: 1px dashed var(--hairline); border-radius: 8px; color: var(--muted); text-align: center; }
+  .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
+</style></head>
+<body>
+<div class="bar">
+  <span class="brand">Zebra BI report</span>
+  <button id="add-text" title="Add a text row">+ Text</button>
+  <button id="reload" title="Reload from the report file">Reload</button>
+  <button id="full" title="Full screen">Full screen</button>
+  <span class="status" id="status"></span>
+</div>
+<main>
+  <h1 id="title" contenteditable="true" spellcheck="false"></h1>
+  <div id="rows"></div>
+  <p class="note" id="note"></p>
+</main>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var statusEl = $('status');
+  function status(s) { statusEl.textContent = s; }
+
+  // ---------- this page as an MCP App ----------
+  var nextId = 1, pending = {};
+  function request(method, params) {
+    return new Promise(function (resolve, reject) {
+      var id = nextId++; pending[id] = { resolve: resolve, reject: reject };
+      window.parent.postMessage({ jsonrpc: '2.0', id: id, method: method, params: params || {} }, '*');
+    });
+  }
+  function notify(method, params) { window.parent.postMessage({ jsonrpc: '2.0', method: method, params: params || {} }, '*'); }
+  function callTool(name, args) {
+    return request('tools/call', { name: name, arguments: args || {} }).then(function (r) {
+      if (r && r.isError) {
+        var t = (r.content || []).map(function (c) { return c.text || ''; }).join(' ');
+        var err = new Error(t || name + ' failed'); err.result = r; throw err;
+      }
+      return r || {};
+    });
+  }
+  var sizeTimer = null;
+  function reportSize() {
+    clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(function () {
+      notify('ui/notifications/size-changed', { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight });
+    }, 60);
+  }
+
+  // ---------- state ----------
+  var rep = null, results = {}, errors = {}, rendererText = null, rendererError = null;
+  var saving = false, dirty = false, saveTimer = null, dragId = null;
+
+  function cellsById() {
+    var m = {};
+    rep.rows.forEach(function (row) { row.cells.forEach(function (c) { m[c.id] = c; }); });
+    return m;
+  }
+  function chartTitle(vid) {
+    var v = rep.visuals[vid]; return (v && v.args && v.args.title) || vid;
+  }
+
+  // ---------- nested Zebra BI renderer frames ----------
+  var frames = new Map();  // iframe -> {vid, sent, width}
+  function mountChart(box, cell) {
+    var vid = cell.visual;
+    if (errors[vid]) { box.innerHTML = '<div class="err"></div>'; box.firstChild.textContent = errors[vid]; return; }
+    if (rendererError) { box.innerHTML = '<div class="err"></div>'; box.firstChild.textContent = rendererError; return; }
+    if (!results[vid] || !rendererText) { box.innerHTML = '<div class="wait">Drawing ' + escapeHtml(chartTitle(vid)) + '…</div>'; return; }
+    var f = document.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-scripts');
+    f.setAttribute('title', chartTitle(vid));
+    box.appendChild(f);
+    frames.set(f, { vid: vid, sent: false, width: box.clientWidth });
+    f.srcdoc = rendererText;
+  }
+  function frameFor(src) { var hit = null; frames.forEach(function (st, f) { if (f.contentWindow === src) hit = f; }); return hit; }
+  function sendData(f) {
+    var st = frames.get(f); if (!st || st.sent) return; st.sent = true;
+    f.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: {} }, '*');
+    f.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: results[st.vid] }, '*');
+  }
+  function answerFrame(f, m) {
+    if (m.id != null && m.method) {
+      if (m.method === 'ui/initialize') {
+        var w = f.clientWidth;
+        f.contentWindow.postMessage({ jsonrpc: '2.0', id: m.id, result: {
+          protocolVersion: (m.params && m.params.protocolVersion) || '2026-01-26',
+          hostInfo: { name: 'zebra-bi-report', version: '1' }, hostCapabilities: {},
+          hostContext: { toolInfo: { id: 1, tool: { name: 'render_visual', inputSchema: { type: 'object' } } },
+            theme: 'light', displayMode: 'inline', maxWidth: w, viewport: { width: w } } } }, '*');
+        setTimeout(function () { sendData(f); }, 50);
+      } else {
+        f.contentWindow.postMessage({ jsonrpc: '2.0', id: m.id, result: {} }, '*');
+      }
+    } else if (m.method === 'ui/notifications/initialized') {
+      sendData(f);
+    } else if (m.method === 'ui/notifications/size-changed' && m.params && m.params.height) {
+      f.style.height = Math.ceil(m.params.height) + 'px';
+      reportSize();
+    }
+  }
+
+  window.addEventListener('message', function (ev) {
+    var m = ev.data; if (!m || m.jsonrpc !== '2.0') return;
+    var f = frameFor(ev.source);
+    if (f) { answerFrame(f, m); return; }
+    if (ev.source !== window.parent) return;
+    if (m.id != null && !m.method && pending[m.id]) {
+      var p = pending[m.id]; delete pending[m.id];
+      if (m.error) p.reject(new Error(m.error.message || 'request failed')); else p.resolve(m.result);
+    } else if (m.id != null && m.method) {
+      window.parent.postMessage({ jsonrpc: '2.0', id: m.id, result: {} }, '*');
+    } else if (m.method === 'ui/notifications/tool-result') {
+      refresh();  // open_report ran: show what it opened
+    }
+  });
+
+  // ---------- rendering ----------
+  // **bold** shown bold outside editing, as the story pages do (story.para)
+  function formatted(text) { return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  function render() {
+    frames.clear();
+    if (document.activeElement !== $('title')) $('title').textContent = rep.title;
+    var host = $('rows'); host.innerHTML = '';
+    if (!rep.rows.length) {
+      host.innerHTML = '<div class="empty">This report is empty. Ask in the chat, for example ' +
+        '<i>“add a chart of sales by region against plan to the report”</i>, or add text with <b>+ Text</b>.</div>';
+    }
+    host.appendChild(slot(0));
+    rep.rows.forEach(function (row, ri) {
+      var r = document.createElement('div'); r.className = 'row';
+      row.cells.forEach(function (cell) { r.appendChild(cellEl(cell, ri)); });
+      host.appendChild(r);
+      host.appendChild(slot(ri + 1));
+    });
+    $('note').textContent = rep.rows.length ? 'Drag a cell by ⠿ to move it, into another row (up to 3 side by side) or between rows. Saved to the report file on this computer.' : '';
+    // mount charts once the row widths are known
+    requestAnimationFrame(function () {
+      document.querySelectorAll('.chart').forEach(function (box) { mountChart(box, cellsById()[box.dataset.cell]); });
+      reportSize();
+    });
+  }
+
+  function slot(index) {
+    var s = document.createElement('div'); s.className = 'slot';
+    s.addEventListener('dragover', function (e) { if (dragId) { e.preventDefault(); s.classList.add('over'); } });
+    s.addEventListener('dragleave', function () { s.classList.remove('over'); });
+    s.addEventListener('drop', function (e) { e.preventDefault(); s.classList.remove('over'); moveCell(dragId, { newRow: index }); });
+    return s;
+  }
+
+  function cellEl(cell, ri) {
+    var el = document.createElement('div'); el.className = 'cell'; el.dataset.cell = cell.id;
+    var tools = document.createElement('div'); tools.className = 'tools';
+    var grip = document.createElement('span'); grip.className = 'grip'; grip.textContent = '⠿'; grip.title = 'Drag to move';
+    grip.draggable = true;
+    grip.addEventListener('dragstart', function (e) {
+      dragId = cell.id; el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', cell.id);
+    });
+    grip.addEventListener('dragend', function () { dragId = null; el.classList.remove('dragging'); });
+    var del = document.createElement('span'); del.textContent = '✕'; del.title = 'Remove from the report';
+    del.addEventListener('click', function () { removeCell(cell.id); });
+    tools.appendChild(grip); tools.appendChild(del); el.appendChild(tools);
+
+    if (cell.type === 'chart') {
+      var box = document.createElement('div'); box.className = 'chart'; box.dataset.cell = cell.id;
+      el.appendChild(box);
+    } else {
+      var t = document.createElement('div'); t.className = 'text'; t.contentEditable = 'true';
+      var show = function () { t.innerHTML = formatted(cell.text); };
+      show();
+      t.addEventListener('focus', function () { t.textContent = cell.text; });  // edit the plain text, **bold** marks and all
+      t.addEventListener('blur', show);
+      t.addEventListener('input', function () { cell.text = t.innerText.replace(/\n$/, ''); scheduleSave(); });
+      el.appendChild(t);
+    }
+    el.addEventListener('dragover', function (e) {
+      if (!dragId || dragId === cell.id) return;
+      var full = rep.rows[ri].cells.length >= 3 && !rep.rows[ri].cells.some(function (c) { return c.id === dragId; });
+      if (full) return;
+      e.preventDefault();
+      var rect = el.getBoundingClientRect(), after = e.clientX > rect.left + rect.width / 2;
+      el.classList.toggle('over-after', after); el.classList.toggle('over-before', !after);
+    });
+    el.addEventListener('dragleave', function () { el.classList.remove('over-after', 'over-before'); });
+    el.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var after = el.classList.contains('over-after');
+      el.classList.remove('over-after', 'over-before');
+      moveCell(dragId, { beside: cell.id, after: after });
+    });
+    return el;
+  }
+
+  // ---------- edits ----------
+  function takeCell(id) {
+    for (var ri = 0; ri < rep.rows.length; ri++) {
+      var cells = rep.rows[ri].cells;
+      for (var ci = 0; ci < cells.length; ci++) if (cells[ci].id === id) return cells.splice(ci, 1)[0];
+    }
+    return null;
+  }
+  function prune() { rep.rows = rep.rows.filter(function (r) { return r.cells.length; }); }
+
+  function moveCell(id, where) {
+    if (!id) return;
+    if (where.beside === id) return;
+    var cell = takeCell(id); if (!cell) return;
+    if (where.newRow != null) {
+      // count rows before the slot that are still there after removing the cell
+      var idx = where.newRow;
+      var emptied = rep.rows.findIndex(function (r) { return !r.cells.length; });
+      if (emptied >= 0 && emptied < idx) idx -= 1;
+      prune();
+      rep.rows.splice(Math.max(0, Math.min(idx, rep.rows.length)), 0, { cells: [cell] });
+    } else {
+      prune();
+      for (var ri = 0; ri < rep.rows.length; ri++) {
+        var cells = rep.rows[ri].cells, at = cells.findIndex(function (c) { return c.id === where.beside; });
+        if (at >= 0) { cells.splice(where.after ? at + 1 : at, 0, cell); break; }
+      }
+    }
+    dragId = null;
+    render(); saveNow();
+  }
+  function removeCell(id) { takeCell(id); prune(); render(); saveNow(); }
+  function addText() {
+    var used = []; rep.rows.forEach(function (r) { r.cells.forEach(function (c) { used.push(+c.id.slice(1)); }); });
+    var id = 'c' + (Math.max.apply(null, used.concat([0])) + 1);
+    rep.rows.push({ cells: [{ id: id, type: 'text', text: '' }] });
+    render(); saveNow();
+    setTimeout(function () { var t = document.querySelector('[data-cell="' + id + '"] .text'); if (t) t.focus(); }, 50);
+  }
+
+  function scheduleSave() { dirty = true; status('Editing…'); clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 700); }
+  function saveNow() {
+    clearTimeout(saveTimer); dirty = true;
+    if (saving) { saveTimer = setTimeout(saveNow, 300); return; }
+    saving = true; status('Saving…');
+    var rows = rep.rows.map(function (r) { return { cells: r.cells.map(function (c) {
+      return c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual } : { id: c.id, type: 'text', text: c.text };
+    }) }; });
+    callTool('save_layout', { rev: rep.rev, title: $('title').textContent, rows: rows }).then(function (r) {
+      rep.rev = r.structuredContent.rev; dirty = false; saving = false; status('Saved');
+    }, function (e) {
+      saving = false; dirty = false;
+      var sc = e.result && e.result.structuredContent;
+      status(sc && sc.conflict ? 'Changed elsewhere, reloaded' : 'Not saved');
+      if (sc && sc.conflict) refresh(true);
+    });
+  }
+
+  // ---------- loading ----------
+  function refresh(force) {
+    if (dirty || saving || dragId) return Promise.resolve();
+    return callTool('get_report', force || !rep ? {} : { since: rep.rev }).then(function (r) {
+      var sc = r.structuredContent || {};
+      if (sc.unchanged) return;
+      rep = sc.report; results = sc.results || {}; errors = sc.errors || {};
+      render(); status('');
+    }, function (e) { status('Could not load'); $('rows').innerHTML = '<div class="empty"></div>'; $('rows').firstChild.textContent = e.message; });
+  }
+
+  $('title').addEventListener('input', scheduleSave);
+  $('title').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('title').blur(); } });
+  $('add-text').onclick = addText;
+  $('reload').onclick = function () { refresh(true); };
+  $('full').onclick = function () { request('ui/request-display-mode', { mode: 'fullscreen' }).catch(function () {}); };
+
+  var lastWidth = window.innerWidth;
+  window.addEventListener('resize', function () {
+    if (rep && Math.abs(window.innerWidth - lastWidth) > 40) { lastWidth = window.innerWidth; render(); }
+  });
+
+  status('Connecting…');
+  request('ui/initialize', {
+    appInfo: { name: 'zebra-bi-report', version: '1' },
+    appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+    protocolVersion: '2026-01-26'
+  }).then(function () {
+    notify('ui/notifications/initialized');
+    status('Loading…');
+    return callTool('get_renderer').then(function (r) { rendererText = r.structuredContent.renderer; },
+      function (e) { rendererError = e.message; });
+  }).then(function () { return refresh(true); }).then(function () {
+    setInterval(function () { if (!document.hidden) refresh(false); }, 4000);
+  }, function (e) { status('Not connected'); });
+})();
+</script>
+</body></html>
