@@ -34,6 +34,41 @@ class Untraced(unittest.TestCase):
         self.assertEqual(N.untraced("Headcount 42.", [PNL]), ["42"])
 
 
+class Scale(unittest.TestCase):
+    """k, M and bn mean what they say: a number 1000 times off is flagged."""
+
+    def test_a_number_in_the_wrong_unit_is_flagged(self):
+        self.assertEqual(N.untraced("Revenue missed plan by 39.2M.", [PNL]), ["39.2M"])  # rows in units: 39.2k
+        self.assertEqual(N.untraced("Revenue was 1.03bn.", [PNL]), ["1.03bn"])
+        self.assertEqual(N.untraced("Sales reached 60.5M.", [MONTHS]), ["60.5M"])  # subtitle "k": rows in thousands
+
+    def test_the_unit_in_the_subtitle_sets_the_scale(self):
+        millions = dict(MONTHS, subtitle="EUR millions, 2026 AC", rows=[["Sep", 39.2], ["Oct", 40.0]])
+        self.assertEqual(N.untraced("Sep reached 39.2M.", [millions]), [])
+        self.assertEqual(N.untraced("Sep reached 39.2k.", [millions]), ["39.2k"])
+        self.assertEqual(N.untraced("Sep reached 39.2m, up 0.8m.", [millions]), [])  # lowercase m is million
+
+    def test_an_unknown_suffix_is_flagged_whole(self):
+        millions = dict(MONTHS, subtitle="EUR millions, 2026 AC", rows=[["Sep", 39.2], ["Oct", 40.0]])
+        self.assertEqual(N.untraced("Sep reached 39.7m.", [millions]), ["39.7m"])  # never checked as 39
+        self.assertEqual(N.untraced("Margin rose 2.1pp; cover 1.1x.", [PNL]), ["2.1pp", "1.1x"])
+
+    def test_a_number_after_letters_is_checked_unless_it_is_a_label(self):
+        self.assertEqual(N.untraced("Revenue was EUR1.07M planned.", [PNL]), [])
+        self.assertEqual(N.untraced("Revenue missed by EUR41.0k.", [PNL]), ["41.0k"])
+        self.assertEqual(N.untraced("Missed by _39.3k_.", [PNL]), ["39.3k"])
+        self.assertEqual(N.untraced("Q4, H1, FY26, W45 and P10 are labels.", [PNL]), [])
+
+    def test_only_a_bare_four_digit_number_is_a_year(self):
+        self.assertEqual(N.untraced("Costs fell by 2,045 and -1,950.", [PNL]), ["2,045", "-1,950"])
+        self.assertEqual(N.untraced("Since 2025.", [PNL]), [])
+
+    def test_contribution_counts_the_unit(self):
+        thousands = dict(MONTHS, columns=["Month", "AC", "PL"], measure={"Val": "AC", "PL": "PL"},
+                         rows=[["Sep", 60.5, 50.0]])
+        self.assertAlmostEqual(N.contribution(thousands), 10500.0)  # 10.5 in thousands
+
+
 class Parts(unittest.TestCase):
     def test_parse(self):
         self.assertEqual(N.parse("+113.1k and −3.7%")[0], N.Num("+113.1k", 113.1, 1, "k", False))

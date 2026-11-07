@@ -625,9 +625,14 @@
     setTimeout(function () { var t = document.querySelector('[data-cell="' + id + '"] .text'); if (t) t.focus(); }, 50);
   }
   function scheduleSave() { dirty = true; status('Editing…'); clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 700); }
+  // A pending edit saved now, before anything that reloads the report (a layout switch), so it is not lost.
+  function flushSave() {
+    if (!dirty && !saving) return Promise.resolve();
+    return saveNow();
+  }
   function saveNow() {
     clearTimeout(saveTimer); dirty = true;
-    if (saving) { saveTimer = setTimeout(saveNow, 300); return; }
+    if (saving) return new Promise(function (resolve) { saveTimer = setTimeout(function () { resolve(saveNow()); }, 300); });
     saving = true; status('Saving…');
     var rows = rep.rows.map(function (r) { return { cells: r.cells.map(function (c) {
       var out = c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual, note: c.note || '', message: c.message || '' }
@@ -635,7 +640,7 @@
       out.kept = c.kept || [];
       return out;
     }) }; });
-    callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows, show_notes: rep.show_notes !== false,
+    return callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows, show_notes: rep.show_notes !== false,
                               key_message: rep.key_message || '', kpis: rep.kpis || [], kept: rep.kept || [] }).then(function (r) {
       rep.rev = sc(r).rev; dirty = false; saving = false; status('Saved');
       if (sc(r).checks) { checks = sc(r).checks; refreshFlags(); }
@@ -645,6 +650,7 @@
       if (s && s.gone) { reportGone(); return; }
       status(s && s.conflict ? 'Changed elsewhere, reloaded' : 'Not saved');
       if (s && s.conflict) poll(true);
+      else toast('Not saved: ' + (e && e.message ? e.message : 'the report file refused the change'), null, null, 10000);
     });
   }
 
@@ -679,7 +685,9 @@
   $('add-text').onclick = addText;
   document.querySelectorAll('#layouts button').forEach(function (b) {
     b.onclick = function () {
-      act(callTool('arrange_report', { report: slug, layout: b.dataset.layout }), function () { return loadReport(slug); });
+      flushSave().then(function () {
+        return act(callTool('arrange_report', { report: slug, layout: b.dataset.layout }), function () { return loadReport(slug); });
+      });
     };
   });
   $('reload').onclick = function () { poll(true); };

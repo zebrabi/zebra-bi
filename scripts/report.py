@@ -455,6 +455,7 @@ def set_kpis(rep, kpis):
         raise ValueError("at most %d KPI tiles" % MAX_KPIS)
     tiles = [{"value": str(k.get("value") or "").strip(), "label": str(k.get("label") or "").strip()}
              for k in kpis if isinstance(k, dict)]
+    tiles = [t for t in tiles if t["value"] or t["label"]]  # a tile emptied in the builder is a tile removed
     if not all(_kpi_ok(t) and t["value"] for t in tiles):
         raise ValueError("each KPI tile needs a value (at most 40 characters) and a label (at most 120)")
     rep.pop("kpis", None)
@@ -654,10 +655,12 @@ def checks(rep):
 
 
 def flags(rep):
-    """One line per untraced number, for a person: "c3 note: 99.0k". Empty when every number is traced or kept."""
+    """One line per untraced number in what the exports show, for a person: "c3 note: 99.0k". Empty when every
+    number is traced or kept. Hidden notes are left out of the exports, so they do not count here."""
     found = checks(rep)
+    shown = lambda field: field != "note" or rep.get("show_notes", True)
     lines = ["%s %s: %s" % (cid, field, raw) for cid, fields in found.get("cells", {}).items()
-             for field, raws in fields.items() for raw in raws]
+             for field, raws in fields.items() if shown(field) for raw in raws]
     lines += ["key message: %s" % raw for raw in found.get("key_message", [])]
     lines += ["KPI %d: %s" % (i, raw) for i, raws in enumerate(found.get("kpis", []), 1) for raw in raws]
     return lines

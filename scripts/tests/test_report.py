@@ -237,6 +237,25 @@ class Draft(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not in their charts: c1 note: 99.0k"):
             R.to_story(rep)
 
+    def test_hidden_notes_do_not_block_the_export(self):
+        rep, cell = self.checked()  # its note holds 99.0k, which no chart has
+        rep["show_notes"] = False
+        self.assertEqual(R.flags(rep), [])  # the exports leave hidden notes out, so they do not block them
+        self.assertNotIn("note", R.to_story(rep)["rows"][0]["cells"][0])
+        self.assertEqual(R.checks(rep)["cells"][cell["id"]]["note"], ["99.0k"])  # the builder still shows it
+
+    def test_an_emptied_kpi_tile_is_dropped(self):
+        R.set_kpis(self.rep, [{"value": "", "label": ""}, {"value": "411.7", "label": "Sales AC"}, {"value": " ", "label": ""}])
+        self.assertEqual(self.rep["kpis"], [{"value": "411.7", "label": "Sales AC"}])
+
+    def test_an_old_report_arranges_and_exports(self):
+        R.add_text(self.rep, "Sales by region.")
+        R.arrange(self.rep, "board-pack")
+        R.validate(self.rep)
+        story = R.to_story(self.rep)
+        self.assertEqual(story["title"], "r")
+        self.assertEqual(len(story["rows"]), 2)
+
     def test_limits(self):
         with self.assertRaises(ValueError):
             R.set_kpis(self.rep, [{"value": "1", "label": "x"}] * 5)
