@@ -84,8 +84,8 @@
   .text:empty::before { content: 'Write here…'; color: var(--muted); }
   .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
 
-  /* toast */
-  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 12px;
+  /* toast, at the top: ChatGPT lays its own composer over the bottom of the app */
+  .toast { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 12px;
     padding: 10px 14px; background: var(--ink); color: #fff; border-radius: 8px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.2);
     max-width: calc(100vw - 32px); overflow-wrap: anywhere; }
   .toast button { background: none; border-color: rgba(255,255,255,.4); color: #fff; padding: 3px 9px; }
@@ -221,7 +221,7 @@
   }
   function savePdf(s) {
     toast('Saving the PDF…', null, null, 120000);  // until the result replaces it
-    return act(callTool('save_pdf', { report: s }), function (r) { toast('PDF saved: ' + sc(r).file, null, null, 10000); });
+    return act(callTool('save_pdf', { report: s }), function (r) { toast('PDF saved: ' + (sc(r).shown || sc(r).file), null, null, 10000); });
   }
   function deleteReport(s, title) {
     return act(callTool('delete_report', { report: s }), function () {
