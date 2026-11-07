@@ -710,7 +710,7 @@ def to_story(rep):
     story = {"title": rep["title"], "sections": [], "rows": rows,
              "visuals": {vid: {"args": v["args"]} for vid, v in rep["visuals"].items() if vid in shown}}
     if rep.get("key_message"):  # the key message heads the page, with the report's title as the label above it
-        story.update(kicker=rep["title"], title=rep["key_message"])
+        story.update(kicker=rep["title"], title=rep["key_message"].replace("**", ""))  # a story title is plain text
     if rep.get("kpis"):
         story["kpis"] = rep["kpis"]
     return story
