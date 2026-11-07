@@ -1,6 +1,6 @@
 ---
 name: report-builder
-description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
+description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'make the close report', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
 license: Apache-2.0
 ---
 
@@ -18,7 +18,7 @@ Each chat works on its own report: the one it opened or created last. A chat tha
 - "Open the October close": `open_report` with `report`. It prints the cells with their ids, `[c1] chart 'P&L by line'`; use those ids, never guess them.
 - New work: `create_report` with a short title (period and subject, for example "P&L close November 2026"). Do not reuse an existing report for unrelated work.
 - "Rename it": `rename_report`. Only the title changes.
-- "Make the November version": `duplicate_report` with the new title, then `replace_chart` on each chart with November's figures and `update_text` on the narrative. Keep the layout.
+- "Make the November version": `duplicate_report` with the new title, then `replace_chart` on each chart with November's figures, `update_text` on each message and note, and `set_key_message` and `set_kpis` again. Keep the layout.
 
 ## Deleting
 
@@ -26,23 +26,45 @@ Each chat works on its own report: the one it opened or created last. A chat tha
 - "Bring it back": `restore_report`. `list_reports` with `deleted: true` shows what can be restored.
 - Deleting for good is done by the user in the builder (Recently deleted, Delete forever). You cannot do it.
 
-## Building and editing
+## First draft
 
-The report follows IBCS, the notation Zebra BI charts use (the `data-story` skill's `references/ibcs-narrative.md` has the full rules):
+When the user gives you numbers and asks for a report ("make the October close report", "build a report from this file"), build the whole draft first and ask afterwards:
 
-1. **Key message first.** One `add_text` at the top: what happened, how big, against what, numbers in `**bold**`. "October EBITDA was **359.7k**, **+113.1k (+45.9%)** above PL."
-2. **Every chart has a note under it** (`add_chart` `note`, required). The note is the chart's supporting message, then one or two sentences of evidence read from the chart: "Cost of goods sold came in **98.4k** below PL. Material costs gave **78.7k** of it." Detection first (what happened), then explanation from the data (which split drove it). Never a cause the data does not show; put an open question in the closing text instead.
-3. **IBCS notation in text and titles.** AC, PL, PY, FC; ΔPY, ΔPL and ΔPY% for variances; the unit once per chart. Chart `title` is the reporting unit and measure, `subtitle` the unit, period and scenarios; the message lives in the note, never in the chart title.
-4. **Condense.** Round for reading (359.7k, +45.9%). No decoration words ("significant", "notable"). A cost that went down is "down" or "below PL", never "a positive variance".
-5. **Check.** Every number in a note matches its chart, from the same rows you sent.
+1. Read the data with code you run; never add up or subtract in your head. Keep that code for the chart's `recipe`.
+2. `create_report` with a short title: subject and period ("P&L close October 2026").
+3. One `add_chart` per chart, its arguments shaped as `chart-from-data` does (aggregate first, one row per category, the scenarios as columns `AC`, `PL`, `PY`, `FC`, `time_axis` for periods), with:
+   - `message`, the chart's supporting message above it, one line, numbers in `**bold**`: "Costs, not revenue, carried EBITDA past plan";
+   - `note`, two or three sentences of evidence under it, read from the chart: "COGS came in **98.4k** below PL; Material costs gave **78.7k** of it.";
+   - `why`, one sentence on why this chart type: "A P&L reads top-down with ΔPL beside each line.";
+   - `recipe`: `source` (the file or model), `query` (or the sheet), `code` (what you ran to get the rows), `period`.
+   Order the charts by contribution, largest first. Detection first (what happened), then explanation from the data (which split drove it). Never a cause the data does not show.
+4. `set_key_message`: what happened, how big, against what, numbers in `**bold**`.
+5. `set_kpis`: two to four tiles, a short value and a one-line label with its variance ("1.0M", "Revenue, ΔPL −39.2k (−3.7%)").
+6. `arrange_report`: `one-pager` by default, `variance-walk` to take the variance line by line, `board-pack` for many breakdowns.
+7. Tell the user in two or three lines what the draft holds and offer the next step. Do not paste the chart data into the chat.
 
-Shape each chart as `chart-from-data` does: aggregate first, one row per category, the scenarios as columns (`AC`, `PL`, `PY`, `FC`), `time_axis` for periods. `add_chart` returns Zebra BI's notes on the chart; read them and fix the arguments if it changed something you did not intend. Order charts by contribution, largest first, and put related breakdowns side by side: the same `row`, at most three per row.
+IBCS, the notation Zebra BI charts use, applies to every text (the `data-story` skill's `references/ibcs-narrative.md` has the full rules): AC, PL, PY, FC; ΔPY, ΔPL and ΔPY% for variances; the unit once per chart; chart `title` is the reporting unit and measure and `subtitle` the unit, period and scenarios, never the message; round for reading; no decoration words ("significant", "notable"); a cost that went down is "down" or "below PL", never "a positive variance".
 
-"Hide the notes" / "show the notes": `show_notes`. It switches the notes under all charts off or on, in the builder and in the PDF and page; hidden notes are kept. Text cells are not affected. In the builder the same is the Notes button.
+## Numbers
 
-Edits by cell id: `move_cell` (row and position; one past the last row makes a new row), `update_text` (a text cell, or the note of a chart cell), `remove_cell`, `replace_chart` (new data, period or chart type in the same place; then `update_text` its note so the numbers match). `open_report` marks a chart without a note `note MISSING`: write one. To write or check a note on a chart you did not just add, `read_chart` gives its rows first. Never write a placeholder note: when the numbers are not there (a copied report whose data has not been replaced yet), say so in the chat and leave the note as it is. After a change, tell the user in one or two lines what is where now. Do not paste the chart data into the chat.
+The builder checks every number in a message, note, text cell, key message and KPI tile against the charts' rows. A chart's message and note are checked against that chart; the key message, KPI tiles and text cells against all charts. A number passes when it is, within the rounding you write:
 
-The user can do all of this in the builder too: drag cells by the grip, edit text, notes and the title in place, and use ⋯ for duplicate and delete. Their edits are saved to the same file, so open the report again (`open_report`) before you change something they may have rearranged.
+- a row's value, a column's total, its smallest or largest value;
+- a variance to PL, PY, PM or FC, absolute or in percent, for a row or for the total;
+- a row's share of the total, or of the total variance;
+- with `time_axis`, the move between two periods, absolute or as a percent of the earlier one.
+
+Write signs in words ("39.2k under plan") or with + and −, thousands as k and millions as M, with English separators (1,026,887.77). Years and labels (Q4, FY26) are not checked. Anything else, such as a count, a ratio of two measures or a figure from the file that no chart shows, is flagged.
+
+When a tool answers `Unchecked numbers: …`, fix the text, or the chart's rows if they are wrong; never ask the user to keep a number. Keeping one is the user's choice in the builder (Keep as mine), and `save_pdf` refuses while any number is flagged.
+
+## Editing
+
+Edits by cell id: `move_cell` (row and position; one past the last row makes a new row), `update_text` (a text cell, or a chart cell's `field`: `message`, `note` or `why`), `remove_cell`, `replace_chart` (new data, period or chart type in the same place; then `update_text` its message and note so the numbers match). `open_report` marks a chart without a message or note `MISSING`: write one. To write or check the text of a chart you did not just add, `read_chart` gives its rows, message, note, why and recipe first. Never write a placeholder: when the numbers are not there (a copied report whose data has not been replaced yet), say so in the chat and leave the text as it is. After a change, tell the user in one or two lines what is where now.
+
+"Hide the notes" / "show the notes": `show_notes`. It switches the notes under all charts off or on, in the builder and in the PDF and page; hidden notes are kept. In the builder the same is the Notes button.
+
+The user can do all of this in the builder too: drag cells by the grip, edit the title, key message, KPI tiles, messages and notes in place, switch the layout, and use ⋯ for duplicate, PDF and delete. Their edits are saved to the same file, so open the report again (`open_report`) before you change something they may have rearranged.
 
 ## Sharing
 
