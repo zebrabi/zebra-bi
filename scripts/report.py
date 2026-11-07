@@ -16,7 +16,7 @@ and each result is cached in visuals/<id>.json next to the file. The format:
 save; the builder sends the rev it last saw, and a save against an older rev is refused so two editors do not
 overwrite each other.
 """
-import json, os, re, time
+import datetime as dt, json, os, re, shutil, time
 
 import story as S
 
@@ -111,37 +111,223 @@ def save(path, rep):
     return rep["rev"]
 
 
-def reports():
-    """(slug, title, path, mtime) of every report under root(), newest first."""
-    out, base = [], root()
-    for slug in os.listdir(base) if os.path.isdir(base) else []:
-        p = os.path.join(base, slug, FILE)
-        if ID.fullmatch(slug) and os.path.isfile(p):
-            try:
-                title = load(p)["title"]
-            except (OSError, ValueError):
-                continue
-            out.append((slug, title, p, os.path.getmtime(p)))
-    return sorted(out, key=lambda r: -r[3])
-
-
-POINTER = ".open"  # under root(): the slug of the report opened last, shared by every builder and server process
-
-
-def remember(slug):
-    """Note slug as the open report, so a builder opened elsewhere (the sidebar, another chat) shows it too."""
-    os.makedirs(root(), exist_ok=True)
-    S.write_atomic(os.path.join(root(), POINTER), slug)
-
-
-def remembered():
-    """Path of the report opened last by any process, when it still exists."""
+def info(slug):
+    """What a list shows about one report: slug, title, saved_at, charts and rows. None when it cannot be read."""
     try:
-        with open(os.path.join(root(), POINTER), encoding="utf-8") as f:
-            path = path_for(f.read().strip())
+        rep = load(path_for(slug))
     except (OSError, ValueError):
         return None
-    return path if os.path.isfile(path) else None
+    cells = [c for r in rep["rows"] for c in r["cells"]]
+    return {"report": slug, "title": rep["title"], "saved_at": rep.get("saved_at"), "rev": rep["rev"],
+            "charts": sum(1 for c in cells if c["type"] == "chart"), "rows": len(rep["rows"])}
+
+
+def reports():
+    """info() of every report under root(), last saved first."""
+    out, base = [], root()
+    for slug in os.listdir(base) if os.path.isdir(base) else []:
+        if ID.fullmatch(slug) and os.path.isfile(os.path.join(base, slug, FILE)):
+            i = info(slug)
+            if i:
+                i["mtime"] = os.path.getmtime(os.path.join(base, slug, FILE))
+                out.append(i)
+    return sorted(out, key=lambda r: -r["mtime"])
+
+
+STATE = ".state.json"  # under root(): the open report per chat thread, and the one opened last anywhere
+MAX_THREADS = 200
+THREAD_DAYS = 90
+
+
+def now():
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def read_state():
+    try:
+        with open(os.path.join(root(), STATE), encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {}
+    st = st if isinstance(st, dict) else {}
+    st["threads"] = st["threads"] if isinstance(st.get("threads"), dict) else {}
+    return st
+
+
+def write_state(st):
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=THREAD_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    kept = sorted(((t, v) for t, v in st["threads"].items() if isinstance(v, dict) and str(v.get("at", "")) >= cutoff),
+                  key=lambda tv: tv[1].get("at", ""), reverse=True)[:MAX_THREADS]
+    st["threads"] = dict(kept)
+    os.makedirs(root(), exist_ok=True)
+    S.write_atomic(os.path.join(root(), STATE), json.dumps(st, indent=1))
+
+
+def remember(slug, thread=None):
+    """slug is now the open report of this chat thread, and the report opened last anywhere."""
+    st = read_state()
+    st["last"] = slug
+    if thread:
+        st["threads"][str(thread)] = {"report": slug, "at": now()}
+    write_state(st)
+
+
+def forget(slug):
+    """Clear slug wherever it is open (it was deleted)."""
+    st = read_state()
+    if st.get("last") == slug:
+        st.pop("last")
+    st["threads"] = {t: v for t, v in st["threads"].items() if v.get("report") != slug}
+    write_state(st)
+
+
+def exists(slug):
+    return bool(slug) and ID.fullmatch(slug) is not None and os.path.isfile(os.path.join(root(), slug, FILE))
+
+
+def resolve(thread=None):
+    """The report a chat works on: its thread's open report, else the one opened last, else the newest. None when
+    there is no report at all."""
+    st = read_state()
+    entry = st["threads"].get(str(thread)) if thread else None
+    for slug in ((entry or {}).get("report"), st.get("last")):
+        if exists(slug):
+            return slug
+    found = reports()
+    return found[0]["report"] if found else None
+
+
+def last():
+    st = read_state()
+    return st.get("last") if exists(st.get("last")) else resolve(None)
+
+
+def find(name):
+    """A report by slug, else by title (exact, then unique prefix, ignoring case). Raises ValueError otherwise."""
+    name = str(name or "").strip()
+    if exists(name):
+        return name
+    found, low = reports(), name.lower()
+    for match in ([r for r in found if r["title"].lower() == low], [r for r in found if r["title"].lower().startswith(low)]):
+        if len(match) == 1:
+            return match[0]["report"]
+        if len(match) > 1:
+            raise ValueError("%d reports match %r: %s" % (len(match), name, ", ".join(r["report"] for r in match)))
+    raise ValueError("no report named %r; list_reports shows them" % name)
+
+
+# ---------- lifecycle ----------
+
+DELETED = ".deleted"
+KEEP_DAYS = 30
+
+
+def unique_slug(title):
+    base, n = slugify(title), 2
+    slug = base
+    while os.path.exists(os.path.join(root(), slug)):
+        slug = "%s-%d" % (base[:56], n)
+        n += 1
+    return slug
+
+
+def create(title):
+    """A new empty report with its own folder. Returns its slug; a title that clashes gets a new slug."""
+    slug = unique_slug(title)
+    save(path_for(slug), new(title))
+    return slug
+
+
+def rename(slug, title):
+    path = path_for(slug)
+    rep = load(path)
+    rep["title"] = clean_title(title)
+    save(path, rep)
+    return rep["title"]
+
+
+def duplicate(slug, title=None):
+    """A copy of the report, its text and its cached charts, as a new report. Returns the new slug."""
+    rep = load(path_for(slug))
+    title = clean_title(title or "%s (copy)" % rep["title"])
+    new_slug = unique_slug(title)
+    src, dst = os.path.join(root(), slug), os.path.join(root(), new_slug)
+    os.makedirs(dst)
+    if os.path.isdir(os.path.join(src, "visuals")) and not os.path.islink(os.path.join(src, "visuals")):
+        shutil.copytree(os.path.join(src, "visuals"), os.path.join(dst, "visuals"))
+    rep.update(title=title, rev=0)
+    save(os.path.join(dst, FILE), rep)
+    return new_slug
+
+
+def trash(slug):
+    """Move the report to Recently deleted. Returns the entry name restore() takes."""
+    if not exists(slug):
+        raise ValueError("no report named %r" % slug)
+    os.makedirs(os.path.join(root(), DELETED), exist_ok=True)
+    entry = "%s--%s" % (slug, dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f"))
+    os.replace(os.path.join(root(), slug), os.path.join(root(), DELETED, entry))
+    with open(os.path.join(root(), DELETED, entry, "deleted.json"), "w", encoding="utf-8") as f:
+        json.dump({"deleted_at": now(), "report": slug}, f)
+    forget(slug)
+    return entry
+
+
+ENTRY = re.compile(r"([a-z0-9][a-z0-9-]{0,60})--[0-9]{8}T[0-9]{12}")
+
+
+def deleted():
+    """Recently deleted reports, newest first, after removing the ones older than KEEP_DAYS."""
+    base, out = os.path.join(root(), DELETED), []
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for entry in os.listdir(base) if os.path.isdir(base) else []:
+        d = os.path.join(base, entry)
+        if not ENTRY.fullmatch(entry) or os.path.islink(d):
+            continue
+        try:
+            with open(os.path.join(d, "deleted.json"), encoding="utf-8") as f:
+                meta = json.load(f)
+            title = load(os.path.join(d, FILE))["title"]
+        except (OSError, ValueError):
+            continue
+        if str(meta.get("deleted_at", "")) < cutoff:
+            shutil.rmtree(d, ignore_errors=True)
+            continue
+        out.append({"entry": entry, "report": ENTRY.fullmatch(entry).group(1), "title": title, "deleted_at": meta.get("deleted_at")})
+    return sorted(out, key=lambda r: r["deleted_at"], reverse=True)
+
+
+def deleted_entry(name):
+    """A Recently deleted entry by entry name, slug or title (the newest when several match)."""
+    name, items = str(name or "").strip(), deleted()
+    for key in ("entry", "report", "title"):
+        hit = [d for d in items if d[key].lower() == name.lower()]
+        if hit:
+            return hit[0]["entry"]
+    raise ValueError("nothing named %r in Recently deleted" % name)
+
+
+def restore(entry):
+    """Move a Recently deleted report back. Returns its slug (a new one when the old is taken)."""
+    if not ENTRY.fullmatch(entry):
+        raise ValueError("not a Recently deleted entry: %r" % entry)
+    src = os.path.join(root(), DELETED, entry)
+    slug = ENTRY.fullmatch(entry).group(1)
+    if os.path.exists(os.path.join(root(), slug)):
+        slug = unique_slug(load(os.path.join(src, FILE))["title"])
+    os.remove(os.path.join(src, "deleted.json"))
+    os.replace(src, os.path.join(root(), slug))
+    return slug
+
+
+def purge(entry):
+    """Delete a Recently deleted report for good."""
+    if not ENTRY.fullmatch(entry):
+        raise ValueError("not a Recently deleted entry: %r" % entry)
+    d = os.path.join(root(), DELETED, entry)
+    if not os.path.isdir(d) or os.path.islink(d):
+        raise ValueError("nothing named %r in Recently deleted" % entry)
+    shutil.rmtree(d)
 
 
 def next_cell_id(rep):
@@ -210,6 +396,75 @@ def apply_layout(rep, title, rows, rev):
     return out
 
 
+# ---------- cells ----------
+
+def locate(rep, cell):
+    for ri, row in enumerate(rep["rows"]):
+        for ci, c in enumerate(row["cells"]):
+            if c["id"] == cell:
+                return ri, ci
+    raise ValueError("no cell %r in this report; open_report lists the cells" % cell)
+
+
+def drop_unshown(rep):
+    shown = {c["visual"] for r in rep["rows"] for c in r["cells"] if c["type"] == "chart"}
+    rep["visuals"] = {k: v for k, v in rep["visuals"].items() if k in shown}
+
+
+def remove_cell(rep, cell):
+    ri, ci = locate(rep, cell)
+    del rep["rows"][ri]["cells"][ci]
+    rep["rows"] = [r for r in rep["rows"] if r["cells"]]
+    drop_unshown(rep)
+
+
+def update_text(rep, cell, text):
+    ri, ci = locate(rep, cell)
+    c = rep["rows"][ri]["cells"][ci]
+    if c["type"] != "text":
+        raise ValueError("cell %s is a chart; replace_chart changes a chart" % cell)
+    text = str(text or "").strip()
+    if not text or len(text) > MAX_TEXT:
+        raise ValueError("text must hold 1 to %d characters" % MAX_TEXT)
+    c["text"] = text
+
+
+def move_cell(rep, cell, row, position=None):
+    """Move cell into row (1-based) at position (1-based, default last). Row n+1 means a new row at the end; a row
+    with three cells refuses a fourth."""
+    ri, ci = locate(rep, cell)
+    c = rep["rows"][ri]["cells"].pop(ci)
+    rows = rep["rows"]  # an emptied row stays until the end, so row numbers are the ones the caller saw
+    if not isinstance(row, int) or not 1 <= row <= len(rows) + 1:
+        rows[ri]["cells"].insert(ci, c)
+        raise ValueError("row must be 1 to %d" % (len(rows) + 1))
+    if row == len(rows) + 1:
+        rows.append({"cells": [c]})
+    else:
+        target = rows[row - 1]["cells"]
+        if len(target) >= MAX_CELLS:
+            rows[ri]["cells"].insert(ci, c)
+            raise ValueError("row %d already holds %d cells" % (row, MAX_CELLS))
+        pos = len(target) if position is None else max(0, min(int(position) - 1, len(target)))
+        target.insert(pos, c)
+    rep["rows"] = [r for r in rows if r["cells"]]
+
+
+def replace_chart(rep, cell, args):
+    """Point a chart cell at new render_visual args. Returns the new visual id; the old chart is dropped."""
+    ri, ci = locate(rep, cell)
+    c = rep["rows"][ri]["cells"][ci]
+    if c["type"] != "chart":
+        raise ValueError("cell %s is text; update_text changes text" % cell)
+    if not isinstance(args, dict) or not args:
+        raise ValueError("chart needs the render_visual arguments")
+    vid = unique_visual_id(rep, args.get("title"))
+    rep["visuals"][vid] = {"args": args}
+    c["visual"] = vid
+    drop_unshown(rep)
+    return vid
+
+
 def chart_title(rep, vid):
     args = rep["visuals"].get(vid, {}).get("args", {})
     return str(args.get("title") or vid)
@@ -222,10 +477,10 @@ def summary(rep):
         parts = []
         for c in row["cells"]:
             if c["type"] == "chart":
-                parts.append("chart %r" % chart_title(rep, c["visual"]))
+                parts.append("[%s] chart %r" % (c["id"], chart_title(rep, c["visual"])))
             else:
                 t = " ".join(c["text"].split())
-                parts.append("text %r" % (t[:80] + ("..." if len(t) > 80 else "")))
+                parts.append("[%s] text %r" % (c["id"], t[:80] + ("..." if len(t) > 80 else "")))
         lines.append("Row %d: %s" % (i, "; ".join(parts)))
     return "\n".join(lines)
 
