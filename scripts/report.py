@@ -485,6 +485,16 @@ def summary(rep):
     return "\n".join(lines)
 
 
+def to_story(rep):
+    """The report in the story.json format, so story-pdf and story-artifact build it from its folder: the title
+    as the heading and each row as a story row, its charts and texts side by side. A report names no data source."""
+    rows = [{"cells": [{"visual": c["visual"]} if c["type"] == "chart" else {"text": c["text"]} for c in row["cells"]]}
+            for row in rep["rows"] if row["cells"]]
+    shown = {c["visual"] for row in rows for c in row["cells"] if "visual" in c}
+    return {"title": rep["title"], "sections": [], "rows": rows,
+            "visuals": {vid: {"args": v["args"]} for vid, v in rep["visuals"].items() if vid in shown}}
+
+
 def render(report_dir, vid, args):
     """The render_visual result for one chart, from visuals/<vid>.json when the args are unchanged, else drawn by
     the Zebra BI MCP and cached. Raises S.SignIn or S.Unavailable; never prints or exits."""

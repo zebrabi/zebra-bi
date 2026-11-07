@@ -606,6 +606,53 @@ def render_visuals(story_dir, story):
     return results
 
 
+MAX_CELLS = 3  # cells side by side in one row, as in the report builder
+
+
+def load(story_dir):
+    """story.json in story_dir, or the report builder's report there (report.zbreport) as a story with rows."""
+    path = os.path.join(story_dir, "story.json")
+    report_file = os.path.join(story_dir, "report.zbreport")
+    if not os.path.exists(path) and os.path.isfile(report_file):
+        import report as R  # report.py imports this module, so it is imported only when needed
+        return R.to_story(R.load(report_file))
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except OSError:
+        sys.exit("No story.json or report.zbreport in %s" % story_dir)
+
+
+def rows(story):
+    """The story's rows ([{"cells": [{"visual": id} | {"text": str}]}]), checked: 1 to MAX_CELLS cells each."""
+    out = story.get("rows") or []
+    for i, row in enumerate(out, 1):
+        cells = row.get("cells") if isinstance(row, dict) else None
+        if not isinstance(cells, list) or not 1 <= len(cells) <= MAX_CELLS:
+            sys.exit("row %d needs 1 to %d cells side by side" % (i, MAX_CELLS))
+        for c in cells:
+            if not isinstance(c, dict) or not (c.get("visual") or isinstance(c.get("text"), str)):
+                sys.exit("row %d: each cell is {\"visual\": id} or {\"text\": ...}" % i)
+    return out
+
+
+def story_visuals(story):
+    """The visual ids the story shows, in page order, each once."""
+    ids = [s["visual"] for s in story.get("sections", []) if s.get("visual")]
+    ids += [c["visual"] for row in rows(story) for c in row["cells"] if c.get("visual")]
+    return list(dict.fromkeys(ids))
+
+
+def footer(story, brand):
+    """The footer line, escaped: the source when the story names one, the build date, the brand's credit."""
+    src = story.get("source") or {}
+    label = src.get("label") or src.get("name")
+    text = ("Source: %s. " % html.escape(label) if label else "") + "Built %s." % dt.date.today().isoformat()
+    if brand.get("credit"):
+        text += " &middot; " + html.escape(brand["credit"])
+    return text
+
+
 def para(text):
     """Escape, then allow **bold**; blank lines split paragraphs."""
     out = []
@@ -667,15 +714,23 @@ def assemble(story, results, meta, renderer_path, brand):
                 sys.exit("section %r names visual %r, which is not in visuals" % (s.get("heading"), s["visual"]))
             frame = '<iframe data-v="%s" title="%s"></iframe>' % (e(s["visual"]), e(s.get("heading", s["visual"])))
         sections.append("<section>\n<h2>%s</h2>\n%s\n%s\n</section>" % (e(s.get("heading", "")), para(s.get("body", "")), frame))
+    for row in rows(story):
+        cells = []
+        for c in row["cells"]:
+            vid = c.get("visual")
+            if vid:
+                if vid not in results:
+                    sys.exit("a row names visual %r, which is not in visuals" % vid)
+                title = ((story.get("visuals", {}).get(vid) or {}).get("args") or {}).get("title") or vid
+                cells.append('<div class="cell"><iframe data-v="%s" title="%s"></iframe></div>' % (e(vid), e(title)))
+            else:
+                cells.append('<div class="cell">%s</div>' % para(c["text"]))
+        sections.append('<section class="row cols-%d">%s</section>' % (len(cells), "".join(cells)))
     nxt = ""
     if story.get("next"):
         nxt = '<section class="next"><h2>%s</h2><ul>%s</ul></section>' % (
             e(story.get("next_heading", "Where to look next")),
             "".join("<li>%s</li>" % re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", e(n)) for n in story["next"]))
-    src = story.get("source", {})
-    footer = "Source: %s. Built %s." % (e(src.get("label", src.get("name", "unknown"))), dt.date.today().isoformat())
-    if brand.get("credit"):
-        footer += " &middot; " + e(brand["credit"])
     with open(TEMPLATE, encoding="utf-8") as f:
         page = f.read()
     # Data and the renderer are embedded as JSON in inert <script type="application/json">
@@ -686,7 +741,7 @@ def assemble(story, results, meta, renderer_path, brand):
     with open(renderer_path, encoding="utf-8") as f:
         renderer_html = f.read()
     fills = {"TITLE": e(story["title"]), "SUBTITLE": e(story.get("subtitle", "")), "KPIS": kpis,
-             "SECTIONS": "\n".join(sections), "NEXT": nxt, "FOOTER": footer, "VERSION": version(),
+             "SECTIONS": "\n".join(sections), "NEXT": nxt, "FOOTER": footer(story, brand), "VERSION": version(),
              "RENDERER_SHA": meta["sha256"], "VISUALS_JSON": embed(results), "RENDERER_JSON": embed(renderer_html)}
     fills.update(brand_tokens(brand, story))
     # One pass over the template: a value that holds "{{...}}" is never expanded again.

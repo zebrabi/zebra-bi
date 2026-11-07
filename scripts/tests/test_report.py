@@ -3,7 +3,7 @@
 Nothing goes over the network: charts come from visuals/<id>.json written by the test, and the server runs with
 ZEBRA_BI_MCP_URL on a closed loopback port, so an uncached chart fails fast instead of drawing.
 """
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import datetime as dt, hashlib, json, os, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -151,6 +151,26 @@ class Files(unittest.TestCase):
         self.assertEqual([r["report"] for r in R.reports()], ["b", "a"])
         self.assertEqual(R.info("a")["rev"], 2)
 
+    def test_a_report_folder_reads_as_a_story_with_its_rows(self):
+        slug = R.create("Q4 close")
+        path = R.path_for(slug)
+        rep = R.load(path)
+        vid, _ = R.add_chart(rep, ARGS)
+        R.add_text(rep, "West led **+37.9k**.", row=1)
+        R.add_chart(rep, dict(ARGS, title="Sales by month"))
+        rep["visuals"]["unshown"] = {"args": ARGS}  # a chart no cell shows stays out of the exports
+        R.save(path, rep)
+        story = S.load(os.path.dirname(path))
+        self.assertEqual(story["title"], "Q4 close")
+        self.assertEqual(story["sections"], [])
+        self.assertEqual(story["rows"][0], {"cells": [{"visual": vid}, {"text": "West led **+37.9k**."}]})
+        self.assertEqual(len(story["rows"]), 2)
+        self.assertEqual(sorted(story["visuals"]), sorted(S.story_visuals(story)))
+        self.assertNotIn("source", story)  # a report names no data source, so the footer names none
+        with open(os.path.join(os.path.dirname(path), "story.json"), "w") as f:
+            json.dump({"title": "A story", "sections": [], "visuals": {}}, f)
+        self.assertEqual(S.load(os.path.dirname(path))["title"], "A story")  # a story.json there wins
+
     def test_slug_must_be_plain(self):
         with self.assertRaises(ValueError):
             R.path_for("../etc")
@@ -288,7 +308,7 @@ class Server(unittest.TestCase):
         self.assertFalse(tools["delete_report"]["annotations"]["destructiveHint"])  # restorable
         self.assertTrue(tools["purge_report"]["annotations"]["destructiveHint"])
         for model in ("create_report", "list_reports", "rename_report", "duplicate_report", "delete_report", "restore_report",
-                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart"):
+                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf"):
             self.assertNotEqual(tools[model].get("_meta", {}).get("ui", {}).get("visibility"), ["app"], model)
 
     def test_app_page_nests_through_srcdoc(self):
@@ -401,6 +421,52 @@ class Server(unittest.TestCase):
         self.tool("create_report", {"title": "November"}, thread="chat-1")
         self.assertEqual(self.tool("open_report", {}, thread="plugin")["structuredContent"]["report"], "november")
         self.assertEqual(self.tool("library", {}, thread="plugin")["structuredContent"]["last"], "november")
+
+    def test_save_pdf_without_a_browser_says_so(self):
+        self.tool("create_report", {"title": "Q4 close"})
+        self.server.close()
+        os.environ["ZEBRA_BI_CHROME"] = os.path.join(self.tmp, "no-such-browser")
+        try:
+            self.server = Proc(self.tmp)
+            out = self.tool("save_pdf")
+        finally:
+            os.environ.pop("ZEBRA_BI_CHROME")
+        self.assertTrue(out["isError"])
+        self.assertIn("No PDF was saved: The PDF needs Google Chrome", out["content"][0]["text"])
+
+    @unittest.skipUnless(shutil.which("pdftotext"), "needs pdftotext")
+    def test_save_pdf_prints_the_rows_side_by_side(self):
+        sys.path.insert(0, HERE)
+        from test_pdf import FAKE_RENDERER
+        from zoffice import snapshot as SN
+        if not SN.find_chrome():
+            self.skipTest("no Chrome, Edge or Chromium installed")
+        cache_dir = os.path.join(self.tmp, "data", "renderer")  # the server's CLAUDE_PLUGIN_DATA
+        os.makedirs(cache_dir)
+        page = (FAKE_RENDERER % 300).encode()
+        with open(os.path.join(cache_dir, "visual.html"), "wb") as f:
+            f.write(page)
+        with open(os.path.join(cache_dir, "visual.json"), "w") as f:
+            json.dump({"sha256": hashlib.sha256(page).hexdigest(), "endpoint": FAKE_MCP,
+                       "fetched_at": dt.datetime.now().isoformat()}, f)
+        slug = self.tool("create_report", {"title": "Q4 close"})["structuredContent"]["report"]
+        rdir = os.path.join(self.tmp, "reports", slug)
+        month = dict(ARGS, title="Sales by month")
+        cache(rdir, "sales-by-region", ARGS, endpoint=FAKE_MCP)
+        cache(rdir, "sales-by-month", month, endpoint=FAKE_MCP,
+              result=dict(RESULT, structuredContent={"visual": {"title": "Sales by month"}}))
+        self.tool("add_chart", {"chart": ARGS})
+        self.tool("add_chart", {"chart": month, "row": 1})
+        self.tool("add_text", {"text": "West led."})
+        out = self.tool("save_pdf")
+        self.assertFalse(out.get("isError"), out)
+        pdf = out["structuredContent"]["file"]
+        self.assertEqual(pdf, os.path.join(rdir, slug + ".pdf"))
+        text = subprocess.run(["pdftotext", "-layout", pdf, "-"], capture_output=True, text=True).stdout
+        line = lambda label: next(i for i, l in enumerate(text.splitlines()) if label in l)
+        self.assertEqual(line("Sales by region"), line("Sales by month"))  # one row, side by side
+        self.assertIn("Q4 close", text)
+        self.assertNotIn("Source:", text)
 
     def test_debug_log_records_meta_not_arguments(self):
         log = os.path.join(self.tmp, "calls.jsonl")

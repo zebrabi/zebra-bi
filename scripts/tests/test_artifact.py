@@ -14,7 +14,7 @@ import artifact as A  # noqa: E402
 import brand as B  # noqa: E402
 import story as S  # noqa: E402
 from zoffice import snapshot as SN  # noqa: E402
-from test_pdf import ARGS, STORY, Base as PdfBase  # noqa: E402
+from test_pdf import ARGS, STORY, Base as PdfBase, rows_story  # noqa: E402
 
 URL = "https://claude.ai/artifact/AbC123xyz"
 
@@ -64,6 +64,22 @@ class Page(unittest.TestCase):
         data = re.search(r'<script id="zebra-visuals" type="application/json">(.*?)</script>', page, re.S).group(1)
         self.assertNotIn("<", data)  # a result cannot close its script element
         self.assertEqual(json.loads(data), results())
+
+    def test_rows_put_cells_side_by_side(self):
+        story = rows_story()
+        self.assertEqual(A.picture_widths(story), {"v1": 370, "v2": 240, "v3": 240})  # (760 - gaps) / cells
+        page = self.page(story=story)
+        self.assertIn('<section class="zs-section zs-row zs-cols-2"><figure class="zs-plate" data-v="v1"', page)
+        self.assertIn('<div class="zs-text"><p>Key <b>message</b>.</p></div></section>', page)
+        self.assertIn('<section class="zs-section zs-row zs-cols-3"><figure class="zs-plate" data-v="v2"', page)
+        self.assertIn('alt="Zebra BI chart: Chart 2."', page)
+        self.assertIn(".zs-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }", page)
+
+    def test_live_draws_the_charts_in_rows(self):
+        page = self.page(live=True, story=rows_story())
+        data = re.search(r'<script id="zebra-visuals" type="application/json">(.*?)</script>', page, re.S).group(1)
+        self.assertEqual(sorted(json.loads(data)), ["v1", "v2", "v3"])
+        self.assertEqual(page.count('<iframe title='), 3)
 
     def test_story_text_is_escaped(self):
         story = dict(json.loads(json.dumps(STORY)), title="<img src=x onerror=alert(1)> grew")
@@ -121,6 +137,13 @@ class Build(PdfBase):
         self.assertIsNone(info["url"])
         self.assertTrue(os.path.isfile(info["page"]))
         self.assertEqual(info["title"], "Sales grew")
+
+    def test_charts_in_rows_are_drawn_at_their_cell_width(self):
+        with open(os.path.join(self.story_dir, "story.json"), "w") as f:
+            json.dump(rows_story(), f)
+        info = self.build()
+        widths = {vid: A.png_size(info["files"]["charts/%s.png" % vid])[0] for vid in ARGS}
+        self.assertEqual(widths, {"v1": 740, "v2": 480, "v3": 480})  # captured at 2x
 
     def test_switching_back_from_live_drops_the_renderer(self):
         info = self.build(live=True)

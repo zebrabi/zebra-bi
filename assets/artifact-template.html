@@ -6,7 +6,8 @@
   brand. The artifact host wraps it in its own document, so there is no doctype, html, head or body here.
   Placeholders: PAGE_TITLE, FONT_LINK, BRAND_CSS, KICKER, LOGO, TITLE, SUBTITLE, KPIS, SECTIONS, NEXT,
   FOOTER, LIVE. Each chart is a picture of the Zebra BI chart (charts/<id>.png, drawn at the column width
-  and captured at 2x). With --live, LIVE holds the visuals' tool results and a minimal MCP Apps host that
+  and captured at 2x). A story's rows (a report from the report builder) put up to three cells side by side
+  from 40rem up, each chart drawn at its cell's width; narrower screens stack them. With --live, LIVE holds the visuals' tool results and a minimal MCP Apps host that
   loads the Zebra BI renderer from the published file zebra-renderer.txt (a page that big inline is
   refused at publish) and swaps each picture for the live chart once it has drawn; when the renderer cannot
   load, the pictures stay. The charts are white by design, so the page is a deliberate light design.
@@ -39,6 +40,11 @@
   .zs-plate iframe { position: absolute; inset: 0 auto auto 0; width: 100%; height: 0; border: 0; visibility: hidden; background: #fff; }
   .zs-plate[data-live="ready"] img { display: none; }
   .zs-plate[data-live="ready"] iframe { position: static; display: block; visibility: visible; }
+  .zs-row { align-items: start; column-gap: 1.25rem; }
+  @media (min-width: 40rem) {
+    .zs-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .zs-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
   .zs-next ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .45rem; max-width: 68ch; }
   .zs-foot { margin: 0; color: var(--muted); font-size: .78rem; border-top: 1px solid var(--hairline); padding-top: .7rem; }
 </style>
