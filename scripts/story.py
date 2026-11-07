@@ -615,7 +615,10 @@ def load(story_dir):
     report_file = os.path.join(story_dir, "report.zbreport")
     if not os.path.exists(path) and os.path.isfile(report_file):
         import report as R  # report.py imports this module, so it is imported only when needed
-        return R.to_story(R.load(report_file))
+        try:
+            return R.to_story(R.load(report_file))
+        except ValueError as e:
+            sys.exit("Not built: %s" % e)
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
@@ -632,7 +635,7 @@ def rows(story):
             sys.exit("row %d needs 1 to %d cells side by side" % (i, MAX_CELLS))
         for c in cells:
             if not isinstance(c, dict) or not (c.get("visual") or isinstance(c.get("text"), str)) \
-                    or not isinstance(c.get("note", ""), str):
+                    or not isinstance(c.get("note", ""), str) or not isinstance(c.get("message", ""), str):
                 sys.exit("row %d: each cell is {\"visual\": id} or {\"text\": ...}" % i)
     return out
 
@@ -652,6 +655,11 @@ def footer(story, brand):
     if brand.get("credit"):
         text += " &middot; " + html.escape(brand["credit"])
     return text
+
+
+def inline(text):
+    """Escape one line and allow **bold**: a chart's message."""
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html.escape(" ".join(str(text).split())))
 
 
 def para(text):
@@ -723,8 +731,9 @@ def assemble(story, results, meta, renderer_path, brand):
                 if vid not in results:
                     sys.exit("a row names visual %r, which is not in visuals" % vid)
                 title = ((story.get("visuals", {}).get(vid) or {}).get("args") or {}).get("title") or vid
+                msg = '<div class="msg">%s</div>' % inline(c["message"]) if c.get("message") else ""
                 note = '<div class="note">%s</div>' % para(c["note"]) if c.get("note") else ""
-                cells.append('<div class="cell"><iframe data-v="%s" title="%s"></iframe>%s</div>' % (e(vid), e(title), note))
+                cells.append('<div class="cell">%s<iframe data-v="%s" title="%s"></iframe>%s</div>' % (msg, e(vid), e(title), note))
             else:
                 cells.append('<div class="cell">%s</div>' % para(c["text"]))
         sections.append('<section class="row cols-%d">%s</section>' % (len(cells), "".join(cells)))

@@ -692,13 +692,28 @@ def summary(rep):
 def to_story(rep):
     """The report in the story.json format, so story-pdf and story-artifact build it from its folder: the title
     as the heading and each row as a story row, its charts and texts side by side. A report names no data source."""
+    found = flags(rep)
+    if found:
+        raise ValueError("these numbers are not in their charts: %s" % "; ".join(found))
     notes = rep.get("show_notes", True)  # off: the notes stay in the report, the exports leave them out
-    rows = [{"cells": [dict({"visual": c["visual"]}, **({"note": c["note"]} if notes and c.get("note") else {}))
-                       if c["type"] == "chart" else {"text": c["text"]} for c in row["cells"]]}
+
+    def chart(c):
+        out = {"visual": c["visual"]}
+        if c.get("message"):
+            out["message"] = c["message"]
+        if notes and c.get("note"):
+            out["note"] = c["note"]
+        return out
+    rows = [{"cells": [chart(c) if c["type"] == "chart" else {"text": c["text"]} for c in row["cells"]]}
             for row in rep["rows"] if row["cells"]]
     shown = {c["visual"] for row in rows for c in row["cells"] if "visual" in c}
-    return {"title": rep["title"], "sections": [], "rows": rows,
-            "visuals": {vid: {"args": v["args"]} for vid, v in rep["visuals"].items() if vid in shown}}
+    story = {"title": rep["title"], "sections": [], "rows": rows,
+             "visuals": {vid: {"args": v["args"]} for vid, v in rep["visuals"].items() if vid in shown}}
+    if rep.get("key_message"):  # the key message heads the page, with the report's title as the label above it
+        story.update(kicker=rep["title"], title=rep["key_message"])
+    if rep.get("kpis"):
+        story["kpis"] = rep["kpis"]
+    return story
 
 
 def render(report_dir, vid, args):

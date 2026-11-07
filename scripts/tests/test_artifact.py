@@ -76,6 +76,13 @@ class Page(unittest.TestCase):
         self.assertIn('alt="Zebra BI chart: Chart 2."', page)
         self.assertIn(".zs-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }", page)
 
+    def test_a_chart_message_sits_above_its_picture(self):
+        story = rows_story()
+        story["rows"][1]["cells"][0]["message"] = "V2 fell **−3%**"
+        page = self.page(story=story)
+        self.assertIn('<div class="zs-cell"><p class="zs-msg">V2 fell <b>−3%</b></p><figure class="zs-plate" data-v="v2"', page)
+        self.assertIn(".zs-msg {", page)
+
     def test_live_draws_the_charts_in_rows(self):
         page = self.page(live=True, story=rows_story())
         data = re.search(r'<script id="zebra-visuals" type="application/json">(.*?)</script>', page, re.S).group(1)

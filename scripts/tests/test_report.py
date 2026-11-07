@@ -121,6 +121,7 @@ class Cells(unittest.TestCase):
         R.validate(self.rep)
         self.assertIn("note 'Sales grew **+4%** on PY.'", R.summary(self.rep))
         self.assertIn("note MISSING", R.summary(self.rep))  # c1 has none yet
+        cell["kept"] = ["+4%"]  # the chart holds no +4%: the user keeps it, so the export takes it
         moved = R.apply_layout(self.rep, None, self.rep["rows"], self.rep["rev"])
         self.assertEqual(moved["rows"][-1]["cells"][0]["note"], "Sales grew **+4%** on PY.")
         self.assertEqual(R.to_story(moved)["rows"][-1]["cells"][0], {"visual": vid, "note": "Sales grew **+4%** on PY."})
@@ -216,6 +217,20 @@ class Draft(unittest.TestCase):
         self.assertEqual(out["rows"][0]["cells"][0]["message"], "Sales missed plan")  # absent in the save: kept
         self.assertEqual((out["key_message"], out["kpis"], out["kept"]), ("Key", [{"value": "1", "label": "x"}], ["1"]))
 
+    def test_the_story_carries_key_message_tiles_and_messages(self):
+        rep, cell = self.checked()
+        cell["kept"] = ["99.0k"]
+        story = R.to_story(rep)
+        self.assertEqual((story["kicker"], story["title"]), ("Checks", "Revenue missed plan by 39.2k."))
+        self.assertEqual(story["kpis"], [{"value": "1.0M", "label": "Revenue, ΔPL −39.2k"}])
+        self.assertEqual(story["rows"][0]["cells"][0]["message"], "Revenue missed plan by **39.2k**")
+        self.assertNotIn("kicker", R.to_story(self.rep))  # no key message: the title is the heading, no label above it
+
+    def test_the_story_refuses_untraced_numbers(self):
+        rep, _ = self.checked()
+        with self.assertRaisesRegex(ValueError, "not in their charts: c1 note: 99.0k"):
+            R.to_story(rep)
+
     def test_limits(self):
         with self.assertRaises(ValueError):
             R.set_kpis(self.rep, [{"value": "1", "label": "x"}] * 5)
@@ -297,6 +312,7 @@ class Files(unittest.TestCase):
         rep = R.load(path)
         vid, _ = R.add_chart(rep, ARGS)
         R.add_text(rep, "West led **+37.9k**.", row=1)
+        rep["rows"][0]["cells"][-1]["kept"] = ["+37.9k"]  # no chart holds it: kept by the user, so the export takes it
         R.add_chart(rep, dict(ARGS, title="Sales by month"))
         rep["visuals"]["unshown"] = {"args": ARGS}  # a chart no cell shows stays out of the exports
         R.save(path, rep)
