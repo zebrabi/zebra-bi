@@ -1,6 +1,6 @@
 ---
 name: report-builder
-description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'make the close report', 'make it a one-pager', 'make a board pack', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
+description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'make the close report', 'make it a one-pager', 'make a board pack', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', 'make it a deck', 'save it as PowerPoint', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
 license: Apache-2.0
 ---
 
@@ -59,7 +59,7 @@ The builder checks every number in a message, note, text cell, key message and K
 
 Write signs in words ("39.2k under plan") or with + and −, thousands as k and millions as M, with English separators (1,026,887.77). Years and labels (Q4, FY26) are not checked. Anything else, such as a count, a ratio of two measures or a figure from the file that no chart shows, is flagged.
 
-When a tool answers `Unchecked numbers: …`, fix the text, or the chart's rows if they are wrong; never ask the user to keep a number. Keeping one is the user's choice in the builder (Keep as mine), and `save_pdf` refuses while any number is flagged.
+When a tool answers `Unchecked numbers: …`, fix the text, or the chart's rows if they are wrong; never ask the user to keep a number. Keeping one is the user's choice in the builder (Keep as mine), and `save_pdf` and `save_pptx` refuse while any number is flagged.
 
 ## Editing
 
@@ -75,4 +75,4 @@ The report is a file on this computer, in its folder `~/Documents/Zebra BI Repor
 
 - "Save it as a PDF": `save_pdf`. It prints an A4 PDF into the report's folder, its charts and texts side by side as in the builder, and returns the path; give the path, and say in one line that the PDF holds the report's aggregated numbers, so it goes only where the data may go. In the builder the same is ⋯ → Save as PDF.
 - A page to share (Claude Code only): `story-artifact` builds the report from its folder, rows included.
-- PowerPoint and Excel (`story-office`) are built from data stories, not from reports yet.
+- "Make it a deck", "save it as PowerPoint": `save_pptx`. It writes `<name>.pptx` into the report's folder: a cover with the key message and KPI tiles, then a slide per chart in the report's order (the layout's order, or the user's own), the chart's message as the slide title and its note beside it and in the speaker notes. Each chart is a live Zebra BI visual that the Zebra BI add-in can edit, with a picture for everyone else. Give the path, with the same line about aggregated numbers. In the builder the same is ⋯ → Save as PowerPoint. Excel is built from data stories (`story-office`), not from reports.

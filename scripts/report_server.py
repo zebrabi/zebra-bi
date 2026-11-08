@@ -17,7 +17,7 @@ In ChatGPT and Codex desktop the builder opens from the sidebar (entrypoint "glo
 ("thread"). The renderer is nested in the builder through iframe srcdoc: the desktop hosts block blob: frames.
 Standard library only. stdout carries JSON-RPC alone; anything else goes to stderr.
 """
-import hashlib, json, os, sys, traceback
+import hashlib, json, os, re, sys, traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -202,6 +202,12 @@ def tools():
          "description": "Print the report to an A4 PDF in its folder on this computer, its charts and texts side by side "
                         "as in the builder. Needs Chrome, Edge or Chromium. Returns the file's path.",
          "inputSchema": obj({"report": opt_report()}), "annotations": {"readOnlyHint": False, "destructiveHint": False}},
+        {"name": "save_pptx", "title": "Save the report as PowerPoint",
+         "description": "Save the report as a PowerPoint deck in its folder on this computer: a cover with the key message "
+                        "and KPI tiles, then a slide per chart in the report's order, its message as the slide title and its "
+                        "note beside it. Each chart is a live Zebra BI visual (editable with the Zebra BI add-in) with a "
+                        "picture for everyone else. Needs Chrome, Edge or Chromium. Returns the file's path.",
+         "inputSchema": obj({"report": opt_report()}), "annotations": {"readOnlyHint": False, "destructiveHint": False}},
         {"name": "library", "title": "Reports for the builder", "description": "App only: reports and Recently deleted.",
          "inputSchema": obj({}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "get_report", "title": "Report for the builder", "description": "App only: one report with chart results.",
@@ -225,6 +231,13 @@ def text(t, structured=None, error=False):
     if error:
         out["isError"] = True
     return out
+
+
+def deck_slides(path):
+    """How many slides the deck at path holds."""
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        return sum(1 for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
 
 
 def pdf_saved(out, pages, layout):
@@ -420,6 +433,25 @@ def call(name, args, thread):
         shown = "~" + out[len(home):] if out.startswith(home + os.sep) else out
         layout = R.load(R.path_for(slug)).get("layout")
         return text(pdf_saved(out, pages, layout), {"report": slug, "file": out, "shown": shown, "pages": pages})
+    if name == "save_pptx":
+        slug = target(args, thread)
+        found = R.flags(R.load(R.path_for(slug)))
+        if found:
+            return text("No PowerPoint was saved: these numbers are not in their charts: %s. Fix them, or the user keeps "
+                        "them in the builder." % "; ".join(found), {"report": slug, "flags": found}, error=True)
+        import office as O  # starts nothing until a deck is asked for
+        folder = os.path.dirname(R.path_for(slug))
+        out = os.path.join(folder, os.path.basename(folder) + ".pptx")
+        try:
+            O.build(folder, ["pptx"])
+        except SystemExit as e:
+            if e.code:
+                return text("No PowerPoint was saved: %s" % S.clean(e, 600), error=True)
+        slides = deck_slides(out)
+        home = os.path.expanduser("~")
+        shown = "~" + out[len(home):] if out.startswith(home + os.sep) else out
+        return text("Saved %s (%d slides). It holds the report's aggregated numbers, so share it only where the data may go."
+                    % (out, slides), {"report": slug, "file": out, "shown": shown, "slides": slides})
     # ----- app only -----
     if name == "library":
         return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last()})

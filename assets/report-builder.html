@@ -342,11 +342,13 @@
       return refreshLibrary().then(function () { toast('Duplicated', 'Open', function () { openReport(copy); }); });
     });
   }
-  function savePdf(s) {
-    toast('Saving the PDF…', null, null, 120000);  // until the result replaces it
+  function savePdf(s) { return saveFile(s, 'save_pdf', 'PDF'); }
+  function savePptx(s) { return saveFile(s, 'save_pptx', 'PowerPoint'); }
+  function saveFile(s, tool, what) {
+    toast('Saving the ' + what + '…', null, null, 120000);  // until the result replaces it
     busy = true;
-    return callTool('save_pdf', { report: s }).then(function (r) {
-      busy = false; toast('PDF saved: ' + (sc(r).shown || sc(r).file), null, null, 10000);
+    return callTool(tool, { report: s }).then(function (r) {
+      busy = false; toast(what + ' saved: ' + (sc(r).shown || sc(r).file), null, null, 10000);
     }, function (e) {
       busy = false;
       var flags = e.result && e.result.structuredContent && e.result.structuredContent.flags;
@@ -429,6 +431,7 @@
         { label: 'Rename', run: function () { renameInline(item, main, r); } },
         { label: 'Duplicate', run: function () { duplicateReport(r.report, null, false); } },
         { label: 'Save as PDF', run: function () { savePdf(r.report); } },
+        { label: 'Save as PowerPoint', run: function () { savePptx(r.report); } },
         { label: 'Delete', danger: true, sep: true, run: function () { deleteReport(r.report, r.title); } }
       ], null, e);
     };
@@ -830,6 +833,7 @@
     var items = [
       { label: 'Duplicate', run: function () { duplicateReport(slug, null, true); } },
       { label: 'Save as PDF', run: function () { savePdf(slug); } },
+      { label: 'Save as PowerPoint', run: function () { savePptx(slug); } },
       { label: 'All reports', run: function () { goHome(); } },
       { label: 'Delete', danger: true, sep: true, run: function () { deleteReport(slug, rep.title); } }
     ];

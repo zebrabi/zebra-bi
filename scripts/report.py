@@ -609,16 +609,11 @@ def even_rows(n, most=MAX_CELLS):
     return [base + 1] * extra + [base] * (count - extra)
 
 
-def arrange(rep, layout):
-    """Lay the same cells out as a named layout. A text cell keeps to the chart before it, in its own row right
-    after that chart's row; text before the first chart stays on top.
-    one-pager: largest variance first, rows of up to three filled evenly, notes hidden; the PDF prints it on one
-    landscape page. variance-walk: one chart per row in the order the charts were built (the order the analysis
-    reads), notes shown. board-pack: one chart per row, largest variance first, notes shown; the PDF puts the key
-    message and KPI tiles on a cover and each chart on its own page."""
-    if layout not in LAYOUTS:
-        raise ValueError("layout must be one of %s" % ", ".join(LAYOUTS))
-    lead, charts = [], []  # charts: [(chart cell, [text cells after it])]
+def reading(rep):
+    """(text cells before the first chart, [(chart cell, [the text cells that belong to it])]) in reading order,
+    row by row, left to right. A text cell belongs to the chart its `after` names (arrange sets it) while it sits
+    under that chart's row, else to the chart before it."""
+    lead, charts = [], []
     above = {}  # the charts of the last row that held one, so a text under a row of charts finds its own
     for row in rep["rows"]:
         if any(c["type"] == "chart" for c in row["cells"]):
@@ -628,11 +623,24 @@ def arrange(rep, layout):
                 charts.append((c, []))
                 above[c["id"]] = charts[-1]
             elif charts:
-                # `after` (set below) names the text's chart while the text still sits under that chart's row
                 (above.get(c.get("after")) or charts[-1])[1].append(c)
             else:
-                c.pop("after", None)
                 lead.append(c)
+    return lead, charts
+
+
+def arrange(rep, layout):
+    """Lay the same cells out as a named layout. A text cell keeps to the chart before it, in its own row right
+    after that chart's row; text before the first chart stays on top.
+    one-pager: largest variance first, rows of up to three filled evenly, notes hidden; the PDF prints it on one
+    landscape page. variance-walk: one chart per row in the order the charts were built (the order the analysis
+    reads), notes shown. board-pack: one chart per row, largest variance first, notes shown; the PDF puts the key
+    message and KPI tiles on a cover and each chart on its own page."""
+    if layout not in LAYOUTS:
+        raise ValueError("layout must be one of %s" % ", ".join(LAYOUTS))
+    lead, charts = reading(rep)
+    for t in lead:
+        t.pop("after", None)
     if layout == "variance-walk":
         charts.sort(key=lambda pair: int(pair[0]["id"][1:]))  # cell ids count up as cells are added
     else:
@@ -750,6 +758,24 @@ def to_story(rep):
         story["kpis"] = rep["kpis"]
     if rep.get("layout"):  # the PDF prints a one-pager on one landscape page and a board pack a chart per page
         story["layout"] = rep["layout"]
+    return story
+
+
+def to_deck(rep):
+    """The report as the deck's story (office.py): the cover as to_story makes it, then one section per chart in
+    reading order, with its message (else its chart's title) as the heading, its note while notes are shown, and
+    the text cells that belong to it. Text before the first chart is a section of its own under the report's
+    title. Raises ValueError while an exported number is untraced, as to_story does."""
+    story = to_story(rep)
+    del story["rows"]
+    notes = rep.get("show_notes", True)
+    lead, charts = reading(rep)
+    sections = [{"heading": rep["title"], "body": "\n\n".join(t["text"] for t in lead)}] if lead else []
+    for c, texts in charts:
+        sections.append({"heading": (c.get("message") or chart_title(rep, c["visual"])).replace("**", ""),
+                         "visual": c["visual"], "note": c.get("note", "") if notes else "",
+                         "texts": [t["text"] for t in texts]})
+    story["sections"] = sections
     return story
 
 
