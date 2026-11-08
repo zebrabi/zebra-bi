@@ -12,7 +12,9 @@ Zebra BI server.
 The model sees report titles, chart titles and the start of each text. Chart data reaches it only through
 read_chart, which returns the aggregated rows it sent itself; the builder's results with drawn charts are app-only
 (_meta.ui.visibility ["app"]). Those tools also need the builder's key, which the server puts in the builder page
-when the host reads it, so a host that shows them to the model anyway still cannot have it call them.
+when the host reads it. The key keeps out a model that can read neither that page nor the key file; a host that lets
+the model read MCP resources, or a model with a shell (Codex), can get it, so a call ChatGPT and Codex mark as the
+model's is refused with or without the key.
 
 In ChatGPT and Codex desktop the builder opens from the sidebar (entrypoint "global") or beside a chat
 ("thread"). The renderer is nested in the builder through iframe srcdoc: the desktop hosts block blob: frames.
@@ -328,7 +330,8 @@ def model_turn(meta):
 def from_builder(args):
     """Whether an app-only call carries the builder's key. Hosts keep those tools from the model, but not every host
     marks the model's calls, so the server asks for the key in the builder page as well (deleting for good, saving
-    the builder's layout and approving its flagged numbers)."""
+    the builder's layout and approving its flagged numbers). It holds only where the model cannot read the page
+    (an MCP resource) or the key file."""
     key = args.get("app_key") if isinstance(args, dict) else None
     if not isinstance(key, str) or app_page()[0] is None:  # no page, no key: nothing can come from the builder
         return False
