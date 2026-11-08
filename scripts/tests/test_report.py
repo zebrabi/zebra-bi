@@ -361,6 +361,44 @@ class Layouts(unittest.TestCase):
             R.arrange(one, "grid")
 
 
+class Deck(unittest.TestCase):
+    """A report as the deck's story: a cover, then one section per chart in reading order."""
+
+    def setUp(self):
+        self.rep = R.new("P&L close")
+        chart = lambda name: {"title": name, "chart_type": "bar", "columns": ["Item", "AC"], "rows": [["a", 1]]}
+        R.add_text(self.rep, "Read this first.")
+        R.add_chart(self.rep, chart("Left chart"), message="Left **message**", note="Left note")
+        R.add_chart(self.rep, chart("Right chart"), row=2, message="Right message", note="Right note")
+        R.add_text(self.rep, "About the right one.")
+        R.add_chart(self.rep, chart("Untold chart"))  # no message: its title heads the slide
+
+    def test_one_section_per_chart_in_reading_order(self):
+        deck = R.to_deck(self.rep)
+        self.assertEqual([s.get("visual") for s in deck["sections"]], [None, "left-chart", "right-chart", "untold-chart"])
+        self.assertEqual(deck["sections"][0], {"heading": "P&L close", "body": "Read this first."})
+        self.assertEqual(deck["sections"][1], {"heading": "Left message", "visual": "left-chart", "note": "Left note", "texts": []})
+        self.assertEqual(deck["sections"][2]["texts"], ["About the right one."])
+        self.assertEqual(deck["sections"][3]["heading"], "Untold chart")
+        self.assertEqual((deck["title"], deck.get("kpis")), ("P&L close", None))
+        self.assertNotIn("rows", deck)
+
+    def test_the_cover_carries_the_key_message_and_tiles(self):
+        R.set_key_message(self.rep, "Sales are **up**.")
+        R.set_kpis(self.rep, [{"value": "1", "label": "Sales"}])
+        deck = R.to_deck(self.rep)
+        self.assertEqual((deck["kicker"], deck["title"], deck["kpis"]), ("P&L close", "Sales are up.", [{"value": "1", "label": "Sales"}]))
+
+    def test_hidden_notes_never_leave_the_report(self):
+        self.rep["show_notes"] = False
+        self.assertEqual([s.get("note") for s in R.to_deck(self.rep)["sections"][1:]], ["", "", ""])
+
+    def test_a_flagged_number_stops_the_deck(self):
+        R.update_text(self.rep, "c2", "Left was 99.0.")
+        with self.assertRaises(ValueError):
+            R.to_deck(self.rep)
+
+
 class Files(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -537,7 +575,7 @@ class Server(unittest.TestCase):
         self.assertFalse(tools["delete_report"]["annotations"]["destructiveHint"])  # restorable
         self.assertTrue(tools["purge_report"]["annotations"]["destructiveHint"])
         for model in ("create_report", "list_reports", "rename_report", "duplicate_report", "delete_report", "restore_report",
-                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf", "read_chart", "show_notes",
+                      "add_chart", "add_text", "update_text", "remove_cell", "move_cell", "replace_chart", "save_pdf", "save_pptx", "read_chart", "show_notes",
                       "set_key_message", "set_kpis", "arrange_report"):
             self.assertNotEqual(tools[model].get("_meta", {}).get("ui", {}).get("visibility"), ["app"], model)
 
@@ -585,6 +623,13 @@ class Server(unittest.TestCase):
         got = self.report(slug)
         self.assertEqual((got["report"]["key_message"], got["report"]["rows"][0]["cells"][0]["message"]), ("Key", "Edited"))
         self.assertEqual(got["checks"], {})  # 99.0 is kept now
+
+    def test_save_pptx_refuses_while_numbers_are_flagged(self):
+        slug, _ = self.drafted()
+        out = self.tool("save_pptx")
+        self.assertTrue(out.get("isError"))
+        self.assertEqual(out["structuredContent"]["flags"], ["c1 note: 99.0"])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "reports", slug, slug + ".pptx")))
 
     def test_save_pdf_refuses_while_numbers_are_flagged(self):
         slug, _ = self.drafted()
