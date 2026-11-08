@@ -22,22 +22,33 @@ MULT = {"": 1.0, "k": 1e3, "K": 1e3, "M": 1e6, "m": 1e6, "mn": 1e6, "mln": 1e6, 
 TOKEN = re.compile(r"(?<![\d.,])([+\-−]?)(\d[\d.,]*\d|\d)(\s?%|bn|mln|mn|[kKMm])?([^\W\d_]*)")
 ENGLISH = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
 # The unit a chart's rows are in, from the start of its subtitle ("k, 2026 AC", "EUR millions, Q1 2026").
-UNITS = ((re.compile(r"\b(k|thousands?|TEUR|TUSD|kEUR|kUSD|tsd)\b", re.I), 1e3),
-         (re.compile(r"\b(M|mio|mn|mln|millions?|MEUR|MUSD)\b"), 1e6),
+UNITS = ((re.compile(r"\b(k|thousands?|TEUR|TUSD|kEUR|kUSD|tsd)\b|['’]000\b", re.I), 1e3),
+         (re.compile(r"\b(M|MEUR|MUSD|mEUR|mUSD)\b|\b(?i:millions?|mio|mn|mln)\b|[€$£]m\b"), 1e6),  # M, Mio., €m
          (re.compile(r"\b(bn|billions?)\b", re.I), 1e9))
+# Dates the charts use as labels: the parts after a year ("2026-07", "2026-01-31") and a day next to a month name.
+MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
+DATE_PART = re.compile(r"\d{4}-(?:\d{1,2}-)?$")
+DAY_BEFORE_MONTH = re.compile(r"\s" + MONTH + r"(?![A-Za-z])")
+DAY_AFTER_MONTH = re.compile(r"\b" + MONTH + r"\s$")
 
 
 def tokens(text):
     """(raw, Num or None) for every number-like run in text; None when it is not an English number with a known
-    unit. A whole number right after a letter, with no unit (Q4, H1, FY26, W45), is a label and is left out."""
+    unit. A whole number right after a letter, with no unit (Q4, H1, FY26, W45), is a label and is left out, and so
+    is a date's month or day (2026-07, 31 Oct)."""
     text = str(text or "")
     out = []
     for m in TOKEN.finditer(text):
         sign, digits, unit, tail = m.group(1), m.group(2), (m.group(3) or "").strip(), m.group(4)
         raw = m.group(0)
         after_letter = m.start() > 0 and text[m.start() - 1].isalpha()
-        if after_letter and not sign and not unit and not tail and "." not in digits and "," not in digits:
+        whole = not sign and not unit and not tail and "." not in digits and "," not in digits
+        if after_letter and whole:
             continue
+        before = text[:m.start()]
+        if whole and (DATE_PART.search(before) or (1 <= int(digits) <= 31 and (
+                DAY_BEFORE_MONTH.match(text, m.end()) or DAY_AFTER_MONTH.search(before)))):
+            continue  # a date: 2026-07, 31 Oct, Oct 31
         if tail or not ENGLISH.fullmatch(digits):
             out.append((raw, None))
             continue
