@@ -24,7 +24,12 @@ chose to keep although no chart holds them (numbercheck.py traces every other nu
 save; the builder sends the rev it last saw, and a save against an older rev is refused so two editors do not
 overwrite each other.
 """
-import datetime as dt, json, os, re, shutil, stat, time
+import contextlib, datetime as dt, json, os, re, shutil, stat, time
+
+try:
+    import fcntl
+except ImportError:  # Windows: no flock; a single writer is the norm there
+    fcntl = None
 
 import numbercheck as N
 import story as S
@@ -161,6 +166,31 @@ def load(path):
     validate(rep)
     rep.setdefault("rev", 0)
     return rep
+
+
+@contextlib.contextmanager
+def locked(path):
+    """Hold the report's lock (an flock on .lock in its folder) while it is read, changed and written. The chat and
+    the builder run separate servers; under the lock neither writes over a change the other made in between."""
+    if fcntl is None:
+        yield
+        return
+    fd = os.open(os.path.join(os.path.dirname(path), ".lock"), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def change(path, fn):
+    """Load the report, apply fn(rep), save it, all under its lock. Returns (report, what fn returned)."""
+    with locked(path):
+        rep = load(path)
+        out = fn(rep)
+        save(path, rep)
+    return rep, out
 
 
 def save(path, rep):
@@ -301,10 +331,7 @@ def create(title):
 
 
 def rename(slug, title):
-    path = path_for(slug)
-    rep = load(path)
-    rep["title"] = clean_title(title)
-    save(path, rep)
+    rep, _ = change(path_for(slug), lambda rep: rep.update(title=clean_title(title)))
     return rep["title"]
 
 
@@ -312,9 +339,10 @@ MAX_CACHED = 20 * 1024 * 1024  # bytes: a cached chart result larger than this i
 
 
 def read_regular(path, limit=MAX_CACHED):
-    """The bytes of path when it is a regular file of at most limit bytes, never through a symbolic link; else None."""
+    """The bytes of path when it is a regular file of at most limit bytes, never through a symbolic link; else None.
+    O_NONBLOCK keeps a pipe in its place from holding the open until a writer comes; fstat then refuses it."""
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     except OSError:
         return None
     with os.fdopen(fd, "rb") as f:
