@@ -63,6 +63,21 @@ class Scale(unittest.TestCase):
         self.assertEqual(N.untraced("Costs fell by 2,045 and -1,950.", [PNL]), ["2,045", "-1,950"])
         self.assertEqual(N.untraced("Since 2025.", [PNL]), [])
 
+    def test_every_common_spelling_of_the_unit_sets_the_scale(self):
+        millions = lambda sub: dict(MONTHS, subtitle=sub, rows=[["Sep", 39.2], ["Oct", 40.0]])
+        for sub in ("EUR Millions, 2026 AC", "Mio. EUR, 2026 AC", "mEUR, 2026 AC", "€m, 2026 AC", "In Millions, 2026 AC",
+                    "USD mln, 2026 AC"):
+            self.assertEqual(N.untraced("Sep reached 39.2k.", [millions(sub)]), ["39.2k"], sub)  # 1000 times off
+            self.assertEqual(N.untraced("Sep reached 39.2M.", [millions(sub)]), [], sub)
+        thousands = dict(MONTHS, subtitle="EUR '000, 2026 AC")
+        self.assertEqual(N.untraced("Sales reached 60.5k, not 60.5M.", [thousands]), ["60.5M"])
+
+    def test_dates_are_labels(self):
+        self.assertEqual(N.untraced("Sales peaked in 2026-10 at 71.5k, up from 2026-09.", [MONTHS]), [])
+        self.assertEqual(N.untraced("From 2026-01-31 to 2026-10-31.", [MONTHS]), [])
+        self.assertEqual(N.untraced("As of 31 Oct, sales were 71.5k; by Oct 31 too.", [MONTHS]), [])
+        self.assertEqual(N.untraced("Sales fell -31 and 2026 rose.", [MONTHS]), ["-31"])  # a sign without a date is a number
+
     def test_contribution_counts_the_unit(self):
         thousands = dict(MONTHS, columns=["Month", "AC", "PL"], measure={"Val": "AC", "PL": "PL"},
                          rows=[["Sep", 60.5, 50.0]])
