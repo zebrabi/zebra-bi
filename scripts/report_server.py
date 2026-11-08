@@ -288,11 +288,8 @@ def unchecked(rep, where):
 
 
 def edit(slug, change):
-    """Load, change, save one report. change(rep) returns the message; the rev guards the builder's own saves."""
-    path = R.path_for(slug)
-    rep = R.load(path)
-    msg = change(rep)
-    R.save(path, rep)
+    """Load, change, save one report under its lock. change(rep) returns the message."""
+    rep, msg = R.change(R.path_for(slug), change)
     return text("%s (report %r)." % (msg, rep["title"]), {"report": slug, "rev": rep["rev"]})
 
 
@@ -358,13 +355,19 @@ def call(name, args, thread):
         return opened(R.restore(R.deleted_entry(args.get("report"))), thread, "Restored from Recently deleted.")
     if name == "add_chart":
         slug = target(args, thread)
-        rep = R.load(R.path_for(slug))
-        vid, row = R.add_chart(rep, args.get("chart"), args.get("row"), args.get("note"), args.get("message"),
-                               args.get("why"), args.get("recipe") if isinstance(args.get("recipe"), dict) else None)
-        res, err = draw(slug, vid, rep["visuals"][vid]["args"])
+        recipe = args.get("recipe") if isinstance(args.get("recipe"), dict) else None
+        add = lambda rep: R.add_chart(rep, args.get("chart"), args.get("row"), args.get("note"), args.get("message"),
+                                      args.get("why"), recipe)
+        # Draw on a copy first: drawing takes seconds, and the report is only loaded and saved under its lock after,
+        # so a save the builder makes meanwhile is kept.
+        probe = R.load(R.path_for(slug))
+        vid, _ = add(probe)
+        res, err = draw(slug, vid, probe["visuals"][vid]["args"])
         if err:
             return err
-        R.save(R.path_for(slug), rep)
+        rep, (vid, row) = R.change(R.path_for(slug), add)
+        if vid not in probe["visuals"]:  # the id moved on meanwhile; the builder draws it from the same arguments
+            res = draw(slug, vid, rep["visuals"][vid]["args"])[0] or res
         cid = next(c["id"] for r in rep["rows"] for c in r["cells"] if c.get("visual") == vid)
         return text("Added chart %r to row %d of %r. Zebra BI: %s%s" % (R.chart_title(rep, vid), row, rep["title"],
                     R.server_note(res), unchecked(rep, cid)), {"report": slug, "rev": rep["rev"]})
@@ -389,12 +392,13 @@ def call(name, args, thread):
                     or "Moved %s; now:\n%s" % (args.get("cell"), R.summary(rep)))
     if name == "replace_chart":
         slug = target(args, thread)
-        rep = R.load(R.path_for(slug))
-        vid = R.replace_chart(rep, args.get("cell"), args.get("chart"))
-        res, err = draw(slug, vid, rep["visuals"][vid]["args"])
+        swap = lambda rep: R.replace_chart(rep, args.get("cell"), args.get("chart"))
+        probe = R.load(R.path_for(slug))  # drawn first, saved under the lock after, as add_chart
+        vid = swap(probe)
+        res, err = draw(slug, vid, probe["visuals"][vid]["args"])
         if err:
             return err
-        R.save(R.path_for(slug), rep)
+        rep, vid = R.change(R.path_for(slug), swap)
         return text("Replaced chart %s with %r in %r. Zebra BI: %s" % (args.get("cell"), R.chart_title(rep, vid), rep["title"],
                     R.server_note(res)), {"report": slug, "rev": rep["rev"]})
     if name == "show_notes":
@@ -480,13 +484,15 @@ def call(name, args, thread):
         if not R.exists(slug):
             return text("this report was deleted", {"gone": True}, error=True)
         path = R.path_for(slug)
-        rep = R.load(path)
-        try:
-            new = R.apply_layout(rep, args.get("title"), args.get("rows"), args.get("rev"), args.get("show_notes"),
-                                 args.get("key_message"), args.get("kpis"), args.get("kept"))
-        except R.Conflict as e:
-            return text(str(e), {"conflict": True, "rev": rep["rev"]}, error=True)
-        return text("saved", {"rev": R.save(path, new), "checks": R.checks(new)})
+        with R.locked(path):  # the rev check and the write as one step, so a change in between is never lost
+            rep = R.load(path)
+            try:
+                new = R.apply_layout(rep, args.get("title"), args.get("rows"), args.get("rev"), args.get("show_notes"),
+                                     args.get("key_message"), args.get("kpis"), args.get("kept"))
+            except R.Conflict as e:
+                return text(str(e), {"conflict": True, "rev": rep["rev"]}, error=True)
+            rev = R.save(path, new)
+        return text("saved", {"rev": rev, "checks": R.checks(new)})
     if name == "purge_report":
         R.purge(args.get("entry"))
         return text("deleted for good", {"purged": args.get("entry")})

@@ -3,7 +3,7 @@
 Nothing goes over the network: charts come from visuals/<id>.json written by the test, and the server runs with
 ZEBRA_BI_MCP_URL on a closed loopback port, so an uncached chart fails fast instead of drawing.
 """
-import datetime as dt, hashlib, json, os, shutil, subprocess, sys, tempfile, unittest
+import datetime as dt, hashlib, json, os, shutil, subprocess, sys, tempfile, time, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -399,6 +399,57 @@ class Deck(unittest.TestCase):
             R.to_deck(self.rep)
 
 
+class Concurrency(unittest.TestCase):
+    """The chat's server and the builder's are separate processes: neither may write over the other's change."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        os.environ["ZEBRA_BI_REPORTS"] = self.tmp
+
+    def tearDown(self):
+        os.environ.pop("ZEBRA_BI_REPORTS", None)
+        shutil.rmtree(self.tmp)
+
+    def test_a_chart_drawn_while_the_builder_saves_keeps_both_changes(self):
+        import report_server as RS
+        slug = R.create("Race")
+        path = R.path_for(slug)
+
+        def meanwhile(s, vid, args):  # the builder saves the user's text while Zebra BI draws the chart
+            R.change(path, lambda rep: R.add_text(rep, "Typed meanwhile."))
+            return {"content": [], "structuredContent": {"visual": {"title": "x"}}}, None
+        real, RS.draw = RS.draw, meanwhile
+        try:
+            out = RS.call("add_chart", {"report": slug, "chart": ARGS, "message": "m"}, None)
+        finally:
+            RS.draw = real
+        self.assertFalse(out.get("isError"), out)
+        rep = R.load(path)
+        self.assertEqual([c["type"] for r in rep["rows"] for c in r["cells"]], ["text", "chart"])
+        self.assertEqual(rep["rev"], 3)  # created, the builder's save, the chart
+
+    def test_a_save_waits_for_another_writers_lock(self):
+        import threading
+        slug = R.create("Lock")
+        path = R.path_for(slug)
+        held = threading.Event()
+
+        def other():
+            with R.locked(path):
+                held.set()
+                time.sleep(0.4)
+                rep = R.load(path)
+                R.add_text(rep, "first")
+                R.save(path, rep)
+        t = threading.Thread(target=other)
+        t.start()
+        held.wait(2)
+        R.change(path, lambda rep: R.add_text(rep, "second"))
+        t.join()
+        rep = R.load(path)
+        self.assertEqual([c["text"] for r in rep["rows"] for c in r["cells"]], ["first", "second"])
+
+
 class SharedFolders(unittest.TestCase):
     """A report folder someone shared may carry symbolic links: deleting and duplicating never follow them."""
 
@@ -439,6 +490,17 @@ class SharedFolders(unittest.TestCase):
             f.write("not a chart")
         copy = R.duplicate(slug, "Q4 review")
         self.assertEqual(sorted(os.listdir(os.path.join(R.root(), copy, "visuals"))), [vid + ".json"])
+
+    def test_a_pipe_where_a_chart_should_be_does_not_hang_duplicating(self):
+        slug = R.create("Q3 review")
+        path = R.path_for(slug)
+        rep = R.load(path)
+        vid, _ = R.add_chart(rep, ARGS)
+        R.save(path, rep)
+        os.makedirs(os.path.join(R.root(), slug, "visuals"))
+        os.mkfifo(os.path.join(R.root(), slug, "visuals", vid + ".json"))  # opening it to read would wait for a writer
+        copy = R.duplicate(slug, "Q4 review")
+        self.assertFalse(os.path.exists(os.path.join(R.root(), copy, "visuals", vid + ".json")))
 
 
 class Files(unittest.TestCase):
