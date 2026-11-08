@@ -196,7 +196,7 @@ def build(story_dir, brand_dir=None):
     info = {"file": out, "bytes": len(pdf), "pages": n, "brand": brand.get("name"), "visuals": len(results),
             "renderer_sha256": meta["sha256"][:12]}
     if shape == "one-pager":
-        info.update(one_page=n == 1, scale=round(scale or 1.0, 2))
+        info.update(one_page=n == 1, scale=round(scale, 2) if scale else None)  # None: not scaled, it runs on
         if n > 1:
             print("The one-pager did not fit one page at a readable size, so it runs on to %d pages." % n, file=sys.stderr)
     print(json.dumps(info, indent=2))

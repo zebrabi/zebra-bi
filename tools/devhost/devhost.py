@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """Dev host: serves a page that mounts the report builder like an MCP host, relaying JSON-RPC to report_server.py.
 
-  python3 devhost.py <report_server.py> <port>
-"""
-import http.server, json, subprocess, sys, threading
+  ZEBRA_BI_REPORTS=<a scratch copy> python3 devhost.py <report_server.py> <port>
 
+It refuses to start without ZEBRA_BI_REPORTS, so it never edits the real reports folder, and its /rpc answers
+only its own page (any other Origin is refused), so another site open in the browser cannot drive it.
+"""
+import http.server, json, os, subprocess, sys, threading
+
+if not os.environ.get("ZEBRA_BI_REPORTS"):
+    sys.exit("Set ZEBRA_BI_REPORTS to a scratch copy of the reports; the dev host never runs on the real folder.")
 SERVER, PORT = sys.argv[1], int(sys.argv[2])
+ORIGINS = ("http://127.0.0.1:%d" % PORT, "http://localhost:%d" % PORT)
 proc = subprocess.Popen([sys.executable, "-I", SERVER], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 lock = threading.Lock()
 n = [0]
@@ -47,6 +53,10 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(PAGE.encode())
 
     def do_POST(self):
+        if self.headers.get("Origin") not in ORIGINS:
+            self.send_response(403)
+            self.end_headers()
+            return
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         out = json.dumps(rpc(body["method"], body.get("params") or {})).encode()
         self.send_response(200)

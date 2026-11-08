@@ -57,7 +57,7 @@ The builder checks every number in a message, note, text cell, key message and K
 - a row's share of the total, or of the total variance;
 - with `time_axis`, the move between two periods, absolute or as a percent of the earlier one.
 
-Write signs in words ("39.2k under plan") or with + and −, thousands as k and millions as M, with English separators (1,026,887.77). Years and labels (Q4, FY26) are not checked. Anything else, such as a count, a ratio of two measures or a figure from the file that no chart shows, is flagged.
+Write signs in words ("39.2k under plan") or with + and −, thousands as k and millions as M, with English separators (1,026,887.77). Years, labels (Q4, FY26) and dates as the charts write them (2026-07, 31 Oct) are not checked. Anything else, such as a count, a ratio of two measures or a figure from the file that no chart shows, is flagged.
 
 When a tool answers `Unchecked numbers: …`, fix the text, or the chart's rows if they are wrong; never ask the user to keep a number. Keeping one is the user's choice in the builder (Keep as mine), and `save_pdf` and `save_pptx` refuse while any number is flagged.
 

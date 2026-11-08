@@ -150,6 +150,11 @@ class Page(Base):
         self.assertIn("@page{size:A4 landscape;margin:16mm 15mm}", page)
         self.assertIn('<section class="row cols-2">', page)  # no page breaks
 
+    def test_a_layout_without_rows_prints_as_before(self):
+        story = json.loads(json.dumps(STORY))
+        story["layout"] = "one-pager"
+        self.assertIsNone(S.layout(story))
+
     def test_no_layout_or_an_unknown_one_prints_as_before(self):
         for layout in (None, "variance-walk", "grid\" onload=\"x"):
             page = self.page(layout)
@@ -274,7 +279,7 @@ class Build(Base):
         self.renderer(750)
         self.write_story("one-pager", [{"cells": [{"visual": v}]} for v in ("v1", "v2", "v3")])
         info = self.build()
-        self.assertEqual((info["one_page"], info["scale"]), (False, 1.0))
+        self.assertEqual((info["one_page"], info["scale"]), (False, None))  # not scaled: it runs on
         self.assertGreater(info["pages"], 1)
 
     def test_chart_that_never_draws_writes_no_pdf(self):
