@@ -566,7 +566,7 @@
       var f = el('div', 'flag');
       f.appendChild(el('span', null, raw + (box._any ? ' is not in any chart' : ' is not in this chart')));
       var keep = el('button', null, 'Keep as mine'); keep.title = 'Keep this number although no chart holds it';
-      keep.onclick = function () { owner.kept = (owner.kept || []).concat([raw]); f.remove(); saveNow(); };
+      keep.onclick = function () { owner.kept = (owner.kept || []).concat([raw]); noteEdit(owner, 'kept'); f.remove(); saveNow(); };
       f.appendChild(keep); box.appendChild(f);
     });
   }
@@ -649,7 +649,7 @@
     shown();
     t.addEventListener('focus', function () { t.textContent = cell[key] || ''; });
     t.addEventListener('blur', shown);
-    t.addEventListener('input', function () { cell[key] = t.innerText.replace(/\n$/, ''); scheduleSave(); });
+    t.addEventListener('input', function () { cell[key] = t.innerText.replace(/\n$/, ''); noteEdit(cell, key); scheduleSave(); });
     return t;
   }
 
@@ -728,18 +728,50 @@
         if (at >= 0) { cells.splice(where.after ? at + 1 : at, 0, cell); break; }
       }
     }
-    dragId = null;
+    dragId = null; moved = true;
     renderEditor(); saveNow();
   }
-  function removeCell(id) { takeCell(id); prune(); renderEditor(); saveNow(); }
+  function removeCell(id) { takeCell(id); prune(); moved = true; renderEditor(); saveNow(); }
   function addText() {
     var used = [0]; rep.rows.forEach(function (r) { r.cells.forEach(function (c) { used.push(+c.id.slice(1)); }); });
     var id = 'c' + (Math.max.apply(null, used) + 1);
     rep.rows.push({ cells: [{ id: id, type: 'text', text: '' }] });
-    renderEditor(); saveNow();
+    moved = true; renderEditor(); saveNow();
     setTimeout(function () { var t = document.querySelector('[data-cell="' + id + '"] .text'); if (t) t.focus(); }, 50);
   }
   function scheduleSave() { dirty = true; status('Editing…'); clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 700); }
+
+  // What the user changed since the last save. The chat can save in between, and the builder's save is then refused
+  // as a conflict; these edits are put back onto the report as it now is and saved again, so nothing typed is lost.
+  // A move, a removal or a new row cannot be replayed safely and is reported instead.
+  var edits = {}, moved = false;
+  function noteEdit(obj, key) {
+    if (obj === rep) edits['rep:' + key] = true;
+    else if (obj && obj.id && obj.type) edits['cell:' + obj.id + ':' + key] = true;
+    else edits['rep:kpis'] = true;  // a KPI tile
+  }
+  function keepEdits(pending, wasMoved) {
+    var mine = rep, title = $('title').textContent;
+    return callTool('get_report', { report: slug, follow: 'none' }).then(function (r) {
+      var d = sc(r);
+      if (d.gone) { reportGone(); return; }
+      var fresh = d.report, now = {}, before = {}, lost = 0;
+      fresh.rows.forEach(function (row) { row.cells.forEach(function (c) { now[c.id] = c; }); });
+      mine.rows.forEach(function (row) { row.cells.forEach(function (c) { before[c.id] = c; }); });
+      Object.keys(pending).forEach(function (k) {
+        var p = k.split(':');
+        if (p[0] === 'rep') { if (p[1] === 'title') fresh.title = title; else fresh[p[1]] = mine[p[1]]; return; }
+        var into = now[p[1]], from = before[p[1]];
+        if (into && from && into.type === from.type) into[p[2]] = from[p[2]]; else lost += 1;
+      });
+      rep = fresh; results = d.results || {}; errors = d.errors || {}; checks = d.checks || {};
+      renderEditor();
+      if (Object.keys(pending).length) saveNow();
+      toast(wasMoved ? 'The report changed in the chat while you were arranging it. Your text is kept; the move is not.'
+            : lost ? 'The report changed in the chat meanwhile. One of your edits was on a cell that is gone.'
+            : 'The report changed in the chat meanwhile. Your edits are kept.', null, null, 8000);
+    }, fail);
+  }
   // A pending edit saved now, before anything that reloads the report (a layout switch), so it is not lost.
   function flushSave() {
     if (!dirty && !saving) return Promise.resolve();
@@ -749,6 +781,8 @@
     clearTimeout(saveTimer); dirty = true;
     if (saving) return new Promise(function (resolve) { saveTimer = setTimeout(function () { resolve(saveNow()); }, 300); });
     saving = true; status('Saving…');
+    var sent = edits, sentMoved = moved;  // edits made while this save is on its way stay in `edits`
+    edits = {}; moved = false;
     var rows = rep.rows.map(function (r) { return { cells: r.cells.map(function (c) {
       var out = c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual, note: c.note || '', message: c.message || '' }
                                    : { id: c.id, type: 'text', text: c.text };
@@ -763,15 +797,20 @@
       saving = false; dirty = false;
       var s = e.result && e.result.structuredContent;
       if (s && s.gone) { reportGone(); return; }
-      status(s && s.conflict ? 'Changed elsewhere, reloaded' : 'Not saved');
-      if (s && s.conflict) poll(true);
-      else toast('Not saved: ' + (e && e.message ? e.message : 'the report file refused the change'), null, null, 10000);
+      if (s && s.conflict) {
+        var pending = Object.assign(sent, edits), wasMoved = sentMoved || moved;
+        edits = {}; moved = false; status('');
+        return keepEdits(pending, wasMoved);
+      }
+      Object.assign(edits, sent); moved = moved || sentMoved;  // kept for the next save
+      status('Not saved');
+      toast('Not saved: ' + (e && e.message ? e.message : 'the report file refused the change'), null, null, 10000);
     });
   }
 
   // ---------- loading and following ----------
   function loadReport(s, force) {
-    slug = s; dirty = false;
+    slug = s; dirty = false; edits = {}; moved = false;
     return callTool('get_report', { report: s, follow: 'none' }).then(function (r) {
       var d = sc(r);
       if (d.gone) { reportGone(); return; }
@@ -794,7 +833,7 @@
     }, function () { status('Not connected'); });
   }
 
-  $('title').addEventListener('input', scheduleSave);
+  $('title').addEventListener('input', function () { edits['rep:title'] = true; scheduleSave(); });
   $('title').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('title').blur(); } });
   $('back').onclick = function () { goHome(); };
   $('add-text').onclick = addText;
@@ -803,7 +842,7 @@
       return act(callTool('arrange_report', { report: slug, layout: layout }), function () { return loadReport(slug); });
     });
   }
-  function toggleNotes() { rep.show_notes = rep.show_notes === false; renderEditor(); scheduleSave(); }
+  function toggleNotes() { rep.show_notes = rep.show_notes === false; noteEdit(rep, 'show_notes'); renderEditor(); scheduleSave(); }
   document.querySelectorAll('#layouts button').forEach(function (b) {
     b.onclick = function () { if (b.getAttribute('aria-checked') !== 'true') setLayout(b.dataset.layout); };
   });

@@ -99,6 +99,11 @@ ab("screenshot", os.path.join(OUT, "flows-draft.png"))
 step("fastlayout", "const m=$('.chart-msg'); m.focus(); m.textContent='Typed just now'; m.dispatchEvent(new w.Event('input',{bubbles:true}));"
      "all('#layouts button').find(b=>b.dataset.layout==='board-pack').click(); await sleep(4000); $('#reload').click(); await sleep(3000);"
      "return 'message after layout: ' + all('.chart-msg').map(x=>x.textContent).find(t=>t.indexOf('Typed')>=0)")
+step("conflict", "const m=all('.chart-msg')[0]; m.focus(); m.textContent='Mine, typed while the chat edits'; m.dispatchEvent(new w.Event('input',{bubbles:true}));"
+     "await fetch('/rpc',{method:'POST',body:JSON.stringify({method:'tools/call',params:{name:'add_text',arguments:{report:'draft-test',text:'Added from the chat meanwhile.'}}})});"
+     "m.blur(); await sleep(5000);"
+     "return 'mine kept: '+all('.chart-msg').some(x=>x.textContent.indexOf('Mine, typed')>=0)+' / chat text: '+all('.text').some(x=>x.textContent.indexOf('Added from the chat')>=0)"
+     "+' / toast: '+(($('.toast')||{}).textContent||'')")
 step("boardpack", "return 'pages: '+all('.page-mark').map(x=>x.textContent).join(',')+' / notes: '+$('#notes-toggle').textContent"
      "+' / '+$('#layout-hint').textContent.slice(0,40)")
 step("onepager", "all('#layouts button').find(b=>b.dataset.layout==='one-pager').click(); await sleep(3500);"
