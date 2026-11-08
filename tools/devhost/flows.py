@@ -88,7 +88,7 @@ step("pdfflag", "$('#report-menu').click(); await sleep(200); all('#menu button'
      "await sleep(2500); return ($('.toast')||{}).textContent")
 step("layout", "const before=all('#rows .row').length; all('#layouts button').find(b=>b.dataset.layout==='variance-walk').click();"
      "await sleep(3500); return before+' -> '+all('#rows .row').length+' rows, pressed: '+"
-     "all('#layouts button').filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.textContent).join(',')")
+     "all('#layouts button').filter(b=>b.getAttribute('aria-checked')==='true').map(b=>b.textContent).join(',')")
 ab("screenshot", os.path.join(OUT, "flows-draft.png"))
 step("fastlayout", "const m=$('.chart-msg'); m.focus(); m.textContent='Typed just now'; m.dispatchEvent(new w.Event('input',{bubbles:true}));"
      "all('#layouts button').find(b=>b.dataset.layout==='board-pack').click(); await sleep(4000); $('#reload').click(); await sleep(3000);"
@@ -99,5 +99,15 @@ step("onepager", "all('#layouts button').find(b=>b.dataset.layout==='one-pager')
      "return 'charts a row: '+all('#rows .row').map(r=>r.querySelectorAll('.chart').length).filter(n=>n).join(',')"
      "+' / notes: '+$('#notes-toggle').textContent+' / page marks: '+all('.page-mark').length")
 ab("screenshot", os.path.join(OUT, "flows-one-pager.png"))
+ab("set", "viewport", "600", "900")
+ab("wait", "1500")
+step("narrow600", "const b=$('#bar'); return b.className+' / one line: '+(b.getBoundingClientRect().height<=60)"
+     "+' / layouts as a menu: '+(getComputedStyle($('#layout-pick')).display!=='none')")
+ab("set", "viewport", "420", "900")
+ab("wait", "1500")
+step("narrow420", "$('#report-menu').click(); await sleep(300); const t=all('#menu button').map(b=>b.textContent).slice(0,3).join(',');"
+     "d.body.click(); return $('#bar').className+' / one line: '+($('#bar').getBoundingClientRect().height<=60)+' / menu starts: '+t")
+ab("set", "viewport", "1300", "900")
+ab("wait", "1500")
 step("badsave", "const l=$('#kpis .l'); l.focus(); l.textContent='x'.repeat(130); l.dispatchEvent(new w.Event('input',{bubbles:true}));"
      "await sleep(2500); return 'toast: ' + ($('.toast')||{}).textContent")
