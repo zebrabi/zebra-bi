@@ -16,15 +16,18 @@ import story as S  # noqa: E402
 from zoffice import snapshot as SN  # noqa: E402
 
 FAKE_RENDERER = """<!doctype html><html><body style="margin:0"><div id="c"></div><script>
-var H = %s;
+var H = %s, W = 0;
 function send(m) { parent.postMessage(m, '*'); }
 window.addEventListener('message', function (e) {
   var m = e.data; if (!m) return;
-  if (m.id === 1 && m.result) send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  if (m.id === 1 && m.result) {
+    W = m.result.hostContext.viewport.width;  // printed after the title: the width the chart was drawn at
+    send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  }
   else if (m.method === 'ui/notifications/tool-result' && H) {
     var t = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     t.setAttribute('width', '600'); t.setAttribute('height', String(H));
-    t.innerHTML = '<text x="10" y="40">' + m.params.structuredContent.visual.title + '</text>'
+    t.innerHTML = '<text x="10" y="40">' + m.params.structuredContent.visual.title + ' w' + W + '</text>'
       + '<rect x="0" y="' + (H - 4) + '" width="600" height="2"/>';  // the drawing reaches the bottom, so trimming keeps it
     document.getElementById('c').appendChild(t);
     send({ jsonrpc: '2.0', method: 'ui/notifications/size-changed', params: { height: H } });
@@ -252,6 +255,20 @@ class Build(Base):
         with open(self.pdf_path(), "rb") as f:
             box = re.search(rb"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)", f.read())
         self.assertGreater(float(box.group(1)), float(box.group(2)))  # landscape: wider than tall
+
+    @unittest.skipUnless(shutil.which("pdftotext"), "needs pdftotext")
+    def test_a_scaled_one_pager_draws_its_charts_wider(self):
+        # Charts keep their height when drawn wider, so a one-pager that has to shrink is laid out as wide as the
+        # page allows at that scale: its charts get room for their labels and nothing prints smaller.
+        import subprocess
+        self.renderer(300)
+        self.write_story("one-pager")
+        info = self.build()
+        self.assertEqual(info["pages"], 1)
+        text = subprocess.run(["pdftotext", "-layout", self.pdf_path(), "-"], capture_output=True, text=True).stdout
+        widths = {c: int(w) for c, w in re.findall(r"Chart (\d) w(\d+)", text)}
+        self.assertEqual(sorted(widths), ["1", "2", "3"])
+        self.assertGreater(widths["2"], (P.LANDSCAPE_WIDTH - 40) // 3 + 100, widths)  # three a row, well past a third of the page
 
     def test_a_one_pager_too_long_to_read_on_one_page_prints_on_more(self):
         self.renderer(750)

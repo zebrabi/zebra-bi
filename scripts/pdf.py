@@ -10,8 +10,9 @@ at the width it is printed at. Once every chart has drawn and held its size, the
 <slug>.pdf in the story folder. <story-dir> may also be a report builder folder (report.zbreport): its
 rows put up to three charts or texts side by side, each chart drawn at its cell's width. Its layout sets the
 pages: a one-pager is laid out at the A4 landscape width and scaled down to one page, unless that would print
-it below MIN_SCALE, when it runs on to more pages; a board pack puts each chart row on its own page after a
-cover. Chart labels and values stay text in the PDF. The page follows the
+it below MIN_SCALE, when it runs on to more pages. A one-pager that has to shrink is laid out wider first, as wide
+as fills the page at that scale, so its charts get room for their axis labels. A board pack puts each chart row
+on its own page after a cover. Chart labels and values stay text in the PDF. The page follows the
 brand (brand.py: .zebra/brand/, else the editorial default); the charts never change.
 
 Without a browser, or when a chart does not draw, build stops with one line and writes no PDF.
@@ -95,20 +96,51 @@ def trim_row_charts(ch):
     ch.evaluate("window.scrollTo(0,0)")
 
 
+def draw(ch):
+    """Wait until every chart has drawn, then trim the row charts; stops the build when one does not draw."""
+    failed = wait_charts(ch)
+    if failed:
+        sys.exit("Chart %s did not draw in the browser, so no PDF was written. Build again; if it repeats, "
+                 "the Zebra BI renderer may have changed." % failed)
+    trim_row_charts(ch)
+
+
+def main_height(ch):
+    return ch.evaluate("document.querySelector('main').getBoundingClientRect().height") or 0
+
+
+def lay_out_at(ch, width):
+    """Lay the page out `width` px wide and draw every chart again at its new width (the page redraws a chart
+    whose width changed 300 ms after a resize)."""
+    ch.evaluate("document.querySelector('main').style.width='%dpx'" % width)
+    ch.call("Emulation.setDeviceMetricsOverride", width=width, height=1000, deviceScaleFactor=1, mobile=False)
+    ch.evaluate("window.dispatchEvent(new Event('resize'))")
+    time.sleep(0.6)
+    draw(ch)
+
+
 def fit_one_page(ch):
     """Scale the page down so it prints on one landscape page: the scale used, or None when that would take it
-    below MIN_SCALE (the page is then left as it is and runs on to more pages). The scale is a transform, so the
-    charts keep the width they were drawn at."""
-    height = ch.evaluate("document.querySelector('main').getBoundingClientRect().height") or 0
+    below MIN_SCALE (the page is then left as it is and runs on to more pages). A chart keeps its height when it
+    is drawn wider, so before scaling the page is laid out as wide as fills the page at that scale: the charts
+    get room for their axis labels and nothing prints smaller. The scale is a transform, so each chart keeps the
+    width it was drawn at."""
+    height = main_height(ch)
     if height <= LANDSCAPE_HEIGHT:
         return 1.0
-    scale = LANDSCAPE_HEIGHT / height
-    if scale < MIN_SCALE:
+    if LANDSCAPE_HEIGHT / height < MIN_SCALE:
         return None
-    ch.evaluate("(function(m,s,h){m.style.transformOrigin='top center';m.style.transform='scale('+s+')';"
+    width = int(LANDSCAPE_WIDTH * height / LANDSCAPE_HEIGHT)
+    lay_out_at(ch, width)
+    scale = min(LANDSCAPE_WIDTH / width, LANDSCAPE_HEIGHT / main_height(ch))
+    if scale < MIN_SCALE:  # it grew when drawn wider: back to the page width, on more pages
+        lay_out_at(ch, LANDSCAPE_WIDTH)
+        return None
+    ch.evaluate("(function(m,s,x,h){m.style.margin='0';m.style.transformOrigin='top left';"
+                "m.style.transform='translateX('+x+'px) scale('+s+')';"
                 "document.documentElement.style.overflow='hidden';"  # else body's overflow goes to the viewport and clips nothing
                 "document.body.style.height=h+'px';document.body.style.overflow='hidden'})"
-                "(document.querySelector('main'),%.4f,%d)" % (scale, LANDSCAPE_HEIGHT))
+                "(document.querySelector('main'),%.4f,%.1f,%d)" % (scale, (LANDSCAPE_WIDTH - width * scale) / 2, LANDSCAPE_HEIGHT))
     return scale
 
 
@@ -131,11 +163,7 @@ def print_page(page_html, binary, brand, layout=None):
             width = LANDSCAPE_WIDTH if layout == "one-pager" else WIDTH
             ch.call("Emulation.setDeviceMetricsOverride", width=width, height=1000, deviceScaleFactor=1, mobile=False)
             ch.call("Page.navigate", url="file://" + path)
-            failed = wait_charts(ch)
-            if failed:
-                sys.exit("Chart %s did not draw in the browser, so no PDF was written. Build again; if it repeats, "
-                         "the Zebra BI renderer may have changed." % failed)
-            trim_row_charts(ch)
+            draw(ch)
             scale = fit_one_page(ch) if layout == "one-pager" else None
             res = ch.call("Page.printToPDF", preferCSSPageSize=True, printBackground=True, displayHeaderFooter=True,
                           headerTemplate="<span></span>", footerTemplate=footer_template(brand))
