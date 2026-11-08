@@ -84,6 +84,8 @@ def validate(rep):
     """Raise ValueError when rep is not a report this code can show and save."""
     if not isinstance(rep, dict) or rep.get("format") != FORMAT:
         raise ValueError("not a Zebra BI report (format must be %r)" % FORMAT)
+    if not _text_ok(rep.get("title"), MAX_TITLE):
+        raise ValueError("title must be a string of at most %d characters" % MAX_TITLE)
     if not isinstance(rep.get("show_notes", True), bool):
         raise ValueError("show_notes must be true or false")
     if not _text_ok(rep.get("key_message", ""), MAX_KEY):
@@ -160,10 +162,26 @@ def _set_text(obj, key, text, limit, what):
         obj[key] = text
 
 
+MAX_FILE = 5 * 1024 * 1024  # bytes: a report file larger than this is refused unread
+
+
 def load(path):
-    with open(path, encoding="utf-8") as f:
-        rep = json.load(f)
-    validate(rep)
+    """The report at path, validated. Anything that is not a valid report (too large, not a regular file, nested
+    too deep, the wrong shape) raises ValueError, so one broken file never takes a list of reports down with it."""
+    data = read_regular(path, MAX_FILE + 1)
+    if data is None:
+        if not os.path.lexists(path):
+            raise FileNotFoundError(path)
+        raise ValueError("%s is not a regular report file" % os.path.basename(path))
+    if len(data) > MAX_FILE:
+        raise ValueError("%s is larger than %d MB" % (os.path.basename(path), MAX_FILE // (1024 * 1024)))
+    try:
+        rep = json.loads(data.decode("utf-8"))
+        if not isinstance(rep, dict):
+            raise ValueError("a report is a JSON object")
+        validate(rep)
+    except (RecursionError, KeyError, TypeError, AttributeError, UnicodeDecodeError) as e:
+        raise ValueError("not a valid report: %s" % type(e).__name__)
     rep.setdefault("rev", 0)
     return rep
 
