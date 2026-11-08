@@ -24,7 +24,7 @@ chose to keep although no chart holds them (numbercheck.py traces every other nu
 save; the builder sends the rev it last saw, and a save against an older rev is refused so two editors do not
 overwrite each other.
 """
-import datetime as dt, json, os, re, shutil, time
+import datetime as dt, json, os, re, shutil, stat, time
 
 import numbercheck as N
 import story as S
@@ -308,15 +308,37 @@ def rename(slug, title):
     return rep["title"]
 
 
+MAX_CACHED = 20 * 1024 * 1024  # bytes: a cached chart result larger than this is not copied
+
+
+def read_regular(path, limit=MAX_CACHED):
+    """The bytes of path when it is a regular file of at most limit bytes, never through a symbolic link; else None."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            return None
+        return f.read(limit + 1)[:limit]
+
+
 def duplicate(slug, title=None):
-    """A copy of the report, its text and its cached charts, as a new report. Returns the new slug."""
+    """A copy of the report, its text and its cached charts, as a new report. Returns the new slug. Only the report's
+    own chart results (visuals/<id>.json, regular files) are copied: a shared folder's links and extra files are not."""
     rep = load(path_for(slug))
     title = clean_title(title or "%s (copy)" % rep["title"])
     new_slug = unique_slug(title)
     src, dst = os.path.join(root(), slug), os.path.join(root(), new_slug)
     os.makedirs(dst)
-    if os.path.isdir(os.path.join(src, "visuals")) and not os.path.islink(os.path.join(src, "visuals")):
-        shutil.copytree(os.path.join(src, "visuals"), os.path.join(dst, "visuals"))
+    sdir = os.path.join(src, "visuals")
+    if os.path.isdir(sdir) and not os.path.islink(sdir):
+        for vid in rep["visuals"]:
+            data = read_regular(os.path.join(sdir, vid + ".json"))
+            if data is not None:
+                os.makedirs(os.path.join(dst, "visuals"), exist_ok=True)
+                S.write_atomic(os.path.join(dst, "visuals", vid + ".json"), data)
     rep.update(title=title, rev=0)
     save(os.path.join(dst, FILE), rep)
     return new_slug
@@ -329,8 +351,8 @@ def trash(slug):
     os.makedirs(os.path.join(root(), DELETED), exist_ok=True)
     entry = "%s--%s" % (slug, dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f"))
     os.replace(os.path.join(root(), slug), os.path.join(root(), DELETED, entry))
-    with open(os.path.join(root(), DELETED, entry, "deleted.json"), "w", encoding="utf-8") as f:
-        json.dump({"deleted_at": now(), "report": slug}, f)
+    # write_atomic replaces whatever sits at that name, a link from a shared folder too, and never writes through it
+    S.write_atomic(os.path.join(root(), DELETED, entry, "deleted.json"), json.dumps({"deleted_at": now(), "report": slug}))
     forget(slug)
     return entry
 

@@ -399,6 +399,48 @@ class Deck(unittest.TestCase):
             R.to_deck(self.rep)
 
 
+class SharedFolders(unittest.TestCase):
+    """A report folder someone shared may carry symbolic links: deleting and duplicating never follow them."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        os.environ["ZEBRA_BI_REPORTS"] = os.path.join(self.tmp, "reports")
+        self.outside = os.path.join(self.tmp, "outside.txt")
+        with open(self.outside, "w") as f:
+            f.write("keep me")
+
+    def tearDown(self):
+        os.environ.pop("ZEBRA_BI_REPORTS", None)
+        shutil.rmtree(self.tmp)
+
+    def test_deleting_never_writes_through_a_link(self):
+        slug = R.create("Q3 review")
+        os.symlink(self.outside, os.path.join(R.root(), slug, "deleted.json"))
+        entry = R.trash(slug)
+        with open(self.outside) as f:
+            self.assertEqual(f.read(), "keep me")
+        self.assertFalse(os.path.islink(os.path.join(R.root(), R.DELETED, entry, "deleted.json")))
+        self.assertEqual([d["entry"] for d in R.deleted()], [entry])
+
+    def test_duplicating_copies_only_the_reports_own_charts(self):
+        slug = R.create("Q3 review")
+        path = R.path_for(slug)
+        rep = R.load(path)
+        vid, _ = R.add_chart(rep, ARGS)
+        R.save(path, rep)
+        vdir = os.path.join(R.root(), slug, "visuals")
+        os.makedirs(vdir, exist_ok=True)
+        with open(os.path.join(vdir, vid + ".json"), "w") as f:
+            f.write("{}")
+        os.symlink(self.outside, os.path.join(vdir, "stolen.json"))
+        os.symlink(self.tmp, os.path.join(vdir, "home"))
+        os.symlink("..", os.path.join(vdir, "up"))  # a loop: copying through it would never end
+        with open(os.path.join(vdir, "extra.txt"), "w") as f:
+            f.write("not a chart")
+        copy = R.duplicate(slug, "Q4 review")
+        self.assertEqual(sorted(os.listdir(os.path.join(R.root(), copy, "visuals"))), [vid + ".json"])
+
+
 class Files(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
