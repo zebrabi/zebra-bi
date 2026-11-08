@@ -37,8 +37,9 @@ def seed():
     charts = [c for r in rep["rows"] for c in r["cells"] if c["type"] == "chart"]
     R.update_text(rep, charts[0]["id"], "Costs carried EBITDA past plan", field="message")
     R.update_text(rep, charts[0]["id"], "A P&L reads top-down with ΔPL beside each line.", field="why")
-    R.update_text(rep, charts[0]["id"], "COGS came in 99.0k under plan.")
-    R.update_text(rep, charts[-1]["id"], "Revenue fell 41.0k short of plan.")
+    R.update_text(rep, charts[0]["id"], "COGS came in 987.6k under plan.")  # numbers no chart holds
+    R.update_text(rep, charts[-1]["id"], "Revenue fell 876.5k short of plan.")
+    rep["show_notes"] = True  # hidden notes are not checked, and the source report may have them hidden
     R.save(path, rep)
 
 
@@ -78,12 +79,17 @@ step("open", "item('P&L close').querySelector('.main').click(); await sleep(6000
 ab("screenshot", os.path.join(OUT, "flows-editor.png"))
 step("editdup", "all('#editor-actions .dots')[0].click(); await sleep(200); all('#menu button').find(b=>b.textContent==='Duplicate').click();"
      "await sleep(4000); return view()+' / '+$('#title').textContent")
+step("pptx", "$('#report-menu').click(); await sleep(200); all('#menu button').find(b=>b.textContent==='Save as PowerPoint').click();"
+     "for (let i=0;i<60 && !(($('.toast')||{}).textContent||'').startsWith('PowerPoint saved');i++) await sleep(1000);"
+     "return ($('.toast')||{}).textContent")
 step("draft", "$('#back').click(); await sleep(1500); item('Draft test').querySelector('.main').click(); await sleep(6000);"
      "return [$('#key').textContent, all('#kpis .kpi').length, ($('.chart-msg')||{}).textContent,"
      " all('.flag span').map(f=>f.textContent).join(' | ')].join(' / ')")
 step("why", "$('.why-btn').click(); await sleep(200); return ($('.why-text')||{}).textContent")
 step("keep", "all('.flag button')[0].click(); await sleep(2500); $('#reload').click(); await sleep(2500);"
      "return 'flags left: ' + all('.flag span').map(f=>f.textContent).join(' | ')")
+step("pptxflag", "$('#report-menu').click(); await sleep(200); all('#menu button').find(b=>b.textContent==='Save as PowerPoint').click();"
+     "await sleep(2500); return ($('.toast')||{}).textContent")
 step("pdfflag", "$('#report-menu').click(); await sleep(200); all('#menu button').find(b=>b.textContent==='Save as PDF').click();"
      "await sleep(2500); return ($('.toast')||{}).textContent")
 step("layout", "const before=all('#rows .row').length; all('#layouts button').find(b=>b.dataset.layout==='variance-walk').click();"
