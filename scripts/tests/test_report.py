@@ -758,6 +758,17 @@ class Server(unittest.TestCase):
         self.assertEqual((got["report"]["key_message"], got["report"]["rows"][0]["cells"][0]["message"]), ("Key", "Edited"))
         self.assertEqual(got["checks"], {})  # 99.0 is kept now
 
+    def test_app_only_tools_refuse_a_model_turn(self):
+        slug, _ = self.drafted()
+        turn = {"x-codex-turn-metadata": {"thread_id": "t1"}, "threadId": "t1"}  # a model's call in ChatGPT carries this
+        for name, args in (("library", {}), ("get_report", {"report": slug}), ("purge_report", {"entry": "x"}),
+                           ("save_layout", {"report": slug, "rev": 1, "rows": [], "kept": ["99.0"]})):
+            out = self.rpc("tools/call", {"name": name, "arguments": args, "_meta": turn})["result"]
+            self.assertTrue(out.get("isError"), name)
+            self.assertIn("report builder app", out["content"][0]["text"])
+        self.assertFalse(self.tool("library").get("isError"))  # the app's own call carries no model turn
+        self.assertEqual(self.report(slug)["checks"], {"cells": {"c1": {"note": ["99.0"]}}})  # nothing was kept
+
     def test_save_pptx_refuses_while_numbers_are_flagged(self):
         slug, _ = self.drafted()
         out = self.tool("save_pptx")

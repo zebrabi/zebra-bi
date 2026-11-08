@@ -249,6 +249,18 @@ def pdf_saved(out, pages, layout):
     return line + " It holds the report's aggregated numbers, so share it only where the data may go."
 
 
+def app_only_tools():
+    """The tools only the builder app may call (visibility ["app"]): the host keeps them from the model."""
+    return {t["name"] for t in tools() if (t.get("_meta") or {}).get("ui", {}).get("visibility") == ["app"]}
+
+
+def model_turn(meta):
+    """Whether a call comes from the model rather than the app. ChatGPT and Codex mark a model's call with
+    x-codex-turn-metadata and never mark the app's; the server refuses an app-only tool such a call names, as a second
+    line behind the host keeping those tools from the model (deleting for good, saving the builder's layout)."""
+    return isinstance(meta, dict) and "x-codex-turn-metadata" in meta
+
+
 def thread_of(meta):
     """The host's chat thread id from a call's _meta (ChatGPT and Codex send threadId / thread_id), else None."""
     meta = meta if isinstance(meta, dict) else {}
@@ -500,12 +512,16 @@ def call(name, args, thread):
 
 
 def debug(method, params):
-    """With $ZEBRA_BI_REPORT_LOG set, one JSON line per request: method, tool and _meta (never arguments)."""
+    """With $ZEBRA_BI_REPORT_LOG set, one JSON line per request: method, tool and _meta (never arguments); for
+    initialize, also what the client declared (its capabilities and name)."""
     path = os.environ.get("ZEBRA_BI_REPORT_LOG")
     if path:
+        line = {"method": method, "tool": params.get("name"), "_meta": params.get("_meta")}
+        if method == "initialize":
+            line.update(capabilities=params.get("capabilities"), clientInfo=params.get("clientInfo"))
         try:
             with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"method": method, "tool": params.get("name"), "_meta": params.get("_meta")}) + "\n")
+                f.write(json.dumps(line) + "\n")
         except OSError:
             pass
 
@@ -537,6 +553,9 @@ def handle(method, params):
                                         "openai/widgetDescription": "The Zebra BI report builder: charts and text in rows."}}]}
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
+        if name in app_only_tools() and model_turn(params.get("_meta")):
+            return text("%s is for the report builder app, not the model; ask the user to do it in the builder." % name,
+                        error=True)
         try:
             return call(name, args if isinstance(args, dict) else {}, thread_of(params.get("_meta")))
         except KeyError:
