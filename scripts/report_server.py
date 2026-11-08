@@ -11,13 +11,14 @@ Zebra BI server.
 
 The model sees report titles, chart titles and the start of each text. Chart data reaches it only through
 read_chart, which returns the aggregated rows it sent itself; the builder's results with drawn charts are app-only
-(_meta.ui.visibility ["app"]).
+(_meta.ui.visibility ["app"]). Those tools also need the builder's key, which the server puts in the builder page
+when the host reads it, so a host that shows them to the model anyway still cannot have it call them.
 
 In ChatGPT and Codex desktop the builder opens from the sidebar (entrypoint "global") or beside a chat
 ("thread"). The renderer is nested in the builder through iframe srcdoc: the desktop hosts block blob: frames.
 Standard library only. stdout carries JSON-RPC alone; anything else goes to stderr.
 """
-import contextlib, hashlib, io, json, os, re, sys, traceback
+import contextlib, hashlib, hmac, io, json, os, re, secrets, sys, traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -28,19 +29,65 @@ import report as R  # noqa: E402
 import story as S  # noqa: E402
 
 APP = os.path.join(HERE, "..", "assets", "report-builder.html")
+KEY_SLOT = "__ZEBRA_BI_APP_KEY__"  # where the page takes its key
+KEY = re.compile(r"[0-9a-f]{64}")
+
+
+def app_key():
+    """The builder's key: random, kept beside the sign-in (auth.json) readable by this user only, and the same for
+    every server process, since a host may read the page from one and send its calls to another."""
+    if "key" not in state:
+        path = os.path.join(os.path.dirname(S.CACHE), "report-builder.key")
+        key = read_key(path)
+        if not KEY.fullmatch(key or ""):
+            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+            tmp = "%s.%s.tmp" % (path, secrets.token_hex(4))
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(secrets.token_hex(32))
+                if key is None:
+                    with contextlib.suppress(FileExistsError):
+                        os.link(tmp, path)  # only if no other process made one meanwhile
+                else:
+                    os.replace(tmp, path)  # a broken one
+            finally:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            key = read_key(path)  # whichever process made it, every one reads the same key
+            if not KEY.fullmatch(key or ""):
+                raise OSError("the report builder's key file %s is broken" % path)
+        state["key"] = key
+    return state["key"]
+
+
+def read_key(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read().decode("ascii", "replace")
+    except FileNotFoundError:
+        return None
+
+
+def app_page():
+    """The builder page with its key in it, and its address. The address carries a hash of that page: hosts cache an
+    app page by its URI, so a changed page, or a new key, must get a new one."""
+    if "page" not in state:
+        try:
+            with open(APP, encoding="utf-8") as f:
+                page = f.read().replace(KEY_SLOT, app_key())
+        except OSError as e:  # the chat's tools still work; the builder cannot
+            log("the report builder is unavailable:", e)
+            state["page"] = (None, "ui://zebra-bi/report-builder.html")
+        else:
+            state["page"] = (page, "ui://zebra-bi/report-builder-%s.html" % hashlib.sha256(page.encode("utf-8")).hexdigest()[:12])
+    return state["page"]
 
 
 def app_uri():
-    """The builder's address carries a hash of the page: hosts cache an app page by its URI, so a changed page
-    must get a new one."""
-    try:
-        with open(APP, "rb") as f:
-            return "ui://zebra-bi/report-builder-%s.html" % hashlib.sha256(f.read()).hexdigest()[:12]
-    except OSError:
-        return "ui://zebra-bi/report-builder.html"
+    return app_page()[1]
 
 
-APP_URI = app_uri()
 MIME = "text/html;profile=mcp-app"
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26")
 FONTS = ["https://fonts.googleapis.com", "https://fonts.gstatic.com"]  # Open Sans, the Zebra BI typeface
@@ -81,11 +128,12 @@ def chart_schema():
 
 
 def ui(entrypoints=False, app_only=False):
-    meta = {"ui": {"resourceUri": APP_URI}, "ui/resourceUri": APP_URI, "openai/outputTemplate": APP_URI}
+    if app_only:
+        return {"ui": {"visibility": ["app"]}}
+    uri = app_uri()
+    meta = {"ui": {"resourceUri": uri}, "ui/resourceUri": uri, "openai/outputTemplate": uri}
     if entrypoints:
         meta["openai/ui"] = {"entrypoints": [{"type": "global"}, {"type": "thread"}]}
-    if app_only:
-        meta = {"ui": {"visibility": ["app"]}}
     return meta
 
 
@@ -95,6 +143,7 @@ def opt_report():
 
 def tools():
     ui_open, app = ui(entrypoints=True), ui(app_only=True)
+    key = {"type": "string", "description": "The builder's key; the builder sends it."}
     obj = lambda props, req=(): dict({"type": "object", "properties": props}, **({"required": list(req)} if req else {}))
     write = {"readOnlyHint": False}
     return [
@@ -209,17 +258,18 @@ def tools():
                         "picture for everyone else. Needs Chrome, Edge or Chromium. Returns the file's path.",
          "inputSchema": obj({"report": opt_report()}), "annotations": {"readOnlyHint": False, "destructiveHint": False}},
         {"name": "library", "title": "Reports for the builder", "description": "App only: reports and Recently deleted.",
-         "inputSchema": obj({}), "annotations": {"readOnlyHint": True}, "_meta": app},
+         "inputSchema": obj({"app_key": key}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "get_report", "title": "Report for the builder", "description": "App only: one report with chart results.",
          "inputSchema": obj({"report": {"type": "string"}, "follow": {"type": "string", "enum": ["last", "thread", "none"]},
-                             "since": {"type": "integer"}}), "annotations": {"readOnlyHint": True}, "_meta": app},
+                             "since": {"type": "integer"}, "app_key": key}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "get_renderer", "title": "Zebra BI renderer", "description": "App only: the Zebra BI chart renderer page.",
-         "inputSchema": obj({}), "annotations": {"readOnlyHint": True}, "_meta": app},
+         "inputSchema": obj({"app_key": key}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "save_layout", "title": "Save the report layout", "description": "App only: save the builder's rows and title.",
          "inputSchema": obj({"report": {"type": "string"}, "rev": {"type": "integer"}, "title": {"type": "string"},
-                             "rows": {"type": "array"}, "show_notes": {"type": "boolean"}}, ["report", "rev", "rows"]), "annotations": write, "_meta": app},
+                             "rows": {"type": "array"}, "show_notes": {"type": "boolean"}, "app_key": key}, ["report", "rev", "rows"]),
+         "annotations": write, "_meta": app},
         {"name": "purge_report", "title": "Delete a report forever", "description": "App only: remove a Recently deleted report for good.",
-         "inputSchema": obj({"entry": {"type": "string"}}, ["entry"]), "annotations": {"readOnlyHint": False, "destructiveHint": True},
+         "inputSchema": obj({"entry": {"type": "string"}, "app_key": key}, ["entry"]), "annotations": {"readOnlyHint": False, "destructiveHint": True},
          "_meta": app},
     ]
 
@@ -270,9 +320,19 @@ def app_only_tools():
 
 def model_turn(meta):
     """Whether a call comes from the model rather than the app. ChatGPT and Codex mark a model's call with
-    x-codex-turn-metadata and never mark the app's; the server refuses an app-only tool such a call names, as a second
-    line behind the host keeping those tools from the model (deleting for good, saving the builder's layout)."""
+    x-codex-turn-metadata and never mark the app's; the server refuses an app-only tool such a call names, even with
+    the builder's key."""
     return isinstance(meta, dict) and "x-codex-turn-metadata" in meta
+
+
+def from_builder(args):
+    """Whether an app-only call carries the builder's key. Hosts keep those tools from the model, but not every host
+    marks the model's calls, so the server asks for the key in the builder page as well (deleting for good, saving
+    the builder's layout and approving its flagged numbers)."""
+    key = args.get("app_key") if isinstance(args, dict) else None
+    if not isinstance(key, str) or app_page()[0] is None:  # no page, no key: nothing can come from the builder
+        return False
+    return hmac.compare_digest(key.encode("utf-8"), app_key().encode("utf-8"))
 
 
 def thread_of(meta):
@@ -554,24 +614,25 @@ def handle(method, params):
     if method == "tools/list":
         return {"tools": tools()}
     if method == "resources/list":
-        return {"resources": [{"uri": APP_URI, "name": "report-builder", "title": "Zebra BI report builder",
+        return {"resources": [{"uri": app_uri(), "name": "report-builder", "title": "Zebra BI report builder",
                                "mimeType": MIME, "_meta": {"ui": {"csp": CSP, "prefersBorder": False}}}]}
     if method == "resources/templates/list":
         return {"resourceTemplates": []}
     if method == "resources/read":
-        if params.get("uri") != APP_URI:
+        page, uri = app_page()
+        if page is None or params.get("uri") != uri:
             raise KeyError("unknown resource %r" % params.get("uri"))
-        with open(APP, encoding="utf-8") as f:
-            page = f.read()
-        return {"contents": [{"uri": APP_URI, "mimeType": MIME, "text": page,
+        return {"contents": [{"uri": uri, "mimeType": MIME, "text": page,
                               "_meta": {"ui": {"csp": CSP, "prefersBorder": False},
                                         "openai/widgetCSP": {"connect_domains": [], "resource_domains": FONTS, "frame_domains": []},
                                         "openai/widgetDescription": "The Zebra BI report builder: charts and text in rows."}}]}
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
-        if name in app_only_tools() and model_turn(params.get("_meta")):
-            return text("%s is for the report builder app, not the model; ask the user to do it in the builder." % name,
-                        error=True)
+        if name in app_only_tools():
+            if model_turn(params.get("_meta")) or not from_builder(args):
+                return text("%s is for the report builder app, not the model; ask the user to do it in the builder." % name,
+                            error=True)
+            args = {k: v for k, v in args.items() if k != "app_key"}
         try:
             return call(name, args if isinstance(args, dict) else {}, thread_of(params.get("_meta")))
         except KeyError:
