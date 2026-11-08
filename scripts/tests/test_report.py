@@ -377,7 +377,8 @@ class Deck(unittest.TestCase):
         deck = R.to_deck(self.rep)
         self.assertEqual([s.get("visual") for s in deck["sections"]], [None, "left-chart", "right-chart", "untold-chart"])
         self.assertEqual(deck["sections"][0], {"heading": "P&L close", "body": "Read this first."})
-        self.assertEqual(deck["sections"][1], {"heading": "Left message", "visual": "left-chart", "note": "Left note", "texts": []})
+        self.assertEqual(deck["sections"][1], {"heading": "Left message", "visual": "left-chart", "note": "Left note", "texts": [],
+                                               "kind": "report-chart"})
         self.assertEqual(deck["sections"][2]["texts"], ["About the right one."])
         self.assertEqual(deck["sections"][3]["heading"], "Untold chart")
         self.assertEqual((deck["title"], deck.get("kpis")), ("P&L close", None))
@@ -392,6 +393,22 @@ class Deck(unittest.TestCase):
     def test_hidden_notes_never_leave_the_report(self):
         self.rep["show_notes"] = False
         self.assertEqual([s.get("note") for s in R.to_deck(self.rep)["sections"][1:]], ["", "", ""])
+
+    def test_empty_text_never_reaches_an_export(self):
+        rep = R.new("Empty")
+        R.add_text(rep, "x")
+        R.add_chart(rep, {"title": "A", "chart_type": "bar", "columns": ["Item", "AC"], "rows": [["a", 1]]}, message="m")
+        R.add_text(rep, "y")
+        for row in rep["rows"]:  # the builder's + Text, still empty
+            for c in row["cells"]:
+                if c["type"] == "text":
+                    c["text"] = ""
+        self.assertEqual([s.get("visual") for s in R.to_deck(rep)["sections"]], ["a"])
+        self.assertEqual(R.to_deck(rep)["sections"][0]["texts"], [])
+        self.assertEqual(R.to_story(rep)["rows"], [{"cells": [{"visual": "a", "message": "m"}]}])
+
+    def test_deck_sections_say_they_are_a_reports_charts(self):
+        self.assertEqual({s.get("kind") for s in R.to_deck(self.rep)["sections"][1:]}, {"report-chart"})
 
     def test_a_flagged_number_stops_the_deck(self):
         R.update_text(self.rep, "c2", "Left was 99.0.")
@@ -757,6 +774,21 @@ class Server(unittest.TestCase):
         got = self.report(slug)
         self.assertEqual((got["report"]["key_message"], got["report"]["rows"][0]["cells"][0]["message"]), ("Key", "Edited"))
         self.assertEqual(got["checks"], {})  # 99.0 is kept now
+
+    def test_a_deleted_report_says_so_instead_of_following_another(self):
+        first, _ = self.drafted()
+        self.tool("create_report", {"title": "Another"})
+        self.tool("open_report", {"report": first})
+        self.tool("delete_report", {"report": first})
+        for follow in ("last", "thread"):
+            out = self.tool("get_report", {"report": first, "follow": follow})["structuredContent"]
+            self.assertTrue(out.get("gone"), (follow, out))
+
+    def test_a_failed_build_gives_its_reason(self):
+        import report_server as RS
+        self.assertEqual(RS.exit_reason(SystemExit(1), "warning: x\nerror: the slide has no room for the chart\n"),
+                         "error: the slide has no room for the chart")
+        self.assertEqual(RS.exit_reason(SystemExit("Not built: 99.0"), ""), "Not built: 99.0")
 
     def test_app_only_tools_refuse_a_model_turn(self):
         slug, _ = self.drafted()

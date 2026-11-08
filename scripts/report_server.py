@@ -17,7 +17,7 @@ In ChatGPT and Codex desktop the builder opens from the sidebar (entrypoint "glo
 ("thread"). The renderer is nested in the builder through iframe srcdoc: the desktop hosts block blob: frames.
 Standard library only. stdout carries JSON-RPC alone; anything else goes to stderr.
 """
-import hashlib, json, os, re, sys, traceback
+import contextlib, hashlib, io, json, os, re, sys, traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -233,6 +233,20 @@ def text(t, structured=None, error=False):
     return out
 
 
+def home_relative(path):
+    """path with the home folder as ~, so text the model reads does not carry the user's name."""
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
+
+
+def exit_reason(e, said):
+    """Why a build stopped: its exit message, else the last line it printed on stderr."""
+    if isinstance(e.code, str):
+        return S.clean(e.code, 600)
+    lines = [l for l in said.splitlines() if l.strip()]
+    return S.clean(lines[-1], 600) if lines else "the build failed"
+
+
 def deck_slides(path):
     """How many slides the deck at path holds."""
     import zipfile
@@ -445,10 +459,9 @@ def call(name, args, thread):
             return text("No PDF was saved: %s" % S.clean(e, 600), error=True)
         with open(out, "rb") as f:
             pages = P.pages(f.read())
-        home = os.path.expanduser("~")
-        shown = "~" + out[len(home):] if out.startswith(home + os.sep) else out
+        shown = home_relative(out)
         layout = R.load(R.path_for(slug)).get("layout")
-        return text(pdf_saved(out, pages, layout), {"report": slug, "file": out, "shown": shown, "pages": pages})
+        return text(pdf_saved(shown, pages, layout), {"report": slug, "file": out, "shown": shown, "pages": pages})
     if name == "save_pptx":
         slug = target(args, thread)
         found = R.flags(R.load(R.path_for(slug)))
@@ -458,21 +471,24 @@ def call(name, args, thread):
         import office as O  # starts nothing until a deck is asked for
         folder = os.path.dirname(R.path_for(slug))
         out = os.path.join(folder, os.path.basename(folder) + ".pptx")
+        said = io.StringIO()
         try:
-            O.build(folder, ["pptx"])
+            with contextlib.redirect_stderr(said):  # office.py says why on stderr and exits with 1
+                O.build(folder, ["pptx"])
         except SystemExit as e:
             if e.code:
-                return text("No PowerPoint was saved: %s" % S.clean(e, 600), error=True)
+                return text("No PowerPoint was saved: %s" % exit_reason(e, said.getvalue()), error=True)
         slides = deck_slides(out)
-        home = os.path.expanduser("~")
-        shown = "~" + out[len(home):] if out.startswith(home + os.sep) else out
+        shown = home_relative(out)
         return text("Saved %s (%d slides). It holds the report's aggregated numbers, so share it only where the data may go."
-                    % (out, slides), {"report": slug, "file": out, "shown": shown, "slides": slides})
+                    % (shown, slides), {"report": slug, "file": out, "shown": shown, "slides": slides})
     # ----- app only -----
     if name == "library":
         return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last()})
     if name == "get_report":
         slug, follow = args.get("report"), args.get("follow") or "none"
+        if slug and not R.exists(slug):  # deleted: say so, rather than follow on to another report
+            return text("gone", {"gone": True, "report": slug})
         followed = R.last() if follow == "last" else R.resolve(thread) if follow == "thread" else None
         if followed and followed != slug:
             return text("switched", {"switched": followed})

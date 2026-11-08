@@ -815,8 +815,10 @@ def to_story(rep):
         if notes and c.get("note"):
             out["note"] = c["note"]
         return out
-    rows = [{"cells": [chart(c) if c["type"] == "chart" else {"text": c["text"]} for c in row["cells"]]}
-            for row in rep["rows"] if row["cells"]]
+    rows = [{"cells": [chart(c) if c["type"] == "chart" else {"text": c["text"]} for c in row["cells"]
+                       if c["type"] == "chart" or c["text"].strip()]}  # an empty text cell is the builder's, not the reader's
+            for row in rep["rows"]]
+    rows = [r for r in rows if r["cells"]]
     shown = {c["visual"] for row in rows for c in row["cells"] if "visual" in c}
     story = {"title": rep["title"], "sections": [], "rows": rows,
              "visuals": {vid: {"args": v["args"]} for vid, v in rep["visuals"].items() if vid in shown}}
@@ -838,11 +840,12 @@ def to_deck(rep):
     del story["rows"]
     notes = rep.get("show_notes", True)
     lead, charts = reading(rep)
-    sections = [{"heading": rep["title"], "body": "\n\n".join(t["text"] for t in lead)}] if lead else []
+    said = lambda cells: [t["text"] for t in cells if t["text"].strip()]  # an empty text cell is left out
+    sections = [{"heading": rep["title"], "body": "\n\n".join(said(lead))}] if said(lead) else []
     for c, texts in charts:
         sections.append({"heading": (c.get("message") or chart_title(rep, c["visual"])).replace("**", ""),
                          "visual": c["visual"], "note": c.get("note", "") if notes else "",
-                         "texts": [t["text"] for t in texts]})
+                         "texts": said(texts), "kind": "report-chart"})
     story["sections"] = sections
     return story
 

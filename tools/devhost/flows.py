@@ -74,7 +74,8 @@ step("forever", "await menu(item('Flow test renamed'),'Delete'); await sleep(200
      "all('#deleted-list .item button').find(b=>b.textContent==='Delete forever').click(); await sleep(200);"
      "const c=$('#deleted-list .confirm'); const txt=c.textContent; c.querySelector('button.danger').click(); await sleep(2000);"
      "return 'confirm: '+txt+' || deleted hidden='+$('#deleted').hidden+' / '+titles()")
-step("open", "item('P&L close').querySelector('.main').click(); await sleep(6000);"
+step("open", "item('P&L close').querySelector('.main').click(); await sleep(1500);"
+     "for (let i=0;i<27 && all('#rows iframe').some(f=>f.offsetHeight<=100);i++) await sleep(500);"  # until every chart drew
      "return view()+' / '+$('#title').textContent+' / frames='+all('#rows iframe').length+' drawn='+all('#rows iframe').filter(f=>f.offsetHeight>100).length")
 ab("screenshot", os.path.join(OUT, "flows-editor.png"))
 step("editdup", "all('#editor-actions .dots')[0].click(); await sleep(200); all('#menu button').find(b=>b.textContent==='Duplicate').click();"

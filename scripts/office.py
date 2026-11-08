@@ -54,6 +54,12 @@ def build(story_dir, formats, brand_dir=None):
         formats = ["pptx"]
     else:
         story = json.load(open(os.path.join(story_dir, "story.json"), encoding="utf-8"))
+        in_rows = {c.get("visual") for r in story.get("rows") or [] if isinstance(r, dict)
+                   for c in r.get("cells") or [] if isinstance(c, dict) and c.get("visual")}
+        left_out = sorted(in_rows - {s.get("visual") for s in story.get("sections", [])})
+        if left_out:
+            print("story.json rows name charts a deck or workbook cannot show (only the sections are slides and "
+                  "sheets): %s" % ", ".join(left_out), file=sys.stderr)
     results = S.render_visuals(story_dir, story)  # first, so `Sending <n> chart(s)` comes before any call to the MCP
     renderer_path, meta = S.renderer()
     used = [s["visual"] for s in story.get("sections", []) if s.get("visual")]

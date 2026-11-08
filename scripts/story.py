@@ -611,9 +611,9 @@ LAYOUTS = ("one-pager", "variance-walk", "board-pack")  # a report's layouts (re
 
 
 def layout(story):
-    """The report layout the story names, when it is one the page knows; else None."""
+    """The report layout the story names, when it is one the page knows and the story has rows; else None."""
     name = story.get("layout")
-    return name if name in LAYOUTS else None
+    return name if name in LAYOUTS and story.get("rows") else None
 
 
 def load(story_dir):

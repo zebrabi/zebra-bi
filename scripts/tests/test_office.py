@@ -157,8 +157,8 @@ class ReportDeck(unittest.TestCase):
     DECK = {"kicker": "P&L close", "title": "Sales grew", "kpis": [{"value": "1", "label": "Sales"}],
             "sections": [{"heading": "P&L close", "body": "Read this first."},
                          {"heading": "Months grew", "visual": "sales-by-month", "note": "November **added** $39k.",
-                          "texts": ["The user's own words."]},
-                         {"heading": "Regions", "visual": "sales-by-region", "note": "", "texts": []}]}
+                          "texts": ["The user's own words."], "kind": "report-chart"},
+                         {"heading": "Regions", "visual": "sales-by-region", "note": "", "texts": [], "kind": "report-chart"}]}
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -199,6 +199,16 @@ class ReportDeck(unittest.TestCase):
         slides, _ = self.slides()
         self.assertNotIn("Subtitle", shapes(slides[1]))
         self.assertNotIn('type="subTitle"', slides[1])
+
+    def test_a_story_section_with_a_note_keeps_its_finding(self):
+        story = {"title": "T", "sections": [{"heading": "Growth", "body": "Growth came from the West.",
+                                              "visual": "sales-by-month", "note": "an aside"}]}
+        out = os.path.join(self.tmp, "story.pptx")
+        P.build(story, {"sales-by-month": MONTH}, self.snaps, out, "Built today.", B.load(start=self.tmp))
+        with zipfile.ZipFile(out) as z:
+            slide = z.read("ppt/slides/slide2.xml").decode()
+        self.assertIn("Growth came from the West.", slide)
+        self.assertNotIn("Note", shapes(slide))
 
     def test_text_before_the_first_chart_gets_the_slide_height(self):
         slides, _ = self.slides()
@@ -260,6 +270,18 @@ class ReportFolder(unittest.TestCase):
         self.assertNotIn("Source: unknown", cover)
         self.assertEqual(widths, [P.chart_width(B.load(start=self.dir))])
         self.assertLess(widths[0], SN.WIDTH)
+
+    def test_a_storys_rows_a_deck_cannot_show_are_named(self):
+        os.remove(os.path.join(self.dir, R.FILE))
+        with open(os.path.join(self.dir, "story.json"), "w") as f:
+            json.dump({"title": "T", "sections": [{"heading": "H", "visual": "sales-by-month"}],
+                       "rows": [{"cells": [{"visual": "sales-by-region"}]}],
+                       "visuals": {"sales-by-month": {"args": {"title": "sales-by-month", "chart_type": "bar", "columns": ["Item", "AC"], "rows": [["a", 1]]}},
+                                   "sales-by-region": {"args": {"title": "sales-by-region", "chart_type": "bar", "columns": ["Item", "AC"], "rows": [["a", 1]]}}}}, f)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+            O.build(self.dir, ["pptx"])
+        self.assertIn("sales-by-region", err.getvalue())
+        self.assertIn("only the sections", err.getvalue())
 
     def test_a_flagged_report_writes_no_deck(self):
         R.update_text(self.rep, "c1", "It held 99.0.")

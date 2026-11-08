@@ -316,7 +316,7 @@ def build(story, visuals, snapshots, out, footer, brand):
     for s in story.get("sections", []):
         shapes, extra = [placeholder(2, tp, s.get("heading", ""))], []
         vid = s.get("visual")
-        if vid and "note" in s:
+        if vid and s.get("kind") == "report-chart":
             side = paragraphs(s["note"], 14, ink) if s["note"] else ""
             side += "".join(paragraphs(t, 12, ink) for t in s.get("texts", []) if t.strip())
             if side:
