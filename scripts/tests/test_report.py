@@ -20,7 +20,8 @@ ARGS = {"title": "Sales by region", "chart_type": "variance", "category_columns"
 RESULT = {"content": [{"type": "text", "text": "Rendered a variance table."}], "isError": False,
           "structuredContent": {"visual": {"title": "Sales by region", "ycol_ac": [{"value": 226.3}]}}}
 FAKE_MCP = "http://127.0.0.1:9/mcp"  # nothing listens there
-APP_ONLY = ("library", "get_report", "get_renderer", "save_layout", "purge_report")
+APP_ONLY = ("library", "get_report", "get_renderer", "save_layout", "purge_report", "start_sign_in", "sign_out", "draw_chart")
+NOT_IN_PAGE_YET = {"start_sign_in", "sign_out", "draw_chart"}  # the builder's sign-in (slice 2) sends the key to these
 
 
 def cache(report_dir, vid, args, result=RESULT, endpoint=None):
@@ -736,9 +737,10 @@ class DefaultFolder(unittest.TestCase):
 class Proc:
     """One report_server.py process over stdio, as a host starts one per surface."""
 
-    def __init__(self, tmp):
+    def __init__(self, tmp, env_extra=None):
         env = dict(os.environ, ZEBRA_BI_REPORTS=os.path.join(tmp, "reports"),
                    CLAUDE_PLUGIN_DATA=os.path.join(tmp, "data"), ZEBRA_BI_MCP_URL=FAKE_MCP)
+        env.update(env_extra or {})
         self.p = subprocess.Popen([sys.executable, "-I", SERVER], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, text=True, env=env)
         self.n = 0
@@ -905,7 +907,7 @@ class Server(unittest.TestCase):
         sent = re.findall(r"'(\w+)'", re.search(r"var APP_ONLY = \[([^\]]*)\];", page).group(1))
         tools = self.rpc("tools/list")["result"]["tools"]
         app_only = [t for t in tools if t.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]]
-        self.assertEqual(sorted(sent), sorted(t["name"] for t in app_only))
+        self.assertEqual(sorted(sent), sorted(t["name"] for t in app_only if t["name"] not in NOT_IN_PAGE_YET))
         for t in app_only:
             self.assertIn("app_key", t["inputSchema"]["properties"], t["name"])
 
@@ -1027,6 +1029,9 @@ class Server(unittest.TestCase):
         self.assertEqual([r["cells"][0]["text"] for r in disk["rows"]], ["Second", "First"])
 
     def test_chart_from_cache_and_failed_chart_leaves_report_alone(self):
+        os.makedirs(os.path.join(self.tmp, "data"), exist_ok=True)
+        with open(os.path.join(self.tmp, "data", "auth.json"), "w") as f:  # signed in, so Zebra BI is asked and is down
+            json.dump({FAKE_MCP: {"access_token": "t", "expires_at": int(time.time()) + 3600}}, f)
         slug = self.tool("create_report", {"title": "Charts"})["structuredContent"]["report"]
         cache(os.path.join(self.tmp, "reports", slug), "sales-by-region", ARGS, endpoint=FAKE_MCP)
         added = self.tool("add_chart", {"chart": ARGS})
