@@ -289,18 +289,66 @@ class Layouts(unittest.TestCase):
             self.assertEqual(self.rep["layout"], layout)
             R.validate(self.rep)
 
-    def test_variance_walk_puts_each_chart_alone_largest_first(self):
+    def charts(self):
+        return [[c["visual"] for c in r["cells"] if c["type"] == "chart"] for r in self.rep["rows"]
+                if any(c["type"] == "chart" for c in r["cells"])]
+
+    def test_one_pager_fills_rows_evenly_largest_first(self):
+        R.arrange(self.rep, "one-pager")
+        self.assertEqual(self.charts(), [["big", "middle", "small"]])
+        for n, sizes in ((1, [1]), (2, [2]), (3, [3]), (4, [2, 2]), (5, [3, 2]), (7, [3, 2, 2]), (9, [3, 3, 3])):
+            self.assertEqual(R.even_rows(n), sizes)
+
+    def test_variance_walk_keeps_the_order_the_charts_were_built_in(self):
+        R.arrange(self.rep, "one-pager")  # sorted by size first, so the walk cannot just keep the current order
         R.arrange(self.rep, "variance-walk")
-        charts = [r["cells"][0] for r in self.rep["rows"] if r["cells"][0]["type"] == "chart"]
-        self.assertTrue(all(len(r["cells"]) == 1 for r in self.rep["rows"]))
-        self.assertEqual([c["visual"] for c in charts], ["big", "middle", "small"])
+        self.assertEqual(self.charts(), [["small"], ["middle"], ["big"]])
+
+    def test_the_build_order_reads_cell_numbers(self):
+        rep = R.new("Eleven")
+        for i in range(11):  # c10 and c11 come after c9, so a string sort of the ids would put them early
+            R.add_chart(rep, {"title": "k%d" % i, "chart_type": "bar", "columns": ["Item", "AC", "PL"],
+                              "measure": {"Val": "AC", "PL": "PL"}, "rows": [["a", i + 1, 0]]}, message="m")
+        R.arrange(rep, "variance-walk")
+        self.assertEqual([r["cells"][0]["visual"] for r in rep["rows"]], ["k%d" % i for i in range(11)])
+
+    def test_board_pack_puts_each_chart_alone_largest_first(self):
+        R.arrange(self.rep, "board-pack")
+        self.assertEqual(self.charts(), [["big"], ["middle"], ["small"]])
 
     def test_text_follows_its_chart(self):
+        for layout in R.LAYOUTS:
+            R.arrange(self.rep, layout)
+            ids = [[c["id"] for c in r["cells"]] for r in self.rep["rows"]]
+            row_of = {cid: i for i, r in enumerate(ids) for cid in r}
+            self.assertEqual(row_of[self.text_id], row_of[self.middle_id] + 1, layout)
+
+    def test_a_moved_text_follows_the_chart_it_was_moved_under(self):
+        R.arrange(self.rep, "board-pack")  # big, middle, text, small
+        text = next(c for r in self.rep["rows"] for c in r["cells"] if c["id"] == self.text_id)
+        self.assertEqual(text["after"], self.middle_id)
+        rows = [r for r in self.rep["rows"] if r["cells"][0]["id"] != self.text_id]
+        rows.insert(1, {"cells": [text]})  # the user drags it under the big chart
+        self.rep = R.apply_layout(self.rep, None, rows, self.rep["rev"])
+        R.validate(self.rep)
+        R.arrange(self.rep, "variance-walk")
+        order = [r["cells"][0].get("visual") or r["cells"][0]["id"] for r in self.rep["rows"]]
+        self.assertEqual(order, ["small", "middle", "big", self.text_id])
+        with self.assertRaises(ValueError):
+            R.validate(dict(self.rep, rows=[{"cells": [dict(text, after="nope")]}]))
+
+    def test_notes_follow_the_layout(self):
         R.arrange(self.rep, "one-pager")
-        ids = [[c["id"] for c in r["cells"]] for r in self.rep["rows"]]
-        row_of = {cid: i for i, r in enumerate(ids) for cid in r}
-        self.assertEqual(row_of[self.text_id], row_of[self.middle_id] + 1)
-        self.assertEqual(len(ids[0]), 1)  # the largest chart alone on top
+        self.assertIs(self.rep["show_notes"], False)  # a one-pager shows the messages; the notes stay in the report
+        for layout in ("variance-walk", "board-pack"):
+            R.arrange(self.rep, layout)
+            self.assertIs(self.rep["show_notes"], True)
+
+    def test_the_exports_get_the_layout(self):
+        for layout in R.LAYOUTS:
+            R.arrange(self.rep, layout)
+            self.assertEqual(R.to_story(self.rep)["layout"], layout)
+        self.assertNotIn("layout", R.to_story(R.new("As built")))
 
     def test_a_single_chart_and_an_unknown_layout(self):
         sys.path.insert(0, HERE)
@@ -545,6 +593,15 @@ class Server(unittest.TestCase):
         self.assertEqual(out["structuredContent"]["flags"], ["c1 note: 99.0"])
         self.assertIn("not in their charts", out["content"][0]["text"])
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "reports", slug, slug + ".pdf")))
+
+    def test_a_one_pager_that_needs_more_pages_says_so(self):
+        import report_server as RS
+        self.assertEqual(RS.pdf_saved("/r/a.pdf", 1, "one-pager"),
+                         "Saved /r/a.pdf (1 page). It holds the report's aggregated numbers, so share it only where the data may go.")
+        two = RS.pdf_saved("/r/a.pdf", 2, "one-pager")
+        self.assertIn("(2 pages)", two)
+        self.assertIn("did not fit one page", two)
+        self.assertNotIn("did not fit", RS.pdf_saved("/r/a.pdf", 4, "board-pack"))
 
     def test_app_page_nests_through_srcdoc(self):
         uri = self.rpc("resources/list")["result"]["resources"][0]["uri"]

@@ -109,6 +109,11 @@
   .flag button { font-size: 12px; padding: 2px 8px; }
   #layouts { display: inline-flex; gap: 4px; margin-right: 8px; }
   #layouts button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
+  .layout-hint { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+  .layout-hint:empty { display: none; }
+  .page-mark { display: flex; align-items: center; gap: 8px; margin: 14px 0 4px; font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); }
+  .page-mark::after { content: ''; flex: 1; border-top: 1px dashed var(--hairline); }
   .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
 
   /* toast, at the top: ChatGPT lays its own composer over the bottom of the app */
@@ -122,8 +127,8 @@
   <button class="link" id="back" hidden title="All reports">← All reports</button>
   <span class="brand" id="brand">Zebra BI reports</span>
   <span id="editor-actions" hidden>
-    <span id="layouts" title="Lay out the same cells, largest variance first">
-      <button data-layout="one-pager">One-pager</button><button data-layout="variance-walk">Variance walk</button><button data-layout="board-pack">Board pack</button>
+    <span id="layouts" title="Lay out the same charts and text">
+      <button data-layout="one-pager" title="Largest variances first, up to three charts a row, notes hidden; the PDF fits one landscape page">One-pager</button><button data-layout="variance-walk" title="One chart a row in the order they were built, each with its note">Variance walk</button><button data-layout="board-pack" title="One chart a row, largest variances first; the PDF has a cover and a page per chart">Board pack</button>
     </span>
     <button id="add-text" title="Add a text row">+ Text</button>
     <button id="notes-toggle" aria-pressed="true" title="Show or hide the notes under the charts, here and in the PDF and page">Notes: on</button>
@@ -152,6 +157,7 @@
 <main id="editor" hidden>
   <h1 id="title" contenteditable="true" spellcheck="false"></h1>
   <div id="head"></div>
+  <p class="layout-hint" id="layout-hint"></p>
   <div id="rows"></div>
   <p class="note" id="note"></p>
 </main>
@@ -492,7 +498,15 @@
       rep.kpis.forEach(function (tile, i) { head.appendChild(flagBox('kpi:' + i, rep, true)); });
     }
     document.querySelectorAll('#layouts button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.layout === rep.layout)); });
+    $('layout-hint').textContent = LAYOUT_HINTS[rep.layout] || '';
   }
+
+  // What each layout does, as the PDF prints it too (report.py arrange, pdf.py).
+  var LAYOUT_HINTS = {
+    'one-pager': 'One-pager: largest variances first, up to three charts a row, notes hidden. The PDF prints it on one landscape page.',
+    'variance-walk': 'Variance walk: one chart a row in the order they were built, each with its note.',
+    'board-pack': 'Board pack: one chart a row, largest variances first. The PDF puts the key message and KPI tiles on a cover and each chart on its own page.'
+  };
 
   function renderEditor() {
     frames.clear();
@@ -505,7 +519,11 @@
       host.appendChild(el('div', 'empty', 'This report is empty. Ask in the chat, for example “add a chart of sales by region against plan to the report”, or add text with + Text.'));
     }
     host.appendChild(slot(0));
+    var page = 1;  // a board pack's cover is page 1; every row with a chart starts the next page in the PDF
     rep.rows.forEach(function (row, ri) {
+      if (rep.layout === 'board-pack' && row.cells.some(function (c) { return c.type === 'chart'; })) {
+        host.appendChild(el('div', 'page-mark', 'Page ' + (++page)));
+      }
       var r = el('div', 'row');
       row.cells.forEach(function (cell) { r.appendChild(cellEl(cell, ri)); });
       host.appendChild(r);

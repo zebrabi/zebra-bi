@@ -157,9 +157,12 @@ def tools():
                                                     "label": {"type": "string", "maxLength": 120}}, ["value", "label"])},
                              "report": opt_report()}, ["kpis"]), "annotations": write},
         {"name": "arrange_report", "title": "Lay out the report",
-         "description": "Rearrange the same cells as a named layout, largest variance first: one-pager (the main chart, "
-                        "then two per row), variance-walk (one chart per row), board-pack (the main chart, then three per "
-                        "row). Text stays after its chart.",
+         "description": "Rearrange the same cells as a named layout. one-pager: largest variance first, up to three "
+                        "charts per row, notes hidden, printed on one landscape page, for a reader with a minute. "
+                        "variance-walk: one chart per row in the order you added them, each with its note, for walking "
+                        "someone through the month. board-pack: one chart per row, largest variance first, notes shown; "
+                        "the PDF puts the key message and KPI tiles on a cover and each chart on its own page. Text stays "
+                        "after its chart.",
          "inputSchema": obj({"layout": {"type": "string", "enum": list(R.LAYOUTS)}, "report": opt_report()}, ["layout"]),
          "annotations": write},
         {"name": "add_text", "title": "Add text to the report",
@@ -222,6 +225,15 @@ def text(t, structured=None, error=False):
     if error:
         out["isError"] = True
     return out
+
+
+def pdf_saved(out, pages, layout):
+    """What save_pdf tells the model: the file, its pages, and a one-pager that did not fit one page."""
+    line = "Saved %s (%d page%s)." % (out, pages, "" if pages == 1 else "s")
+    if layout == "one-pager" and pages > 1:
+        line += (" The one-pager did not fit one page at a readable size; fewer charts, or the variance walk or "
+                 "board pack layout, would suit it better.")
+    return line + " It holds the report's aggregated numbers, so share it only where the data may go."
 
 
 def thread_of(meta):
@@ -406,8 +418,8 @@ def call(name, args, thread):
             pages = P.pages(f.read())
         home = os.path.expanduser("~")
         shown = "~" + out[len(home):] if out.startswith(home + os.sep) else out
-        return text("Saved %s (%d page%s). It holds the report's aggregated numbers, so share it only where the data may go."
-                    % (out, pages, "" if pages == 1 else "s"), {"report": slug, "file": out, "shown": shown, "pages": pages})
+        layout = R.load(R.path_for(slug)).get("layout")
+        return text(pdf_saved(out, pages, layout), {"report": slug, "file": out, "shown": shown, "pages": pages})
     # ----- app only -----
     if name == "library":
         return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last()})

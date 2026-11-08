@@ -42,7 +42,7 @@ MAX_MESSAGE = 300  # the message above a chart, and its why
 MAX_KEY = 600  # the key message
 MAX_KPIS = 4
 MAX_KEPT = 50
-LAYOUTS = ("one-pager", "variance-walk", "board-pack")
+LAYOUTS = S.LAYOUTS
 RECIPE_KEYS = ("source", "query", "code", "period")
 
 
@@ -122,6 +122,9 @@ def validate(rep):
             elif cell.get("type") == "text":
                 if not isinstance(cell.get("text"), str) or len(cell["text"]) > MAX_TEXT:
                     raise ValueError("cell %s: text must be a string of at most %d characters" % (cid, MAX_TEXT))
+                after = cell.get("after")
+                if after is not None and not (isinstance(after, str) and CELL_ID.fullmatch(after)):
+                    raise ValueError("cell %s: after names the chart cell the text belongs to, like c1" % cid)
             else:
                 raise ValueError("cell %s: type must be chart or text" % cid)
             if not _kept_ok(cell.get("kept", [])):
@@ -495,6 +498,8 @@ def apply_layout(rep, title, rows, rev, show_notes=None, key_message=None, kpis=
                     cell["recipe"] = was["recipe"]  # the builder never edits a recipe
             else:
                 cell = {"id": c.get("id"), "type": "text", "text": str(c.get("text") or "")}
+                if have("after"):
+                    cell["after"] = have("after")
             if have("kept"):
                 cell["kept"] = list(have("kept"))
             out_cells.append(cell)
@@ -594,33 +599,60 @@ def replace_chart(rep, cell, args):
     return vid
 
 
+def even_rows(n, most=MAX_CELLS):
+    """How many charts go in each row so n charts take as few rows as `most` per row allows, filled evenly and
+    fuller rows first: 4 is 2 + 2, 5 is 3 + 2, 7 is 3 + 2 + 2."""
+    if n <= 0:
+        return []
+    count = -(-n // most)
+    base, extra = divmod(n, count)
+    return [base + 1] * extra + [base] * (count - extra)
+
+
 def arrange(rep, layout):
-    """Lay the same cells out as a named layout. Charts go largest variance first; a text cell keeps to the chart
-    before it, in its own row right after that chart's row; text before the first chart stays on top.
-    one-pager: the first chart alone, then two per row. variance-walk: one chart per row. board-pack: the first
-    chart alone, then three per row."""
+    """Lay the same cells out as a named layout. A text cell keeps to the chart before it, in its own row right
+    after that chart's row; text before the first chart stays on top.
+    one-pager: largest variance first, rows of up to three filled evenly, notes hidden; the PDF prints it on one
+    landscape page. variance-walk: one chart per row in the order the charts were built (the order the analysis
+    reads), notes shown. board-pack: one chart per row, largest variance first, notes shown; the PDF puts the key
+    message and KPI tiles on a cover and each chart on its own page."""
     if layout not in LAYOUTS:
         raise ValueError("layout must be one of %s" % ", ".join(LAYOUTS))
     lead, charts = [], []  # charts: [(chart cell, [text cells after it])]
+    above = {}  # the charts of the last row that held one, so a text under a row of charts finds its own
     for row in rep["rows"]:
+        if any(c["type"] == "chart" for c in row["cells"]):
+            above = {}
         for c in row["cells"]:
             if c["type"] == "chart":
                 charts.append((c, []))
+                above[c["id"]] = charts[-1]
             elif charts:
-                charts[-1][1].append(c)
+                # `after` (set below) names the text's chart while the text still sits under that chart's row
+                (above.get(c.get("after")) or charts[-1])[1].append(c)
             else:
+                c.pop("after", None)
                 lead.append(c)
-    size = lambda c: N.contribution(rep["visuals"][c["visual"]]["args"])
-    charts.sort(key=lambda pair: -size(pair[0]))  # stable for equal sizes
-    per_row = {"one-pager": 2, "variance-walk": 1, "board-pack": 3}[layout]
-    groups = [charts[i:i + 1] for i in range(len(charts))] if per_row == 1 else \
-        ([charts[:1]] if charts else []) + [charts[i:i + per_row] for i in range(1, len(charts), per_row)]
+    if layout == "variance-walk":
+        charts.sort(key=lambda pair: int(pair[0]["id"][1:]))  # cell ids count up as cells are added
+    else:
+        size = lambda c: N.contribution(rep["visuals"][c["visual"]]["args"])
+        charts.sort(key=lambda pair: -size(pair[0]))  # stable for equal sizes
+    sizes = even_rows(len(charts)) if layout == "one-pager" else [1] * len(charts)
+    groups, at = [], 0
+    for n in sizes:
+        groups.append(charts[at:at + n])
+        at += n
     rows = [{"cells": [t]} for t in lead]
     for group in groups:
         rows.append({"cells": [c for c, _ in group]})
-        rows += [{"cells": [t]} for _, texts in group for t in texts]
+        for chart, texts in group:
+            for t in texts:
+                t["after"] = chart["id"]
+                rows.append({"cells": [t]})
     rep["rows"] = rows
     rep["layout"] = layout
+    rep["show_notes"] = layout != "one-pager"
 
 
 def chart_title(rep, vid):
@@ -716,6 +748,8 @@ def to_story(rep):
         story.update(kicker=rep["title"], title=rep["key_message"].replace("**", ""))  # a story title is plain text
     if rep.get("kpis"):
         story["kpis"] = rep["kpis"]
+    if rep.get("layout"):  # the PDF prints a one-pager on one landscape page and a board pack a chart per page
+        story["layout"] = rep["layout"]
     return story
 
 
