@@ -6,8 +6,15 @@
 It serves one MCP App, the report builder (assets/report-builder.html), where the user lays out Zebra BI charts
 and text in rows. The model adds charts and text with tools; the builder moves, resizes and edits them and saves
 through app-only tools. Reports are files on this machine (report.py); charts are drawn by render_visual on the
-Zebra BI MCP with the sign-in that story.py keeps (`story.py sign-in`), and nothing about a report is stored on a
-Zebra BI server.
+Zebra BI MCP with the sign-in that story.py keeps in auth.json, and nothing about a report is stored on a Zebra BI
+server.
+
+Sign-in never blocks the draft. Without it a chart is saved and drawn later; the builder shows a ghost in its place.
+sign_in (the model's, for "sign me in") and start_sign_in (the builder's button) open the Zebra BI sign-in page in the
+browser and return at once: story.py's SignInFlow takes the redirect on 127.0.0.1 in a daemon thread, and
+sign-in.json tells every server process how it goes. get_report and library carry an `auth` block the builder polls.
+When Zebra BI refuses a chart for the user's licence (its sentences are recognized), the refusal is recorded in
+refusal.json beside auth.json for that block; a chart refused for its own arguments shows its error as before.
 
 The model sees report titles, chart titles and the start of each text. Chart data reaches it only through
 read_chart, which returns the aggregated rows it sent itself; the builder's results with drawn charts are app-only
@@ -20,7 +27,7 @@ In ChatGPT and Codex desktop the builder opens from the sidebar (entrypoint "glo
 ("thread"). The renderer is nested in the builder through iframe srcdoc: the desktop hosts block blob: frames.
 Standard library only. stdout carries JSON-RPC alone; anything else goes to stderr.
 """
-import contextlib, hashlib, hmac, io, json, os, re, secrets, sys, traceback
+import contextlib, hashlib, hmac, io, json, os, re, secrets, sys, time, traceback, webbrowser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -94,39 +101,53 @@ MIME = "text/html;profile=mcp-app"
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26")
 FONTS = ["https://fonts.googleapis.com", "https://fonts.gstatic.com"]  # Open Sans, the Zebra BI typeface
 CSP = {"connectDomains": [], "resourceDomains": FONTS, "frameDomains": []}
-SCHEMA_CACHE = os.path.join(os.path.dirname(S.CACHE), "render_visual.schema.json")
+SHIPPED_SCHEMA = os.path.join(HERE, "..", "assets", "render-visual-schema.json")  # render_visual's, until sign-in
 GENERIC_CHART = {"type": "object", "description": "The render_visual arguments: title, subtitle, chart_type, "
                  "category_columns, time_axis, measure {name, Val, PY, PM, PL, FC}, columns and rows."}
 
 state = {}
+open_browser = webbrowser.open  # the user's browser; tests put a stand-in here
 
 
 def log(*parts):
     print("report_server:", *parts, file=sys.stderr, flush=True)
 
 
+def schema_cache():
+    return os.path.join(os.path.dirname(S.CACHE), "render_visual.schema.json")
+
+
 def chart_schema():
-    """render_visual's own input schema from the Zebra BI MCP, cached; a generic one when it cannot be read.
-    One attempt per session, so an offline start does not slow every tools/list."""
-    if "schema" in state:
+    """render_visual's own input schema: the live one from the Zebra BI MCP once signed in, cached; before that the
+    copy this plugin ships; a generic one when neither can be read. One live attempt per session, so an offline start
+    does not slow every tools/list."""
+    if state.get("schema_from") in ("cache", "live"):
         return state["schema"]
-    state["schema"] = GENERIC_CHART
     try:
-        with open(SCHEMA_CACHE, encoding="utf-8") as f:
-            state["schema"] = json.load(f)
+        with open(schema_cache(), encoding="utf-8") as f:
+            state.update(schema=json.load(f), schema_from="cache")
             return state["schema"]
     except (OSError, ValueError):
         pass
-    try:
-        res = S.rpc("tools/list", {}, timeout=15)
-        for tool in res.get("tools") or []:
-            if isinstance(tool, dict) and tool.get("name") == "render_visual" and isinstance(tool.get("inputSchema"), dict):
-                S.write_atomic(SCHEMA_CACHE, json.dumps(tool["inputSchema"]))
-                state["schema"] = tool["inputSchema"]
-                return state["schema"]
-    except (S.SignIn, S.Unavailable, SystemExit, Exception) as e:  # schema is a nicety; never block tools/list
-        log("render_visual schema unavailable:", e)
-    return GENERIC_CHART
+    if not state.get("schema_tried") and auth()["signed_in"]:
+        state["schema_tried"] = True
+        try:
+            res = S.rpc("tools/list", {}, timeout=15)
+            for tool in res.get("tools") or []:
+                if isinstance(tool, dict) and tool.get("name") == "render_visual" and isinstance(tool.get("inputSchema"), dict):
+                    S.write_atomic(schema_cache(), json.dumps(tool["inputSchema"]))
+                    state.update(schema=tool["inputSchema"], schema_from="live")
+                    return state["schema"]
+        except (S.SignIn, S.Unavailable, SystemExit, Exception) as e:  # schema is a nicety; never block tools/list
+            log("render_visual schema unavailable:", e)
+    if "schema" not in state:
+        try:
+            with open(SHIPPED_SCHEMA, encoding="utf-8") as f:
+                state.update(schema=json.load(f), schema_from="shipped")
+        except (OSError, ValueError) as e:
+            log("the shipped render_visual schema is unavailable:", e)
+            state.update(schema=GENERIC_CHART, schema_from="generic")
+    return state["schema"]
 
 
 def ui(entrypoints=False, app_only=False):
@@ -148,6 +169,7 @@ def tools():
     key = {"type": "string", "description": "The builder's key; the builder sends it."}
     obj = lambda props, req=(): dict({"type": "object", "properties": props}, **({"required": list(req)} if req else {}))
     write = {"readOnlyHint": False}
+    chart = chart_schema()
     return [
         {"name": "open_report", "title": "Zebra BI report",
          "description": "Open the Zebra BI report builder. With `report` (slug or title) it opens that report; without "
@@ -187,8 +209,9 @@ def tools():
                         "text must come from the chart's rows (IBCS: AC, PL, PY, ΔPL%; no cause the data does not show). "
                         "Send aggregated rows only, one per category. It joins `row` when that row has room (at most 3 "
                         "cells), else starts a new row. Returns Zebra BI's notes on the chart and any number in your text "
-                        "the chart does not hold.",
-         "inputSchema": obj({"chart": chart_schema(), "message": {"type": "string", "maxLength": R.MAX_MESSAGE},
+                        "the chart does not hold. Before the user signs in to Zebra BI the chart is saved and drawn "
+                        "after sign-in: keep building the draft.",
+         "inputSchema": obj({"chart": chart, "message": {"type": "string", "maxLength": R.MAX_MESSAGE},
                              "note": {"type": "string", "maxLength": R.MAX_TEXT},
                              "why": {"type": "string", "maxLength": R.MAX_MESSAGE},
                              "recipe": obj({k: {"type": "string"} for k in R.RECIPE_KEYS}),
@@ -238,8 +261,8 @@ def tools():
          "annotations": write},
         {"name": "replace_chart", "title": "Replace a chart",
          "description": "Redraw a chart cell with new render_visual arguments (new data, period or chart type). The "
-                        "cell keeps its place.",
-         "inputSchema": obj({"cell": {"type": "string"}, "chart": chart_schema(), "report": opt_report()}, ["cell", "chart"]),
+                        "cell keeps its place. Before the user signs in to Zebra BI it is saved and drawn after sign-in.",
+         "inputSchema": obj({"cell": {"type": "string"}, "chart": chart, "report": opt_report()}, ["cell", "chart"]),
          "annotations": write},
         {"name": "read_chart", "title": "Read a chart's numbers",
          "description": "The aggregated rows and arguments of one chart cell, by its id from open_report: what you need "
@@ -259,11 +282,25 @@ def tools():
                         "note beside it. Each chart is a live Zebra BI visual (editable with the Zebra BI add-in) with a "
                         "picture for everyone else. Needs Chrome, Edge or Chromium. Returns the file's path.",
          "inputSchema": obj({"report": opt_report()}), "annotations": {"readOnlyHint": False, "destructiveHint": False}},
+        {"name": "sign_in", "title": "Sign in to Zebra BI",
+         "description": "Open the Zebra BI sign-in page in the user's browser, so the report's charts can be drawn. Use "
+                        "when the user asks to sign in to Zebra BI (\"sign me in\"), or after a draft whose charts wait "
+                        "for sign-in. Returns at once with the page's address; the builder draws the charts as soon as "
+                        "the user has signed in there.",
+         "inputSchema": obj({}), "annotations": {"readOnlyHint": False, "openWorldHint": True}},
         {"name": "library", "title": "Reports for the builder", "description": "App only: reports and Recently deleted.",
          "inputSchema": obj({"app_key": key}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "get_report", "title": "Report for the builder", "description": "App only: one report with chart results.",
          "inputSchema": obj({"report": {"type": "string"}, "follow": {"type": "string", "enum": ["last", "thread", "none"]},
-                             "since": {"type": "integer"}, "app_key": key}), "annotations": {"readOnlyHint": True}, "_meta": app},
+                             "since": {"type": "integer"}, "draw": {"type": "boolean"}, "app_key": key}),
+         "annotations": {"readOnlyHint": True}, "_meta": app},
+        {"name": "draw_chart", "title": "Draw one chart", "description": "App only: draw one chart cell of a report.",
+         "inputSchema": obj({"report": {"type": "string"}, "cell": {"type": "string"}, "app_key": key}, ["report", "cell"]),
+         "annotations": {"readOnlyHint": False}, "_meta": app},
+        {"name": "start_sign_in", "title": "Sign in to Zebra BI", "description": "App only: open the Zebra BI sign-in page.",
+         "inputSchema": obj({"app_key": key}), "annotations": {"readOnlyHint": False, "openWorldHint": True}, "_meta": app},
+        {"name": "sign_out", "title": "Sign out of Zebra BI", "description": "App only: revoke and forget the Zebra BI sign-in.",
+         "inputSchema": obj({"app_key": key}), "annotations": {"readOnlyHint": False, "destructiveHint": True}, "_meta": app},
         {"name": "get_renderer", "title": "Zebra BI renderer", "description": "App only: the Zebra BI chart renderer page.",
          "inputSchema": obj({"app_key": key}), "annotations": {"readOnlyHint": True}, "_meta": app},
         {"name": "save_layout", "title": "Save the report layout", "description": "App only: save the builder's rows and title.",
@@ -382,26 +419,235 @@ def edit(slug, change):
     return text("%s (report %r)." % (msg, rep["title"]), {"report": slug, "rev": rep["rev"]})
 
 
-def draw(slug, vid, args):
-    """Render one chart into the report's cache; a readable error result when Zebra BI cannot draw it."""
+# ----- sign-in and Zebra BI's refusals -----
+
+SIGN_IN_ASK = 'the "Sign in to Zebra BI" button in the builder, or the user says "sign me in" and you call sign_in'
+EXPIRED = "Your Zebra BI sign-in has expired. Sign in again to draw the charts."
+# Zebra BI's sentences when it refuses a chart for the user's licence (ZAI: app/server/mcp/licence.py, denial_message).
+TRIAL_ENDED = re.compile(r"Zebra BI trial ended on (\d{1,2} [A-Z][a-z]{2} \d{4})")
+NO_EMAIL = re.compile(r"did not share a verified email address")
+NO_LICENCE = re.compile(r"no Zebra BI licen[cs]e \(.*?\) was found for the user's organi[sz]ation")
+LICENCE_LIKE = re.compile(r"licen[cs]e|subscription|\btrial\b", re.I)
+MAX_GHOST = {"columns": 24, "bars": 12}  # a ghost's columns or bars, however many rows the chart has
+
+
+def recognize(text):
+    """The refusal Zebra BI's sentence names, as the builder shows it once: {"kind", "message", "date"}. None when the
+    chart was refused for its own reasons (its arguments), which the chart shows itself. An unrecognized licence
+    sentence is "other" with Zebra BI's words, less any sentence about a trial."""
+    text = S.clean(text, 600)
+    m = TRIAL_ENDED.search(text)
+    if m:
+        return {"kind": "trial_ended", "date": m.group(1), "message": "Your Zebra BI trial ended on %s. Your report and its "
+                "texts stay; the charts need a Zebra BI licence." % m.group(1)}
+    if NO_EMAIL.search(text):
+        return {"kind": "no_verified_email", "date": None, "message": text}
+    if NO_LICENCE.search(text):
+        return {"kind": "no_licence", "date": None, "message": "Zebra BI found no licence for your company."}
+    if LICENCE_LIKE.search(text):
+        kept = [x for x in re.split(r"(?<=[.!?])\s+", text) if not re.search(r"\btrial\b", x, re.I)]
+        return {"kind": "other", "date": None, "message": " ".join(kept) or "Zebra BI did not draw the charts."}
+    return None
+
+
+def told(refusal):
+    """A refusal in words for the model: what happened, never an offer (the builder shows the user the next step)."""
+    kind = refusal["kind"]
+    if kind == "trial_ended":
+        return "the user's Zebra BI access ended on %s, and the charts need a Zebra BI licence" % refusal["date"]
+    if kind == "no_licence":
+        return "Zebra BI found no licence for the user's company"
+    if kind == "no_verified_email":
+        return ("Microsoft shared no verified email address for the user's account, so Zebra BI could not tell their "
+                "company (support@zebrabi.com helps)")
+    if kind == "expired":
+        return "the user's Zebra BI sign-in has expired"
+    return refusal["message"].rstrip(".")
+
+
+def kept_entry():
+    """The sign-in kept for this Zebra BI MCP, or None."""
+    entry = S.load_auth().get(S.ENDPOINT)
+    return entry if isinstance(entry, dict) and isinstance(entry.get("access_token"), str) and entry["access_token"] else None
+
+
+def refusal_path():
+    return os.path.join(os.path.dirname(S.AUTH), "refusal.json")
+
+
+def token_id(entry):
+    """Names one sign-in without its token: a refusal recorded under it is forgotten when the user signs in again."""
+    return hashlib.sha256(("%s %s" % (entry["access_token"], entry.get("signed_in_at"))).encode("utf-8")).hexdigest()[:16]
+
+
+def record(refusal):
+    entry = kept_entry()
+    if entry is None:
+        return
+    os.makedirs(os.path.dirname(S.AUTH), mode=0o700, exist_ok=True)
+    S.write_atomic(refusal_path(), json.dumps(dict(refusal, endpoint=S.ENDPOINT, sign_in=token_id(entry), at=int(time.time()))),
+                   mode=0o600)
+
+
+def recorded(entry):
+    """The refusal recorded under this sign-in, else None."""
+    path = refusal_path()
+    if entry is None or os.path.islink(path):
+        return None
     try:
-        return R.render(os.path.dirname(R.path_for(slug)), vid, args), None
-    except S.SignIn:
-        return None, text("Zebra BI needs sign-in before charts can be drawn. Ask the user to run: %s" % S.SIGN_IN_CMD, error=True)
+        with open(path, encoding="utf-8") as f:
+            r = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(r, dict) and r.get("endpoint") == S.ENDPOINT and r.get("sign_in") == token_id(entry)
+            and r.get("kind") in ("trial_ended", "no_licence", "no_verified_email", "expired", "other")):
+        return None
+    return {"kind": r["kind"], "message": str(r.get("message") or ""), "date": r.get("date")}
+
+
+def forget_refusal():
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(refusal_path())
+
+
+def auth():
+    """The auth block the builder polls: whether the user is signed in to Zebra BI, the browser sign-in's state and
+    page, and the refusal that keeps the charts from being drawn. A kept sign-in past its expiry, or one Zebra BI turned
+    away, is the refusal "expired"; with no sign-in kept there is none."""
+    entry, flow = kept_entry(), S.sign_in_state()
+    refusal = recorded(entry)
+    live = entry is not None and (not entry.get("expires_at") or time.time() < entry["expires_at"] - 60
+                                  or bool(entry.get("refresh_token")))
+    if entry is not None and not live:
+        refusal = {"kind": "expired", "message": EXPIRED, "date": None}
+    signed_in = live and not (refusal and refusal["kind"] == "expired")
+    st = flow["state"] if flow["state"] != "idle" else "signed_in" if signed_in else "idle"
+    return {"signed_in": signed_in, "state": st, "url": flow.get("url"), "refusal": refusal}
+
+
+def start_sign_in():
+    """Start the browser sign-in, or find the one waiting, and open its page: (url, whether the browser opened)."""
+    url = S.begin_sign_in()
+    try:
+        shown = bool(open_browser(url))
+    except Exception as e:  # no browser here: the host opens the page from the URL
+        log("cannot open the browser:", e)
+        shown = False
+    return url, shown
+
+
+class Wait:
+    """A chart that waits: for sign-in (refusal None), or for what Zebra BI's refusal names."""
+
+    def __init__(self, refusal=None):
+        self.refusal = refusal
+
+
+def draw(slug, vid, args, signed=None):
+    """(result, None) for a chart drawn now or before; (None, Wait) for one that waits for sign-in or for what Zebra
+    BI's refusal names, which is recorded for the auth block; (None, error result) when Zebra BI cannot draw it for its
+    own reasons. Without sign-in Zebra BI is not asked. signed is auth() when the caller has it."""
+    folder = os.path.dirname(R.path_for(slug))
+    res = R.cached(folder, vid, args)
+    if res is not None:
+        return res, None
+    signed = signed or auth()
+    if not signed["signed_in"]:
+        return None, Wait(signed["refusal"])
+    try:
+        res = R.render(folder, vid, args)
+    except S.SignIn:  # a kept token Zebra BI no longer takes
+        refusal = {"kind": "expired", "message": EXPIRED, "date": None}
+        record(refusal)
+        return None, Wait(refusal)
+    except R.Refused as e:
+        refusal = recognize(e.text)
+        if refusal is None:
+            return None, text("The chart was not drawn: %s" % S.clean(e, 600), error=True)
+        record(refusal)
+        return None, Wait(refusal)
     except (S.Unavailable, ValueError, SystemExit) as e:
         return None, text("The chart was not drawn: %s" % S.clean(e, 600), error=True)
+    if signed["refusal"]:
+        forget_refusal()  # drawn: whatever kept the charts back is over
+    return res, None
 
 
-def results_for(rep, slug):
-    """render_visual results for every chart in the report, drawing the ones not cached yet."""
-    out, errors = {}, {}
+def waits(lead, wait):
+    """What the model is told about a chart saved but not drawn: why it waits and what to do next."""
+    r = wait.refusal
+    if r is None:
+        return ("%s It is drawn when the user signs in to Zebra BI. Keep building the whole draft (every chart, the key "
+                "message, the KPI tiles, the layout), then end your reply by inviting the user to sign in to Zebra BI: %s."
+                % (lead, SIGN_IN_ASK))
+    if r["kind"] == "expired":
+        return ("%s The user's Zebra BI sign-in has expired, so it is drawn when they sign in again. Keep building the "
+                "draft, then end your reply by inviting the user to sign in to Zebra BI again: %s." % (lead, SIGN_IN_ASK))
+    return ("%s Zebra BI did not draw it: %s. It stays in the report and every text stays. Keep building the draft; the "
+            "builder shows the user the next step, so end your reply by saying in one line that the charts are not drawn "
+            "and why." % (lead, told(r)))
+
+
+def results_for(rep, slug, draw_now=True):
+    """render_visual results for the report's charts, drawing the ones not cached yet (draw_now=False: cached only).
+    Returns (results, errors by chart, the Wait of each chart that waits). After one chart waits, the rest wait
+    without asking Zebra BI again."""
+    out, errors, waiting, stop = {}, {}, {}, None
+    folder, signed = os.path.dirname(R.path_for(slug)), auth()
     for vid, v in rep["visuals"].items():
-        res, err = draw(slug, vid, v["args"])
+        res = R.cached(folder, vid, v["args"])
         if res is not None:
             out[vid] = res
+            continue
+        if not draw_now:
+            continue
+        if stop is not None:
+            waiting[vid] = stop
+            continue
+        res, err = draw(slug, vid, v["args"], signed)
+        if res is not None:
+            out[vid] = res
+        elif isinstance(err, Wait):
+            waiting[vid] = stop = err
         else:
             errors[vid] = err["content"][0]["text"]
-    return out, errors
+    return out, errors, waiting
+
+
+def ghost(args):
+    """The shape that stands in for a chart not drawn yet: columns for a time axis, else bars, one per row."""
+    rows = args.get("rows") if isinstance(args.get("rows"), list) else []
+    kind = "columns" if args.get("time_axis") else "bars"
+    return {"kind": kind, "count": max(1, min(len(rows), MAX_GHOST[kind]))}
+
+
+def with_cells(rep, results):
+    """A copy of the report for the builder, each chart cell saying whether it is drawn and its ghost's shape."""
+    out = json.loads(json.dumps(rep))
+    for row in out["rows"]:
+        for c in row["cells"]:
+            if c["type"] == "chart":
+                c["drawn"] = c["visual"] in results
+                c["ghost"] = ghost(rep["visuals"][c["visual"]]["args"])
+    return out
+
+
+def export_waits(slug, what):
+    """The error result an export gives while a chart is not drawn (after drawing what can be drawn now), else None."""
+    rep = R.load(R.path_for(slug))
+    _, _, waiting = results_for(rep, slug)
+    cells = [c["id"] for r in rep["rows"] for c in r["cells"] if c["type"] == "chart" and c["visual"] in waiting]
+    if not cells:
+        return None
+    lead = "No %s was saved: %d chart%s not drawn yet" % (what, len(cells), " is" if len(cells) == 1 else "s are")
+    r = next(iter(waiting.values())).refusal
+    if r is None:
+        why = "; the charts need Zebra BI sign-in first. Ask the user to sign in: %s." % SIGN_IN_ASK
+    elif r["kind"] == "expired":
+        why = "; the user's Zebra BI sign-in has expired, so the charts need sign-in again. Ask the user to sign in: %s." % SIGN_IN_ASK
+    else:
+        why = ": Zebra BI did not draw them (%s). The builder shows the user the next step." % told(r)
+    return text(lead + why, {"report": slug, "waiting": cells}, error=True)
 
 
 def call(name, args, thread):
@@ -452,14 +698,17 @@ def call(name, args, thread):
         probe = R.load(R.path_for(slug))
         vid, _ = add(probe)
         res, err = draw(slug, vid, probe["visuals"][vid]["args"])
-        if err:
+        if err and not isinstance(err, Wait):
             return err
         rep, (vid, row) = R.change(R.path_for(slug), add)
+        cid = next(c["id"] for r in rep["rows"] for c in r["cells"] if c.get("visual") == vid)
+        if isinstance(err, Wait):  # saved all the same: the draft never waits for sign-in
+            return text(waits("Saved chart %r to row %d of %r%s." % (R.chart_title(rep, vid), row, rep["title"], unchecked(rep, cid)),
+                              err), {"report": slug, "rev": rep["rev"], "drawn": False})
         if vid not in probe["visuals"]:  # the id moved on meanwhile; the builder draws it from the same arguments
             res = draw(slug, vid, rep["visuals"][vid]["args"])[0] or res
-        cid = next(c["id"] for r in rep["rows"] for c in r["cells"] if c.get("visual") == vid)
         return text("Added chart %r to row %d of %r. Zebra BI: %s%s" % (R.chart_title(rep, vid), row, rep["title"],
-                    R.server_note(res), unchecked(rep, cid)), {"report": slug, "rev": rep["rev"]})
+                    R.server_note(res), unchecked(rep, cid)), {"report": slug, "rev": rep["rev"], "drawn": True})
     if name == "set_key_message":
         return edit(target(args, thread), lambda rep: R.set_key_message(rep, args.get("text"))
                     or "Key message set%s" % unchecked(rep, "key_message"))
@@ -485,11 +734,14 @@ def call(name, args, thread):
         probe = R.load(R.path_for(slug))  # drawn first, saved under the lock after, as add_chart
         vid = swap(probe)
         res, err = draw(slug, vid, probe["visuals"][vid]["args"])
-        if err:
+        if err and not isinstance(err, Wait):
             return err
         rep, vid = R.change(R.path_for(slug), swap)
+        if isinstance(err, Wait):
+            return text(waits("Replaced chart %s with %r in %r." % (args.get("cell"), R.chart_title(rep, vid), rep["title"]), err),
+                        {"report": slug, "rev": rep["rev"], "drawn": False})
         return text("Replaced chart %s with %r in %r. Zebra BI: %s" % (args.get("cell"), R.chart_title(rep, vid), rep["title"],
-                    R.server_note(res)), {"report": slug, "rev": rep["rev"]})
+                    R.server_note(res)), {"report": slug, "rev": rep["rev"], "drawn": True})
     if name == "show_notes":
         def change(rep):
             rep["show_notes"] = bool(args.get("show"))
@@ -511,6 +763,9 @@ def call(name, args, thread):
                      "note": cell.get("note"), "why": cell.get("why"), "recipe": cell.get("recipe")})
     if name == "save_pdf":
         slug = target(args, thread)
+        wait = export_waits(slug, "PDF")
+        if wait:
+            return wait
         found = R.flags(R.load(R.path_for(slug)))
         if found:
             return text("No PDF was saved: these numbers are not in their charts: %s. Fix them, or the user keeps them "
@@ -527,6 +782,9 @@ def call(name, args, thread):
         return text(pdf_saved(shown, pages, layout), {"report": slug, "file": out, "shown": shown, "pages": pages})
     if name == "save_pptx":
         slug = target(args, thread)
+        wait = export_waits(slug, "PowerPoint")
+        if wait:
+            return wait
         found = R.flags(R.load(R.path_for(slug)))
         if found:
             return text("No PowerPoint was saved: these numbers are not in their charts: %s. Fix them, or the user keeps "
@@ -545,9 +803,47 @@ def call(name, args, thread):
         shown = home_relative(out)
         return text("Saved %s (%d slides). It holds the report's aggregated numbers, so share it only where the data may go."
                     % (shown, slides), {"report": slug, "file": out, "shown": shown, "slides": slides})
+    if name == "sign_in":
+        signed = auth()
+        if signed["signed_in"] and not signed["refusal"]:
+            return text("The user is already signed in to Zebra BI; the builder draws the charts.",
+                        {"url": None, "opened": False, "signed_in": True})
+        try:
+            url, shown = start_sign_in()
+        except S.Failed as e:
+            return text(S.clean(e, 600), error=True)
+        if shown:
+            return text("The Zebra BI sign-in page opened in the user's browser. The builder draws the charts as soon as "
+                        "they have signed in there; tell the user so in one line.", {"url": url, "opened": True})
+        return text("The Zebra BI sign-in page could not be opened from here; open it for the user: %s. The builder draws "
+                    "the charts as soon as they have signed in there." % url, {"url": url, "opened": False})
     # ----- app only -----
     if name == "library":
-        return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last()})
+        return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last(),
+                                "auth": auth()})
+    if name == "start_sign_in":
+        try:
+            url, shown = start_sign_in()
+        except S.Failed as e:
+            return text(S.clean(e, 600), {"auth": auth()}, error=True)
+        return text("sign-in", {"url": url, "opened": shown, "auth": auth()})
+    if name == "sign_out":
+        n = S.sign_out(say=lambda line, warning=False: log(line))  # never print: stdout is the JSON-RPC stream
+        forget_refusal()
+        return text("signed out", {"signed_out": n, "auth": auth()})
+    if name == "draw_chart":
+        slug = args.get("report")
+        if not R.exists(slug):
+            return text("gone", {"gone": True, "report": slug})
+        rep = R.load(R.path_for(slug))
+        ri, ci = R.locate(rep, args.get("cell"))
+        cell = rep["rows"][ri]["cells"][ci]
+        if cell["type"] != "chart":
+            raise ValueError("cell %s is text, not a chart" % args.get("cell"))
+        res, err = draw(slug, cell["visual"], rep["visuals"][cell["visual"]]["args"])
+        return text("drawn" if res is not None else "not drawn",
+                    {"cell": cell["id"], "visual": cell["visual"], "drawn": res is not None, "result": res,
+                     "error": None if err is None or isinstance(err, Wait) else err["content"][0]["text"], "auth": auth()})
     if name == "get_report":
         slug, follow = args.get("report"), args.get("follow") or "none"
         if slug and not R.exists(slug):  # deleted: say so, rather than follow on to another report
@@ -558,15 +854,18 @@ def call(name, args, thread):
         if not slug or not R.exists(slug):
             return text("gone", {"gone": True, "report": slug})
         rep = R.load(R.path_for(slug))
-        if args.get("since") is not None and args["since"] == rep["rev"]:
-            return text("unchanged", {"unchanged": True, "rev": rep["rev"]})
-        results, errors = results_for(rep, slug)
-        return text("report %s rev %d" % (rep["title"], rep["rev"]), {"report": rep, "slug": slug, "results": results, "errors": errors,
-                                                                     "checks": R.checks(rep)})
+        if args.get("since") is not None and args["since"] == rep["rev"]:  # the poll still learns a sign-in
+            return text("unchanged", {"unchanged": True, "rev": rep["rev"], "auth": auth()})
+        results, errors, _ = results_for(rep, slug, args.get("draw") is not False)
+        return text("report %s rev %d" % (rep["title"], rep["rev"]), {"report": with_cells(rep, results), "slug": slug,
+                                                                     "results": results, "errors": errors,
+                                                                     "checks": R.checks(rep), "auth": auth()})
     if name == "get_renderer":
         try:
-            rpath, meta = S.renderer()
-        except SystemExit as e:
+            rpath, meta = S.renderer(raises=True)
+        except S.SignIn:
+            return text("The Zebra BI renderer comes with sign-in to Zebra BI.", {"needs_sign_in": True, "auth": auth()}, error=True)
+        except (S.Unavailable, SystemExit) as e:
             return text("The Zebra BI renderer is unavailable: %s" % S.clean(e, 300), error=True)
         with open(rpath, encoding="utf-8") as f:
             return text("renderer %s" % meta.get("sha256", "")[:12], {"renderer": f.read(), "sha256": meta.get("sha256")})

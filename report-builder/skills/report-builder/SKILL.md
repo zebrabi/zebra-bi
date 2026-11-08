@@ -1,6 +1,6 @@
 ---
 name: report-builder
-description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'make the close report', 'make it a one-pager', 'make a board pack', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', 'make it a deck', 'save it as PowerPoint', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
+description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'make the close report', 'make it a one-pager', 'make a board pack', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', 'make it a deck', 'save it as PowerPoint', 'sign me in to Zebra BI', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
 license: Apache-2.0
 ---
 
@@ -9,6 +9,14 @@ license: Apache-2.0
 The report builder is an app the user sees beside the chat or full screen. The reports are files in `~/Zebra BI Reports/` on the user's computer (`~/Documents/Zebra BI Reports/` on Windows and Linux); nothing about a report is kept on a Zebra BI server. Charts are drawn by Zebra BI (`render_visual`) and sent as aggregated rows only, one row per category.
 
 If the `open_report` and `add_chart` tools are not available here, say in one line that the Zebra BI report builder is not installed in this app, and stop.
+
+## Sign-in
+
+Zebra BI draws the charts once the user has signed in to Zebra BI; everything else in a report works without it. Never wait for sign-in and never stop a draft for it: without it `add_chart` and `replace_chart` save the chart, and the builder shows a grey placeholder in its place until it is drawn.
+
+- "Sign me in", "sign in to Zebra BI": `sign_in`. It opens the Zebra BI sign-in page in the user's browser and returns at once; say in one line that the page is open and the charts appear in the builder once they have signed in. If it says the page could not be opened, give the user the address it returns.
+- The user can also sign in with the builder's "Sign in to Zebra BI" button; that is the same sign-in.
+- When a tool says Zebra BI did not draw a chart because of the user's licence or an expired sign-in, keep building and say it once at the end in one line. The builder shows the user what to do next. Never mention a trial.
 
 ## Which report
 
@@ -44,7 +52,7 @@ When the user gives you numbers and asks for a report ("make the October close r
    - `one-pager` for a reader with a minute: largest variances first, up to three charts a row, notes hidden, and the PDF prints it on one landscape page (if it is too long to read at that size, `save_pdf` says so; fewer charts fit it);
    - `board-pack` for a pack sent ahead of a meeting: largest variances first, notes shown, and the PDF puts the key message and KPI tiles on a cover and each chart on its own page, its message as the heading.
    A layout keeps the same charts and text; switching shows or hides the notes as above.
-7. Tell the user in two or three lines what the draft holds and offer the next step. Do not paste the chart data into the chat.
+7. Tell the user in two or three lines what the draft holds and offer the next step. Do not paste the chart data into the chat. When the charts wait for sign-in (`add_chart` says so), end the reply by inviting the user to sign in to Zebra BI so the charts are drawn: the "Sign in to Zebra BI" button in the builder, or they say "sign me in".
 
 IBCS, the notation Zebra BI charts use, applies to every text (the `data-story` skill's `references/ibcs-narrative.md` has the full rules): AC, PL, PY, FC; ΔPY, ΔPL and ΔPY% for variances; the unit once per chart; chart `title` is the reporting unit and measure and `subtitle` the unit, period and scenarios, never the message; round for reading; no decoration words ("significant", "notable"); a cost that went down is "down" or "below PL", never "a positive variance".
 
@@ -72,6 +80,8 @@ The user can do all of this in the builder too: drag cells by the grip, edit the
 ## Sharing
 
 The report is a file on this computer, in its folder `~/Zebra BI Reports/<name>` on macOS and `~/Documents/Zebra BI Reports/<name>` elsewhere (or under `ZEBRA_BI_REPORTS` when that is set).
+
+Exports need every chart drawn: while one waits for sign-in, `save_pdf` and `save_pptx` save nothing and say so; invite the user to sign in first.
 
 - "Save it as a PDF": `save_pdf`. It prints an A4 PDF into the report's folder, its charts and texts side by side as in the builder, and returns the path; give the path, and say in one line that the PDF holds the report's aggregated numbers, so it goes only where the data may go. In the builder the same is ⋯ → Save as PDF.
 - A page to share (Claude Code only): `story-artifact` builds the report from its folder, rows included.

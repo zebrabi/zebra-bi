@@ -1,0 +1,241 @@
+{
+ "additionalProperties": false,
+ "description": "The render_visual arguments. Also the source of the input schema the host sees.",
+ "properties": {
+  "title": {
+   "description": "Visual title, plain text.",
+   "maxLength": 200,
+   "minLength": 1,
+   "type": "string"
+  },
+  "subtitle": {
+   "anyOf": [
+    {
+     "maxLength": 300,
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "description": "Optional subtitle, plain text, e.g. the unit and period: 'EUR, FY2025'."
+  },
+  "chart_type": {
+   "description": "variance compares actuals with a scenario (needs Val plus PY, PM, PL or FC); bar and pin show one series; waterfall shows contributions; line and area show trends over time.",
+   "enum": [
+    "variance",
+    "bar",
+    "pin",
+    "waterfall",
+    "line",
+    "area"
+   ],
+   "type": "string"
+  },
+  "category_columns": {
+   "description": "Category column(s). One column, or two for a hierarchy (parent first). A time axis cannot be part of a hierarchy.",
+   "items": {
+    "maxLength": 100,
+    "minLength": 1,
+    "type": "string"
+   },
+   "maxItems": 2,
+   "minItems": 1,
+   "type": "array"
+  },
+  "time_axis": {
+   "anyOf": [
+    {
+     "enum": [
+      "year",
+      "semester",
+      "quarter",
+      "month",
+      "yearmonth",
+      "date"
+     ],
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "description": "Set when the category column is a time period, so it is drawn as a chart: year for integer years (2025), semester for half-years (H1 or 2025-H1), quarter for quarters (Q1 or 2025-Q1), month for month names (Jan or January), yearmonth for YYYY-MM (2025-01), date for days as YYYY-MM-DD (2025-01-31). Send the rows in time order. Leave it out for any other category."
+  },
+  "measure": {
+   "additionalProperties": false,
+   "description": "Measure on the value axis. Values are column names from columns.",
+   "properties": {
+    "name": {
+     "description": "Display name of the measure, e.g. 'Revenue'.",
+     "maxLength": 100,
+     "minLength": 1,
+     "type": "string"
+    },
+    "Val": {
+     "description": "Column with the actual values (AC).",
+     "maxLength": 100,
+     "minLength": 1,
+     "type": "string"
+    },
+    "PY": {
+     "anyOf": [
+      {
+       "maxLength": 100,
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Column with previous-year values."
+    },
+    "PM": {
+     "anyOf": [
+      {
+       "maxLength": 100,
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Column with previous-month values. Use either PY or PM, not both."
+    },
+    "PL": {
+     "anyOf": [
+      {
+       "maxLength": 100,
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Column with plan or budget values."
+    },
+    "FC": {
+     "anyOf": [
+      {
+       "maxLength": 100,
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Column with forecast values."
+    }
+   },
+   "required": [
+    "name",
+    "Val"
+   ],
+   "type": "object"
+  },
+  "negative_impact": {
+   "default": false,
+   "description": "True when an increase is bad, e.g. costs or expenses. Flips the variance colours.",
+   "type": "boolean"
+  },
+  "sort_by": {
+   "anyOf": [
+    {
+     "enum": [
+      "Val",
+      "PY",
+      "PM",
+      "PL",
+      "FC",
+      "variance_abs_py",
+      "variance_abs_pm",
+      "variance_abs_pl",
+      "variance_abs_fc",
+      "variance_rel_py",
+      "variance_rel_pm",
+      "variance_rel_pl",
+      "variance_rel_fc"
+     ],
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "description": "Scenario or variance to sort categories by. Ignored for a time_axis and line or area charts."
+  },
+  "sort_order": {
+   "anyOf": [
+    {
+     "enum": [
+      "ascending",
+      "descending"
+     ],
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "description": "Required together with sort_by."
+  },
+  "columns": {
+   "description": "Column names of the rows.",
+   "items": {
+    "maxLength": 100,
+    "minLength": 1,
+    "type": "string"
+   },
+   "maxItems": 50,
+   "minItems": 2,
+   "type": "array"
+  },
+  "rows": {
+   "description": "Pre-aggregated rows in the order of columns, one per category combination.",
+   "items": {
+    "type": "array",
+    "maxItems": 50,
+    "items": {
+     "anyOf": [
+      {
+       "type": "number",
+       "minimum": -1e+18,
+       "maximum": 1e+18
+      },
+      {
+       "type": "string",
+       "maxLength": 200
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "minItems": 1,
+   "type": "array",
+   "maxItems": 10000
+  }
+ },
+ "required": [
+  "title",
+  "chart_type",
+  "category_columns",
+  "measure",
+  "columns",
+  "rows"
+ ],
+ "type": "object"
+}

@@ -55,6 +55,14 @@ class Conflict(Exception):
     """The report changed since the editor last read it."""
 
 
+class Refused(ValueError):
+    """Zebra BI answered render_visual with an error result; text is its sentence, which says why."""
+
+    def __init__(self, text):
+        self.text = text
+        super().__init__("Zebra BI refused the chart: %s" % text)
+
+
 PLATFORM = sys.platform
 LEGACY = "~/Documents/Zebra BI Reports"
 _legacy_checked = False
@@ -885,9 +893,17 @@ def to_deck(rep):
     return story
 
 
+def cached(report_dir, vid, args):
+    """The cached render_visual result for one chart when its args are unchanged and ENDPOINT drew it, else None."""
+    out = os.path.join(report_dir, "visuals", vid + ".json")
+    if os.path.islink(os.path.dirname(out)):
+        return None
+    return S.cached_result(out, S.args_hash(args))
+
+
 def render(report_dir, vid, args):
     """The render_visual result for one chart, from visuals/<vid>.json when the args are unchanged, else drawn by
-    the Zebra BI MCP and cached. Raises S.SignIn or S.Unavailable; never prints or exits."""
+    the Zebra BI MCP and cached. Raises S.SignIn, S.Unavailable or Refused; never prints or exits."""
     vdir = os.path.join(report_dir, "visuals")
     if os.path.islink(vdir):
         raise S.Unavailable("%s is a symbolic link" % vdir)
@@ -901,7 +917,7 @@ def render(report_dir, vid, args):
     res = res if isinstance(res, dict) else {}
     content = [c for c in res.get("content") or [] if isinstance(c, dict)] if isinstance(res.get("content"), list) else []
     if res.get("isError"):
-        raise ValueError("Zebra BI refused the chart: %s" % S.clean(" ".join(str(c.get("text", "")) for c in content)))
+        raise Refused(S.clean(" ".join(str(c.get("text", "")) for c in content)))
     sc = res.get("structuredContent")
     if not (isinstance(sc, dict) and isinstance(sc.get("visual"), dict) and sc["visual"]):
         raise S.Unavailable("render_visual returned no chart for %r" % vid)
