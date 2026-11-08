@@ -222,8 +222,14 @@
     });
   }
   function notify(method, params) { window.parent.postMessage({ jsonrpc: '2.0', method: method, params: params || {} }, '*'); }
+  // The server puts its key here when the host reads this page, and refuses its builder-only tools without it.
+  var APP_KEY = '__ZEBRA_BI_APP_KEY__';
+  var APP_ONLY = ['library', 'get_report', 'get_renderer', 'save_layout', 'purge_report'];
   function callTool(name, args) {
-    return request('tools/call', { name: name, arguments: args || {} }).then(function (r) {
+    var a = {}, k;
+    for (k in args || {}) a[k] = args[k];
+    if (APP_ONLY.indexOf(name) >= 0) a.app_key = APP_KEY;
+    return request('tools/call', { name: name, arguments: a }).then(function (r) {
       if (r && r.isError) {
         var err = new Error((r.content || []).map(function (c) { return c.text || ''; }).join(' ') || name + ' failed');
         err.result = r; throw err;

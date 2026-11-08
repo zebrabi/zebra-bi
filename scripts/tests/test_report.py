@@ -3,7 +3,7 @@
 Nothing goes over the network: charts come from visuals/<id>.json written by the test, and the server runs with
 ZEBRA_BI_MCP_URL on a closed loopback port, so an uncached chart fails fast instead of drawing.
 """
-import datetime as dt, hashlib, json, os, shutil, subprocess, sys, tempfile, time, unittest
+import datetime as dt, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -18,6 +18,7 @@ ARGS = {"title": "Sales by region", "chart_type": "variance", "category_columns"
 RESULT = {"content": [{"type": "text", "text": "Rendered a variance table."}], "isError": False,
           "structuredContent": {"visual": {"title": "Sales by region", "ycol_ac": [{"value": 226.3}]}}}
 FAKE_MCP = "http://127.0.0.1:9/mcp"  # nothing listens there
+APP_ONLY = ("library", "get_report", "get_renderer", "save_layout", "purge_report")
 
 
 def cache(report_dir, vid, args, result=RESULT, endpoint=None):
@@ -690,8 +691,21 @@ class Proc:
         assert msg["id"] == self.n, msg
         return msg
 
+    def page(self):
+        """The builder page's address and text, as the host reads them."""
+        uri = self.rpc("resources/list")["result"]["resources"][0]["uri"]
+        return uri, self.rpc("resources/read", {"uri": uri})["result"]["contents"][0]["text"]
+
+    def key(self):
+        """The builder's key, from the page the server hands the host."""
+        if not getattr(self, "app_key", None):
+            self.app_key = re.search(r"var APP_KEY = '([0-9a-f]{64})';", self.page()[1]).group(1)
+        return self.app_key
+
     def tool(self, name, args=None, thread=None):
-        params = {"name": name, "arguments": args or {}}
+        """A tool call as the host makes it; an app-only tool carries the builder's key, as the builder sends it."""
+        args = dict(args or {}, **({"app_key": self.key()} if name in APP_ONLY else {}))
+        params = {"name": name, "arguments": args}
         if thread:
             params["_meta"] = {"threadId": thread}
         return self.rpc("tools/call", params)["result"]
@@ -721,7 +735,7 @@ class Server(unittest.TestCase):
         tools = {t["name"]: t for t in self.rpc("tools/list")["result"]["tools"]}
         self.assertEqual(tools["open_report"]["_meta"]["openai/ui"]["entrypoints"], [{"type": "global"}, {"type": "thread"}])
         self.assertRegex(tools["open_report"]["_meta"]["ui"]["resourceUri"], r"^ui://zebra-bi/report-builder-[0-9a-f]{12}\.html$")
-        for app_only in ("library", "get_report", "get_renderer", "save_layout", "purge_report"):
+        for app_only in APP_ONLY:
             self.assertEqual(tools[app_only]["_meta"]["ui"]["visibility"], ["app"])
         self.assertFalse(tools["delete_report"]["annotations"]["destructiveHint"])  # restorable
         self.assertTrue(tools["purge_report"]["annotations"]["destructiveHint"])
@@ -790,16 +804,93 @@ class Server(unittest.TestCase):
                          "error: the slide has no room for the chart")
         self.assertEqual(RS.exit_reason(SystemExit("Not built: 99.0"), ""), "Not built: 99.0")
 
+    def app_only_calls(self, slug):
+        return (("library", {}), ("get_report", {"report": slug}), ("get_renderer", {}), ("purge_report", {"entry": "x"}),
+                ("save_layout", {"report": slug, "rev": 1, "rows": [], "kept": ["99.0"]}))
+
     def test_app_only_tools_refuse_a_model_turn(self):
         slug, _ = self.drafted()
         turn = {"x-codex-turn-metadata": {"thread_id": "t1"}, "threadId": "t1"}  # a model's call in ChatGPT carries this
-        for name, args in (("library", {}), ("get_report", {"report": slug}), ("purge_report", {"entry": "x"}),
-                           ("save_layout", {"report": slug, "rev": 1, "rows": [], "kept": ["99.0"]})):
+        for name, args in self.app_only_calls(slug):
+            args = dict(args, app_key=self.server.key())  # refused even with the key
             out = self.rpc("tools/call", {"name": name, "arguments": args, "_meta": turn})["result"]
             self.assertTrue(out.get("isError"), name)
             self.assertIn("report builder app", out["content"][0]["text"])
         self.assertFalse(self.tool("library").get("isError"))  # the app's own call carries no model turn
         self.assertEqual(self.report(slug)["checks"], {"cells": {"c1": {"note": ["99.0"]}}})  # nothing was kept
+
+    def test_app_only_tools_need_the_builder_key(self):
+        # a host that does not mark the model's calls still cannot reach them: the key is only in the builder page
+        slug, _ = self.drafted()
+        for key in (None, "", "0" * 64, self.server.key()[:-1], self.server.key().upper(), 7, "é"):
+            for name, args in self.app_only_calls(slug):
+                args = dict(args, **({} if key is None else {"app_key": key}))
+                out = self.rpc("tools/call", {"name": name, "arguments": args})["result"]
+                self.assertTrue(out.get("isError"), (name, key))
+                self.assertIn("report builder app", out["content"][0]["text"])
+        self.assertFalse(self.tool("library").get("isError"))
+        self.assertEqual(self.report(slug)["checks"], {"cells": {"c1": {"note": ["99.0"]}}})  # nothing was kept
+
+    def test_the_page_sends_the_key_to_exactly_the_app_only_tools(self):
+        page = self.server.page()[1]
+        self.assertNotIn("__ZEBRA_BI_APP_KEY__", page)
+        self.assertEqual(page.count(self.server.key()), 1)
+        sent = re.findall(r"'(\w+)'", re.search(r"var APP_ONLY = \[([^\]]*)\];", page).group(1))
+        tools = self.rpc("tools/list")["result"]["tools"]
+        app_only = [t for t in tools if t.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]]
+        self.assertEqual(sorted(sent), sorted(t["name"] for t in app_only))
+        for t in app_only:
+            self.assertIn("app_key", t["inputSchema"]["properties"], t["name"])
+
+    def test_every_process_shares_one_private_key(self):
+        uri = self.server.page()[0]
+        path = os.path.join(self.tmp, "data", "report-builder.key")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        other = Proc(self.tmp)  # a host starts a process per surface; the page from one must work with another
+        try:
+            self.assertEqual(other.page()[0], uri)
+            out = other.rpc("tools/call", {"name": "library", "arguments": {"app_key": self.server.key()}})["result"]
+            self.assertFalse(out.get("isError"), out)
+        finally:
+            other.close()
+        os.remove(path)  # a new key gives the page a new address, so a host never keeps a page with the old one
+        fresh = Proc(self.tmp)
+        try:
+            self.assertNotEqual(fresh.page()[0], uri)
+            out = fresh.rpc("tools/call", {"name": "library", "arguments": {"app_key": self.server.key()}})["result"]
+            self.assertTrue(out.get("isError"))
+        finally:
+            fresh.close()
+
+    def test_a_broken_key_file_is_replaced(self):
+        os.makedirs(os.path.join(self.tmp, "data"), exist_ok=True)
+        path = os.path.join(self.tmp, "data", "report-builder.key")
+        for broken in (b"not a key", b"\xff\xfe" + b"0" * 62):
+            with open(path, "wb") as f:
+                f.write(broken)
+            fresh = Proc(self.tmp)
+            try:
+                key = fresh.key()
+                with open(path) as f:
+                    self.assertEqual(f.read(), key)
+            finally:
+                fresh.close()
+
+    def test_without_a_key_the_chat_tools_still_work(self):
+        data = os.path.join(self.tmp, "data")
+        os.makedirs(data, exist_ok=True)
+        os.chmod(data, 0o500)  # the key cannot be written
+        try:
+            locked = Proc(self.tmp)
+            try:
+                self.assertIn("create_report", [t["name"] for t in locked.rpc("tools/list")["result"]["tools"]])
+                self.assertFalse(locked.tool("create_report", {"title": "October"}).get("isError"))
+                out = locked.rpc("tools/call", {"name": "library", "arguments": {"app_key": "0" * 64}})["result"]
+                self.assertTrue(out.get("isError"), out)
+            finally:
+                locked.close()
+        finally:
+            os.chmod(data, 0o700)
 
     def test_save_pptx_refuses_while_numbers_are_flagged(self):
         slug, _ = self.drafted()
