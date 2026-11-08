@@ -9,6 +9,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 import report as R  # noqa: E402
+
+R._legacy_checked = True  # a test never moves the real ~/Documents reports
 import story as S  # noqa: E402
 
 SERVER = os.path.join(os.path.dirname(HERE), "report_server.py")
@@ -664,6 +666,71 @@ class Files(unittest.TestCase):
         cache(d, "sales-by-region", ARGS)
         self.assertEqual(R.render(d, "sales-by-region", ARGS), RESULT)
         self.assertEqual(R.server_note(RESULT), "Rendered a variance table.")
+
+
+class DefaultFolder(unittest.TestCase):
+    """On macOS the reports live in ~/Zebra BI Reports: privacy blocks ~/Documents for a server Claude Desktop starts.
+    Reports already in the old ~/Documents folder move over the first time a server that can reach them runs."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.saved = {k: os.environ.get(k) for k in ("HOME", "ZEBRA_BI_REPORTS")}
+        os.environ["HOME"] = self.home
+        os.environ.pop("ZEBRA_BI_REPORTS", None)
+        self.platform, R.PLATFORM = R.PLATFORM, "darwin"
+        R._legacy_checked = False
+        self.new = os.path.join(self.home, "Zebra BI Reports")
+        self.old = os.path.join(self.home, "Documents", "Zebra BI Reports")
+
+    def tearDown(self):
+        R.PLATFORM = self.platform
+        R._legacy_checked = True
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.home)
+
+    def old_report(self, slug="october-close"):
+        os.makedirs(os.path.join(self.old, slug))
+        with open(os.path.join(self.old, slug, R.FILE), "w") as f:
+            json.dump(R.new("October close"), f)
+
+    def test_macos_default_is_outside_documents(self):
+        self.assertEqual(R.root(), self.new)
+
+    def test_other_systems_keep_documents(self):
+        R.PLATFORM = "win32"
+        self.assertEqual(R.root(), self.old)
+
+    def test_the_environment_variable_wins_and_nothing_moves(self):
+        self.old_report()
+        os.environ["ZEBRA_BI_REPORTS"] = os.path.join(self.home, "elsewhere")
+        self.assertEqual(R.root(), os.path.join(self.home, "elsewhere"))
+        self.assertTrue(os.path.isdir(os.path.join(self.old, "october-close")))
+
+    def test_old_reports_move_to_the_new_folder(self):
+        self.old_report()
+        self.assertEqual([r["report"] for r in R.reports()], ["october-close"])
+        self.assertTrue(os.path.isfile(os.path.join(self.new, "october-close", R.FILE)))
+        self.assertFalse(os.path.exists(self.old))
+
+    def test_old_reports_move_into_a_new_folder_that_holds_only_state(self):
+        self.old_report()
+        os.makedirs(self.new)
+        with open(os.path.join(self.new, R.STATE), "w") as f:
+            f.write("{}")
+        self.assertEqual([r["report"] for r in R.reports()], ["october-close"])
+        self.assertFalse(os.path.exists(os.path.join(self.old, "october-close")))
+
+    def test_a_new_folder_with_reports_is_left_alone(self):
+        self.old_report()
+        os.makedirs(os.path.join(self.new, "november-close"))
+        with open(os.path.join(self.new, "november-close", R.FILE), "w") as f:
+            json.dump(R.new("November close"), f)
+        self.assertEqual([r["report"] for r in R.reports()], ["november-close"])
+        self.assertTrue(os.path.isdir(os.path.join(self.old, "october-close")))
 
 
 class Proc:

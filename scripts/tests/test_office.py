@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.dirname(HERE))
 import brand as B  # noqa: E402
 import office as O  # noqa: E402
 import report as R  # noqa: E402
+
+R._legacy_checked = True  # a test never moves the real ~/Documents reports
 import story as S  # noqa: E402
 from zoffice import check as C, ooxml as X, pptx as P, snapshot as SN, visual as V, xlsx as XL  # noqa: E402
 

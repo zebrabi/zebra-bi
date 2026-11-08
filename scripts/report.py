@@ -24,7 +24,7 @@ chose to keep although no chart holds them (numbercheck.py traces every other nu
 save; the builder sends the rev it last saw, and a save against an older rev is refused so two editors do not
 overwrite each other.
 """
-import contextlib, datetime as dt, json, os, re, shutil, stat, time
+import contextlib, datetime as dt, json, os, re, shutil, stat, sys, time
 
 try:
     import fcntl
@@ -55,9 +55,44 @@ class Conflict(Exception):
     """The report changed since the editor last read it."""
 
 
+PLATFORM = sys.platform
+LEGACY = "~/Documents/Zebra BI Reports"
+_legacy_checked = False
+
+
 def root():
-    """The folder that holds every report: $ZEBRA_BI_REPORTS, else ~/Documents/Zebra BI Reports."""
-    return os.path.abspath(os.path.expanduser(os.environ.get("ZEBRA_BI_REPORTS") or "~/Documents/Zebra BI Reports"))
+    """The folder that holds every report: $ZEBRA_BI_REPORTS, else ~/Zebra BI Reports on macOS (privacy blocks
+    ~/Documents for a server Claude Desktop starts) and ~/Documents/Zebra BI Reports elsewhere."""
+    if os.environ.get("ZEBRA_BI_REPORTS"):
+        return os.path.abspath(os.path.expanduser(os.environ["ZEBRA_BI_REPORTS"]))
+    path = os.path.abspath(os.path.expanduser("~/Zebra BI Reports" if PLATFORM == "darwin" else LEGACY))
+    move_legacy(path)
+    return path
+
+
+def move_legacy(path):
+    """Once per process, move reports from the old ~/Documents folder to `path`, if this process can reach them
+    and `path` holds no report yet. A process privacy keeps out of ~/Documents sees no old folder and moves nothing."""
+    global _legacy_checked
+    old = os.path.abspath(os.path.expanduser(LEGACY))
+    if _legacy_checked or old == path:
+        return
+    _legacy_checked = True
+    try:
+        if not os.path.isdir(old):
+            return
+        if not os.path.exists(path):
+            os.rename(old, path)
+            return
+        if any(not name.startswith(".") for name in os.listdir(path)):
+            return  # the new folder is in use: leave the old one for the user
+        for name in os.listdir(old):
+            if not os.path.exists(os.path.join(path, name)):
+                os.rename(os.path.join(old, name), os.path.join(path, name))
+        with contextlib.suppress(OSError):
+            os.rmdir(old)
+    except OSError:
+        pass  # another volume or no permission: the old reports stay where they are
 
 
 def slugify(title):

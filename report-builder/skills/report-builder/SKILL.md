@@ -6,7 +6,7 @@ license: Apache-2.0
 
 # Report builder
 
-The report builder is an app the user sees beside the chat or full screen. The reports are files in `~/Documents/Zebra BI Reports/` on the user's computer; nothing about a report is kept on a Zebra BI server. Charts are drawn by Zebra BI (`render_visual`) and sent as aggregated rows only, one row per category.
+The report builder is an app the user sees beside the chat or full screen. The reports are files in `~/Zebra BI Reports/` on the user's computer (`~/Documents/Zebra BI Reports/` on Windows and Linux); nothing about a report is kept on a Zebra BI server. Charts are drawn by Zebra BI (`render_visual`) and sent as aggregated rows only, one row per category.
 
 If the `open_report` and `add_chart` tools are not available here, say in one line that the Zebra BI report builder is not installed in this app, and stop.
 
@@ -71,7 +71,7 @@ The user can do all of this in the builder too: drag cells by the grip, edit the
 
 ## Sharing
 
-The report is a file on this computer, in its folder `~/Documents/Zebra BI Reports/<name>` (or under `ZEBRA_BI_REPORTS` when that is set).
+The report is a file on this computer, in its folder `~/Zebra BI Reports/<name>` on macOS and `~/Documents/Zebra BI Reports/<name>` elsewhere (or under `ZEBRA_BI_REPORTS` when that is set).
 
 - "Save it as a PDF": `save_pdf`. It prints an A4 PDF into the report's folder, its charts and texts side by side as in the builder, and returns the path; give the path, and say in one line that the PDF holds the report's aggregated numbers, so it goes only where the data may go. In the builder the same is ⋯ → Save as PDF.
 - A page to share (Claude Code only): `story-artifact` builds the report from its folder, rows included.
