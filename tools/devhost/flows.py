@@ -185,6 +185,12 @@ def sign_in_flows():
          "Your report is ready. Sign in to Zebra BI to draw its 5 charts.", "ghosts=5 drawn=0", "10 columns",
          "label: Zebra BI chart, drawn after sign-in", "banners=1 chart errors=0")
     ab("screenshot", os.path.join(OUT, "signin-1-ghosts-1300.png"))
+    step("si-scrolled", "all('#rows .ghost').pop().scrollIntoView({block:'end'}); await sleep(400);"  # the button stays in view
+         "const b=$('#signin').getBoundingClientRect(), bar=$('#bar').getBoundingClientRect();"
+         "return 'scrolled: '+(w.scrollY>0||d.scrollingElement.scrollTop>0)+' / banner under the bar: '+(b.top>=bar.bottom-0.5&&b.bottom<=w.innerHeight)",
+         "scrolled: true", "banner under the bar: true")
+    ab("screenshot", os.path.join(OUT, "signin-1-ghosts-scrolled.png"))
+    step("si-top", "d.scrollingElement.scrollTop=0; w.scrollTo(0,0); await sleep(300); return 'top'")
     for width in ("760", "420"):  # two cells a row at about 340 px each, then the inline width of a phone
         ab("set", "viewport", width, "900")
         ab("wait", "1500")

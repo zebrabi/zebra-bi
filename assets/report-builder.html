@@ -152,15 +152,18 @@
   .page-mark::after { content: ''; flex: 1; border-top: 1px dashed var(--hairline); }
   .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
 
-  /* Sign-in: one banner above the first row, never one per chart. */
-  .signin { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; padding: 10px 14px;
-    border: 1px solid var(--hairline); border-radius: 8px; background: var(--soft); }
+  /* Sign-in: one banner above the first row, never one per chart. It sticks under the bar, so the button stays in
+     view however far down the report is scrolled. */
+  .signin { position: sticky; top: 60px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--soft);
+    box-shadow: 0 4px 12px rgba(0,0,0,.08); }
   .signin:empty { display: none; }
   .signin.ask { background: #fffbe0; border-color: #f3dd6a; }
   .signin .msg { flex: 1 1 260px; min-width: 0; }
   .signin .acts { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .signin button.link { padding: 5px 2px; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
-  .signin.quiet { display: inline-flex; padding: 0; border: 0; background: none; font-size: 12px; color: var(--muted); gap: 6px; }
+  .signin.quiet { position: static; display: inline-flex; padding: 0; border: 0; background: none; box-shadow: none; font-size: 12px;
+    color: var(--muted); gap: 6px; }
   .signin.quiet svg { width: 14px; height: 14px; display: block; }
   /* A ghost stands where a chart will be drawn: the chart's own title and subtitle, then light grey dashed outlines
      in its shape, labelled. No fill, no axis, no numbers: it must never pass for a drawn chart. */
