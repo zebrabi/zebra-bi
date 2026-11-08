@@ -625,6 +625,17 @@
     }); });
     return out;
   }
+  // The charts the page cannot show yet: the undrawn ones, and drawn ones too while the renderer, which comes with
+  // the sign-in, is missing (a report drawn on another sign-in, or with the renderer cache gone).
+  function unshown() {
+    if (rendererText) return undrawn();
+    var out = [];
+    if (!rep) return out;
+    rep.rows.forEach(function (row) { row.cells.forEach(function (c) {
+      if (c.type === 'chart' && !errors[c.visual] && !drawError(c.visual)) out.push(c);
+    }); });
+    return out;
+  }
   function canDraw() { return !!(auth && auth.signed_in && !auth.refusal && auth.state !== 'waiting'); }
 
   function takeAuth(a) {
@@ -740,7 +751,7 @@
     var focused = box.contains(document.activeElement) ? document.activeElement.textContent : null;
     box.innerHTML = ''; box.className = 'signin';
     if (view !== 'editor' || !rep || !auth) return;
-    var a = auth, left = undrawn().length, msg = el('div', 'msg'), acts = el('div', 'acts');
+    var a = auth, left = unshown().length, msg = el('div', 'msg'), acts = el('div', 'acts');
     var signIn = function (label) { return bannerButton(label, 'primary', startSignIn); };
     if (a.state === 'waiting') {
       msg.textContent = 'Finish signing in in your browser. Your charts appear here as soon as you are back.';

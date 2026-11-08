@@ -236,6 +236,12 @@ def sign_in_flows():
     step("si-one-left", "await fake({hide:SLUG,only:['marketing-costs-by-month']}); $('#reload').click(); await sleep(3000);"
          "return 'drawn='+drawn()+' ghosts='+ghosts()+' / '+banner()",
          "drawn=4 ghosts=1", "Sign in to Zebra BI to draw its chart.")
+    # Drawn before, but a fresh page has no renderer until sign-in: ghosts again, and the banner asks for it.
+    step("si-reopen", "w.location.reload(); return 'reloaded'")
+    ab("wait", "5000")
+    step("si-no-renderer", "if (view()!=='home') { $('#back').click(); await sleep(1500); } item('Sign-in test').querySelector('.main').click();"
+         " await sleep(3500); return 'drawn='+drawn()+' ghosts='+ghosts()+' / '+banner()",
+         "drawn=0 ghosts=5", "Sign in to Zebra BI to draw its 5 charts.")
     step("si-trial", refuse("trial_ended") + "return banner()+' / buttons: '+btns()+' / ghosts='+ghosts()+' / '+once()",
          "Your Zebra BI trial ended on 22 Nov 2026. Your report and its texts stay; the charts need a Zebra BI licence.",
          "buttons: Contact sales", "ghosts=5", "banners=1 chart errors=0")
