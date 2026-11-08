@@ -607,6 +607,13 @@ def render_visuals(story_dir, story):
 
 
 MAX_CELLS = 3  # cells side by side in one row, as in the report builder
+LAYOUTS = ("one-pager", "variance-walk", "board-pack")  # a report's layouts (report.py), as the PDF prints them
+
+
+def layout(story):
+    """The report layout the story names, when it is one the page knows; else None."""
+    name = story.get("layout")
+    return name if name in LAYOUTS else None
 
 
 def load(story_dir):
@@ -723,6 +730,7 @@ def assemble(story, results, meta, renderer_path, brand):
                 sys.exit("section %r names visual %r, which is not in visuals" % (s.get("heading"), s["visual"]))
             frame = '<iframe data-v="%s" title="%s"></iframe>' % (e(s["visual"]), e(s.get("heading", s["visual"])))
         sections.append("<section>\n<h2>%s</h2>\n%s\n%s\n</section>" % (e(s.get("heading", "")), para(s.get("body", "")), frame))
+    shape = layout(story)
     for row in rows(story):
         cells = []
         for c in row["cells"]:
@@ -736,7 +744,8 @@ def assemble(story, results, meta, renderer_path, brand):
                 cells.append('<div class="cell">%s<iframe data-v="%s" title="%s"></iframe>%s</div>' % (msg, e(vid), e(title), note))
             else:
                 cells.append('<div class="cell">%s</div>' % para(c["text"]))
-        sections.append('<section class="row cols-%d">%s</section>' % (len(cells), "".join(cells)))
+        page = " page" if shape == "board-pack" and any(c.get("visual") for c in row["cells"]) else ""
+        sections.append('<section class="row cols-%d%s">%s</section>' % (len(cells), page, "".join(cells)))
     nxt = ""
     if story.get("next"):
         nxt = '<section class="next"><h2>%s</h2><ul>%s</ul></section>' % (
@@ -753,7 +762,9 @@ def assemble(story, results, meta, renderer_path, brand):
         renderer_html = f.read()
     fills = {"TITLE": e(story["title"]), "SUBTITLE": e(story.get("subtitle", "")), "KPIS": kpis,
              "SECTIONS": "\n".join(sections), "NEXT": nxt, "FOOTER": footer(story, brand), "VERSION": version(),
-             "RENDERER_SHA": meta["sha256"], "VISUALS_JSON": embed(results), "RENDERER_JSON": embed(renderer_html)}
+             "RENDERER_SHA": meta["sha256"], "VISUALS_JSON": embed(results), "RENDERER_JSON": embed(renderer_html),
+             "PAGE_SIZE": "A4 landscape" if shape == "one-pager" else "A4",
+             "BODY_ATTR": ' class="layout-%s"' % shape if shape else ""}
     fills.update(brand_tokens(brand, story))
     # One pass over the template: a value that holds "{{...}}" is never expanded again.
     page = re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: fills[m.group(1)], page)

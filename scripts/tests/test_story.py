@@ -468,7 +468,7 @@ class Page(Base):  # items 16, 17, 18
 
     def test_template_is_an_a4_page_with_the_renderer_from_a_blob(self):
         t = read(S.TEMPLATE)
-        self.assertIn("@page{size:A4;margin:16mm 15mm}", t)
+        self.assertIn("@page{size:{{PAGE_SIZE}};margin:16mm 15mm}", t)  # A4, or A4 landscape for a one-pager
         self.assertIn("main{width:680px;", t)
         self.assertIn("URL.createObjectURL(new Blob(", t)
         self.assertNotIn("visual.html'", t)  # no sibling renderer copy: the page is only opened from disk

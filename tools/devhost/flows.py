@@ -93,5 +93,11 @@ ab("screenshot", os.path.join(OUT, "flows-draft.png"))
 step("fastlayout", "const m=$('.chart-msg'); m.focus(); m.textContent='Typed just now'; m.dispatchEvent(new w.Event('input',{bubbles:true}));"
      "all('#layouts button').find(b=>b.dataset.layout==='board-pack').click(); await sleep(4000); $('#reload').click(); await sleep(3000);"
      "return 'message after layout: ' + all('.chart-msg').map(x=>x.textContent).find(t=>t.indexOf('Typed')>=0)")
+step("boardpack", "return 'pages: '+all('.page-mark').map(x=>x.textContent).join(',')+' / notes: '+$('#notes-toggle').textContent"
+     "+' / '+$('#layout-hint').textContent.slice(0,40)")
+step("onepager", "all('#layouts button').find(b=>b.dataset.layout==='one-pager').click(); await sleep(3500);"
+     "return 'charts a row: '+all('#rows .row').map(r=>r.querySelectorAll('.chart').length).filter(n=>n).join(',')"
+     "+' / notes: '+$('#notes-toggle').textContent+' / page marks: '+all('.page-mark').length")
+ab("screenshot", os.path.join(OUT, "flows-one-pager.png"))
 step("badsave", "const l=$('#kpis .l'); l.focus(); l.textContent='x'.repeat(130); l.dispatchEvent(new w.Event('input',{bubbles:true}));"
      "await sleep(2500); return 'toast: ' + ($('.toast')||{}).textContent")

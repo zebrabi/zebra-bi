@@ -8,7 +8,10 @@ then the branded page (story.assemble) is opened in headless Chrome, Edge or Chr
 (ZEBRA_BI_CHROME picks one) at the A4 printable width, so the Zebra BI renderer draws each chart
 at the width it is printed at. Once every chart has drawn and held its size, the page is printed to
 <slug>.pdf in the story folder. <story-dir> may also be a report builder folder (report.zbreport): its
-rows put up to three charts or texts side by side, each chart drawn at its cell's width. Chart labels and values stay text in the PDF. The page follows the
+rows put up to three charts or texts side by side, each chart drawn at its cell's width. Its layout sets the
+pages: a one-pager is laid out at the A4 landscape width and scaled down to one page, unless that would print
+it below MIN_SCALE, when it runs on to more pages; a board pack puts each chart row on its own page after a
+cover. Chart labels and values stay text in the PDF. The page follows the
 brand (brand.py: .zebra/brand/, else the editorial default); the charts never change.
 
 Without a browser, or when a chart does not draw, build stops with one line and writes no PDF.
@@ -24,6 +27,9 @@ import story as S  # noqa: E402
 from zoffice import cdp, snapshot as SN  # noqa: E402
 
 WIDTH = 680  # A4 (210 mm) minus 15 mm margins each side, in CSS px; the template's main is this wide
+LANDSCAPE_WIDTH = 1008  # A4 landscape (297 mm) minus the same margins: a one-pager's main
+LANDSCAPE_HEIGHT = 668  # A4 landscape (210 mm) minus 16 mm margins top and bottom, less a little for rounding
+MIN_SCALE = 0.55  # a one-pager is not shrunk further to fit one page: its text would drop below about 6 pt
 CHART_TIMEOUT = 30
 FRAMES = "document.querySelectorAll('iframe[data-v]')"
 
@@ -89,12 +95,30 @@ def trim_row_charts(ch):
     ch.evaluate("window.scrollTo(0,0)")
 
 
+def fit_one_page(ch):
+    """Scale the page down so it prints on one landscape page: the scale used, or None when that would take it
+    below MIN_SCALE (the page is then left as it is and runs on to more pages). The scale is a transform, so the
+    charts keep the width they were drawn at."""
+    height = ch.evaluate("document.querySelector('main').getBoundingClientRect().height") or 0
+    if height <= LANDSCAPE_HEIGHT:
+        return 1.0
+    scale = LANDSCAPE_HEIGHT / height
+    if scale < MIN_SCALE:
+        return None
+    ch.evaluate("(function(m,s,h){m.style.transformOrigin='top center';m.style.transform='scale('+s+')';"
+                "document.documentElement.style.overflow='hidden';"  # else body's overflow goes to the viewport and clips nothing
+                "document.body.style.height=h+'px';document.body.style.overflow='hidden'})"
+                "(document.querySelector('main'),%.4f,%d)" % (scale, LANDSCAPE_HEIGHT))
+    return scale
+
+
 def pages(pdf):
     return len(re.findall(rb"/Type\s*/Page(?![A-Za-z])", pdf))
 
 
-def print_page(page_html, binary, brand):
-    """The page printed to PDF bytes by headless Chrome."""
+def print_page(page_html, binary, brand, layout=None):
+    """(PDF bytes, scale) for the page printed by headless Chrome; scale is set for a one-pager only (1.0 when it
+    fits as it is, None when it does not fit one page at MIN_SCALE)."""
     with tempfile.TemporaryDirectory(prefix="zebra-bi-pdf-") as tmp:
         path = os.path.join(tmp, "story.html")
         with open(path, "w", encoding="utf-8") as f:
@@ -104,18 +128,20 @@ def print_page(page_html, binary, brand):
         except RuntimeError as e:
             sys.exit("%s could not be started (%s); no PDF was written." % (os.path.basename(binary), e))
         try:
-            ch.call("Emulation.setDeviceMetricsOverride", width=WIDTH, height=1000, deviceScaleFactor=1, mobile=False)
+            width = LANDSCAPE_WIDTH if layout == "one-pager" else WIDTH
+            ch.call("Emulation.setDeviceMetricsOverride", width=width, height=1000, deviceScaleFactor=1, mobile=False)
             ch.call("Page.navigate", url="file://" + path)
             failed = wait_charts(ch)
             if failed:
                 sys.exit("Chart %s did not draw in the browser, so no PDF was written. Build again; if it repeats, "
                          "the Zebra BI renderer may have changed." % failed)
             trim_row_charts(ch)
+            scale = fit_one_page(ch) if layout == "one-pager" else None
             res = ch.call("Page.printToPDF", preferCSSPageSize=True, printBackground=True, displayHeaderFooter=True,
                           headerTemplate="<span></span>", footerTemplate=footer_template(brand))
         finally:
             ch.close()
-    return base64.b64decode(res["data"])
+    return base64.b64decode(res["data"]), scale
 
 
 def build(story_dir, brand_dir=None):
@@ -132,14 +158,20 @@ def build(story_dir, brand_dir=None):
     story = S.load(story_dir)
     results = S.render_visuals(story_dir, story)
     renderer_path, meta = S.renderer()
-    pdf = print_page(S.assemble(story, results, meta, renderer_path, brand), binary, brand)
+    shape = S.layout(story)
+    pdf, scale = print_page(S.assemble(story, results, meta, renderer_path, brand), binary, brand, shape)
     n = pages(pdf)
     if not pdf.startswith(b"%PDF-") or not n:
         sys.exit("The browser returned no usable PDF, so none was written.")
     out = os.path.join(story_dir, os.path.basename(os.path.normpath(story_dir)) + ".pdf")
     S.write_atomic(out, pdf)
-    print(json.dumps({"file": out, "bytes": len(pdf), "pages": n, "brand": brand.get("name"), "visuals": len(results),
-                      "renderer_sha256": meta["sha256"][:12]}, indent=2))
+    info = {"file": out, "bytes": len(pdf), "pages": n, "brand": brand.get("name"), "visuals": len(results),
+            "renderer_sha256": meta["sha256"][:12]}
+    if shape == "one-pager":
+        info.update(one_page=n == 1, scale=round(scale or 1.0, 2))
+        if n > 1:
+            print("The one-pager did not fit one page at a readable size, so it runs on to %d pages." % n, file=sys.stderr)
+    print(json.dumps(info, indent=2))
     return out
 
 

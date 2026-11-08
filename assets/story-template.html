@@ -10,7 +10,9 @@
   Data story page, filled by scripts/story.py from story.json and the brand (scripts/brand.py:
   .zebra/brand/brand.json, else assets/brand/default/brand.json) and printed to an A4 PDF by
   scripts/pdf.py. Placeholders: LANG, TITLE, FONT_LINK, BRAND_CSS, KICKER, LOGO, SUBTITLE, KPIS,
-  SECTIONS, NEXT, FOOTER, VERSION, RENDERER_SHA (the renderer's sha256), VISUALS_JSON, RENDERER_JSON.
+  SECTIONS, NEXT, FOOTER, VERSION, RENDERER_SHA (the renderer's sha256), VISUALS_JSON, RENDERER_JSON,
+  PAGE_SIZE and BODY_ATTR (a report's layout: a one-pager prints on one landscape page, 1008 px wide, and
+  a board pack starts a page at every row that holds a chart, its message as the page heading).
   The brand sets the page around the charts: colours, fonts, kicker, logo, credit. The charts keep
   their IBCS colours. A story's rows (a report from the report builder) put up to three cells, charts or
   text, side by side; each chart is drawn at its cell's width. The Zebra BI renderer (the ui:// page render_visual names) and every chart's tool
@@ -22,7 +24,7 @@
 -->
 <style>
   :root{ {{BRAND_CSS}} }
-  @page{size:A4;margin:16mm 15mm}
+  @page{size:{{PAGE_SIZE}};margin:16mm 15mm}
   html,body{margin:0;background:var(--paper);color:var(--ink);font:14.5px/1.55 var(--font-body);-webkit-print-color-adjust:exact;print-color-adjust:exact}
   main{width:680px;margin:0 auto}
   .masthead{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:10px;border-bottom:1px solid var(--hairline);margin-bottom:36px}
@@ -51,9 +53,19 @@
   .next li{margin:0 0 6px}
   section:last-of-type{margin-bottom:20px}
   footer{border-top:1px solid var(--hairline);padding-top:10px;color:var(--muted);font-size:11px;break-before:avoid}
+  .layout-one-pager main{width:1008px}
+  .layout-one-pager .masthead{margin-bottom:14px}
+  .layout-one-pager .sub:empty{display:none}
+  .layout-one-pager h1{font-size:25px;margin-bottom:12px}
+  .layout-one-pager .kpis{gap:16px;margin-bottom:14px}
+  .layout-one-pager .kpi b{font-size:21px}
+  .layout-one-pager section{margin-bottom:8px;padding-top:10px}
+  .layout-one-pager section.row p{font-size:13.5px;line-height:1.45;margin-bottom:6px}
+  .layout-board-pack section.row.page{break-before:page;border-top:0;padding-top:0}
+  .layout-board-pack section.row .msg{font:600 20px/1.25 var(--font-headline);letter-spacing:-.01em;margin:0 0 12px}
 </style>
 </head>
-<body>
+<body{{BODY_ATTR}}>
 <main>
   <div class="masthead"><span class="kicker">{{KICKER}}</span><span class="logo">{{LOGO}}</span></div>
   <h1>{{TITLE}}</h1>

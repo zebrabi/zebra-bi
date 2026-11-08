@@ -1,6 +1,6 @@
 ---
 name: report-builder
-description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'make the close report', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
+description: "Build and keep Zebra BI reports the user arranges in the report builder app: rows of up to three Zebra BI charts and text, side by side, saved as files on this computer. Covers every report flow: list, open, create, rename, duplicate (next month's report from this one), delete and restore, and editing cells (add, move, change, remove, replace a chart). Use when the user says 'build a report', 'my Zebra BI reports', 'open the ... report', 'make the November version', 'rename', 'delete', 'restore', 'make the close report', 'make it a one-pager', 'make a board pack', 'put these side by side', 'move this chart next to that one', 'save it as a PDF', or '/zebra-bi:report-builder'. Needs the zebra-bi-report tools (open_report, add_chart...); for one chart in the chat use chart-from-data, for a story told in the chat data-story."
 license: Apache-2.0
 ---
 
@@ -37,10 +37,13 @@ When the user gives you numbers and asks for a report ("make the October close r
    - `note`, two or three sentences of evidence under it, read from the chart: "COGS came in **98.4k** below PL; Material costs gave **78.7k** of it.";
    - `why`, one sentence on why this chart type: "A P&L reads top-down with ΔPL beside each line.";
    - `recipe`: `source` (the file or model), `query` (or the sheet), `code` (what you ran to get the rows), `period`.
-   Order the charts by contribution, largest first. Detection first (what happened), then explanation from the data (which split drove it). Never a cause the data does not show.
+   Add the charts in the order the analysis reads: detection first (what happened), then explanation from the data (which split drove it). The variance walk keeps that order; the one-pager and the board pack sort the charts by size themselves. Never a cause the data does not show.
 4. `set_key_message`: what happened, how big, against what, numbers in `**bold**`.
 5. `set_kpis`: two to four tiles, a short value and a one-line label with its variance ("1.0M", "Revenue, ΔPL −39.2k (−3.7%)").
-6. `arrange_report`: `one-pager` by default, `variance-walk` to take the variance line by line, `board-pack` for many breakdowns.
+6. `arrange_report` with `variance-walk`: every chart on its own row with its note, in your order, so the user checks the draft with the evidence in view. Offer the other two when it fits what the user is making:
+   - `one-pager` for a reader with a minute: largest variances first, up to three charts a row, notes hidden, and the PDF prints it on one landscape page (if it is too long to read at that size, `save_pdf` says so; fewer charts fit it);
+   - `board-pack` for a pack sent ahead of a meeting: largest variances first, notes shown, and the PDF puts the key message and KPI tiles on a cover and each chart on its own page, its message as the heading.
+   A layout keeps the same charts and text; switching shows or hides the notes as above.
 7. Tell the user in two or three lines what the draft holds and offer the next step. Do not paste the chart data into the chat.
 
 IBCS, the notation Zebra BI charts use, applies to every text (the `data-story` skill's `references/ibcs-narrative.md` has the full rules): AC, PL, PY, FC; ΔPY, ΔPL and ΔPY% for variances; the unit once per chart; chart `title` is the reporting unit and measure and `subtitle` the unit, period and scenarios, never the message; round for reading; no decoration words ("significant", "notable"); a cost that went down is "down" or "below PL", never "a positive variance".
