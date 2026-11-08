@@ -21,7 +21,6 @@ RESULT = {"content": [{"type": "text", "text": "Rendered a variance table."}], "
           "structuredContent": {"visual": {"title": "Sales by region", "ycol_ac": [{"value": 226.3}]}}}
 FAKE_MCP = "http://127.0.0.1:9/mcp"  # nothing listens there
 APP_ONLY = ("library", "get_report", "get_renderer", "save_layout", "purge_report", "start_sign_in", "sign_out", "draw_chart")
-NOT_IN_PAGE_YET = {"start_sign_in", "sign_out", "draw_chart"}  # the builder's sign-in (slice 2) sends the key to these
 
 
 def cache(report_dir, vid, args, result=RESULT, endpoint=None):
@@ -907,7 +906,7 @@ class Server(unittest.TestCase):
         sent = re.findall(r"'(\w+)'", re.search(r"var APP_ONLY = \[([^\]]*)\];", page).group(1))
         tools = self.rpc("tools/list")["result"]["tools"]
         app_only = [t for t in tools if t.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]]
-        self.assertEqual(sorted(sent), sorted(t["name"] for t in app_only if t["name"] not in NOT_IN_PAGE_YET))
+        self.assertEqual(sorted(sent), sorted(t["name"] for t in app_only))
         for t in app_only:
             self.assertIn("app_key", t["inputSchema"]["properties"], t["name"])
 

@@ -115,7 +115,7 @@
   @media (hover: none) { .tools { display: flex; } }
   .tools .grip { cursor: grab; }
   .chart iframe { display: block; width: 100%; height: 0; border: 0; background: #fff; }
-  .chart .wait, .chart .err { padding: 24px 8px; color: var(--muted); font-size: 13px; }
+  .chart .err { padding: 24px 8px; color: var(--muted); font-size: 13px; }
   .chart .err { color: var(--danger); }
   .text { min-height: 2.6em; padding: 4px 6px; outline: none; border-radius: 4px; white-space: pre-wrap; max-width: 75ch; }
   .text:focus { box-shadow: 0 0 0 2px var(--focus); }
@@ -151,6 +151,27 @@
     text-transform: uppercase; color: var(--muted); }
   .page-mark::after { content: ''; flex: 1; border-top: 1px dashed var(--hairline); }
   .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
+
+  /* Sign-in: one banner above the first row, never one per chart. */
+  .signin { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; padding: 10px 14px;
+    border: 1px solid var(--hairline); border-radius: 8px; background: var(--soft); }
+  .signin:empty { display: none; }
+  .signin.ask { background: #fffbe0; border-color: #f3dd6a; }
+  .signin .msg { flex: 1 1 260px; min-width: 0; }
+  .signin .acts { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .signin button.link { padding: 5px 2px; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+  .signin.quiet { display: inline-flex; padding: 0; border: 0; background: none; font-size: 12px; color: var(--muted); gap: 6px; }
+  .signin.quiet svg { width: 14px; height: 14px; display: block; }
+  /* A ghost stands where a chart will be drawn: the chart's own title and subtitle, then light grey dashed outlines
+     in its shape, labelled. No fill, no axis, no numbers: it must never pass for a drawn chart. */
+  .ghost { border: 1px dashed var(--hairline); border-radius: 8px; padding: 10px 12px 12px; background: var(--paper); }
+  .ghost .gt { font-size: 13px; font-weight: 700; color: var(--muted); }
+  .ghost .gs { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .ghost svg { display: block; width: 100%; }
+  .ghost .gl { margin-top: 8px; font-size: 12px; color: var(--muted); text-align: center; }
+  .chart iframe.arrived { animation: arrive .5s ease-out; }
+  @keyframes arrive { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .chart iframe.arrived { animation: none; } }
   @media (max-width: 560px) {
     .bar { padding: 8px 12px; }
     main { padding: 16px 14px 64px; }
@@ -202,6 +223,7 @@
   <h1 id="title" contenteditable="true" spellcheck="false"></h1>
   <div id="head"></div>
   <p class="layout-hint" id="layout-hint"></p>
+  <div class="signin" id="signin" role="status" aria-live="polite"></div>
   <div id="rows"></div>
   <p class="note" id="note"></p>
 </main>
@@ -224,7 +246,7 @@
   function notify(method, params) { window.parent.postMessage({ jsonrpc: '2.0', method: method, params: params || {} }, '*'); }
   // The server puts its key here when the host reads this page, and refuses its builder-only tools without it.
   var APP_KEY = '__ZEBRA_BI_APP_KEY__';
-  var APP_ONLY = ['library', 'get_report', 'get_renderer', 'save_layout', 'purge_report'];
+  var APP_ONLY = ['library', 'get_report', 'get_renderer', 'save_layout', 'purge_report', 'start_sign_in', 'sign_out', 'draw_chart'];
   function callTool(name, args) {
     var a = {}, k;
     for (k in args || {}) a[k] = args[k];
@@ -317,7 +339,7 @@
 
   // ---------- state ----------
   var view = null, follow = 'last', lib = null, slug = null, rep = null, results = {}, errors = {};
-  var rendererText = null, rendererError = null;
+  var rendererText = null, rendererError = null, auth = null;
   var saving = false, dirty = false, saveTimer = null, dragId = null, busy = false;
 
   function show(which) {
@@ -357,7 +379,9 @@
       busy = false; toast(what + ' saved: ' + (sc(r).shown || sc(r).file), null, null, 10000);
     }, function (e) {
       busy = false;
-      var flags = e.result && e.result.structuredContent && e.result.structuredContent.flags;
+      var out = (e.result && e.result.structuredContent) || {};
+      if (out.waiting) { exportWaits(s, what, out.waiting, e.message); return; }
+      var flags = out.flags;
       if (!flags) { fail(e); return; }
       toast('Fix or keep the flagged numbers first', null, null, 8000);
       if (view === 'editor' && slug === s) { var f = document.querySelector('.flag'); if (f) f.scrollIntoView({ block: 'center' }); }
@@ -393,8 +417,8 @@
   var libSeen = null;
   function refreshLibrary(onlyIfChanged) {
     return callTool('library').then(function (r) {
-      lib = sc(r);
-      var seen = JSON.stringify(lib);
+      lib = sc(r); takeAuth(lib.auth);
+      var seen = JSON.stringify({ reports: lib.reports, deleted: lib.deleted, current: lib.current, last: lib.last });
       if (view === 'home' && (!onlyIfChanged || seen !== libSeen)) { libSeen = seen; renderHome(); }
     }, fail);
   }
@@ -491,18 +515,290 @@
   var frames = new Map();  // iframe -> {vid, sent}
   function chartTitle(vid) { var v = rep.visuals[vid]; return (v && v.args && v.args.title) || vid; }
   function cellsById() { var m = {}; rep.rows.forEach(function (row) { row.cells.forEach(function (c) { m[c.id] = c; }); }); return m; }
-  function mountChart(box, cell) {
-    var vid = cell.visual;
-    if (rendererError) { box.appendChild(el('div', 'err', rendererError)); return; }
-    if (errors[vid]) { box.appendChild(el('div', 'err', errors[vid])); return; }
-    if (!results[vid] || !rendererText) { box.appendChild(el('div', 'wait', 'Drawing ' + chartTitle(vid) + '…')); return; }
+  // A chart cell shows the Zebra BI chart once it is drawn and the renderer is here, Zebra BI's reason when it could
+  // not draw the chart for the chart's own arguments, and otherwise a ghost in the chart's shape.
+  function mountChart(box, cell, arrived) {
+    var vid = cell.visual, ghost = arrived ? box.querySelector('.ghost') : null;  // it stays until the chart has its size
+    box.innerHTML = '';
+    if (errors[vid] || drawError(vid)) { box.appendChild(el('div', 'err', errors[vid] || drawError(vid))); return; }
+    if (!results[vid] || !rendererText) {
+      if (results[vid] && rendererError) { box.appendChild(el('div', 'err', rendererError)); return; }
+      box.appendChild(ghostEl(box, cell));
+      return;
+    }
     var f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts');
     f.setAttribute('scrolling', 'no');  // the frame takes the height the renderer reports; no inner scrollbar
     f.setAttribute('title', chartTitle(vid));
+    if (arrived) f.className = 'arrived';
     box.appendChild(f);
+    if (ghost) box.appendChild(ghost);
     frames.set(f, { vid: vid, sent: false });
     f.srcdoc = rendererText;
+  }
+  function remountCharts() {
+    if (view !== 'editor' || !rep) return;
+    var byId = cellsById();
+    document.querySelectorAll('#rows .chart').forEach(function (box) {
+      var cell = byId[box.dataset.cell];
+      if (cell && !box.querySelector('iframe')) mountChart(box, cell);
+    });
+    reportSize();
+  }
+
+  // ---------- editor: ghost charts ----------
+  // Heights come from this fixed pattern, never from the chart's numbers, so a ghost says nothing about the data.
+  var GHOST_PATTERN = [0.62, 0.8, 0.5, 0.92, 0.7, 0.44, 0.84, 0.58, 0.74, 0.38, 0.88, 0.66];
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function svgEl(tag, attrs) {
+    var e = document.createElementNS(SVG_NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function ghostLabel() {
+    return auth && auth.signed_in && !auth.refusal && auth.state !== 'waiting' ? 'Zebra BI chart, drawing now…' : 'Zebra BI chart, drawn after sign-in';
+  }
+  function ghostEl(box, cell) {
+    var v = (rep.visuals[cell.visual] || {}).args || {};
+    var shape = cell.ghost || { kind: v.time_axis ? 'columns' : 'bars', count: 5 };
+    var n = Math.max(1, shape.count || 1), kind = shape.kind === 'columns' ? 'columns' : 'bars';
+    var g = el('div', 'ghost');
+    g.setAttribute('role', 'img');
+    g.setAttribute('aria-label', (v.title || 'Chart') + ': ' + ghostLabel());
+    if (v.title) g.appendChild(el('div', 'gt', v.title));
+    if (v.subtitle) g.appendChild(el('div', 'gs', v.subtitle));
+    var w = Math.max(200, (box.clientWidth || 340) - 26), stroke = '#b9bbbd', dash = '4 3', svg, i, p;
+    if (kind === 'columns') {
+      var h = 150, base = h - 6, step = (w - 8) / n, cw = Math.max(4, Math.min(36, step * 0.6));
+      svg = svgEl('svg', { width: w, height: h, viewBox: '0 0 ' + w + ' ' + h, 'aria-hidden': 'true' });
+      for (i = 0; i < n; i++) {
+        p = GHOST_PATTERN[i % GHOST_PATTERN.length];
+        var ch = Math.round((base - 10) * p);
+        svg.appendChild(svgEl('rect', { x: (4 + i * step + (step - cw) / 2).toFixed(1), y: base - ch, width: cw.toFixed(1), height: ch,
+          rx: 2, fill: 'none', stroke: stroke, 'stroke-width': 1.25, 'stroke-dasharray': dash }));
+      }
+      svg.appendChild(svgEl('line', { x1: 0, x2: w, y1: base + 0.5, y2: base + 0.5, stroke: stroke, 'stroke-width': 1.25, 'stroke-dasharray': dash }));
+    } else {
+      var rowH = 22, bh = 12, top = 4, ht = top * 2 + n * rowH, lab = Math.round(w * 0.24), axis = lab + 10, room = w - axis - 6;
+      svg = svgEl('svg', { width: w, height: ht, viewBox: '0 0 ' + w + ' ' + ht, 'aria-hidden': 'true' });
+      for (i = 0; i < n; i++) {
+        p = GHOST_PATTERN[(i * 5 + 3) % GHOST_PATTERN.length];
+        var y = top + i * rowH + (rowH - bh) / 2;
+        svg.appendChild(svgEl('line', { x1: 0, x2: Math.round(lab * (0.55 + 0.4 * GHOST_PATTERN[(i + 2) % GHOST_PATTERN.length])), y1: y + bh / 2, y2: y + bh / 2,
+          stroke: '#d9dadb', 'stroke-width': 1.25, 'stroke-dasharray': '2 3' }));
+        svg.appendChild(svgEl('rect', { x: axis, y: y, width: Math.max(8, Math.round(room * p)), height: bh, rx: 2,
+          fill: 'none', stroke: stroke, 'stroke-width': 1.25, 'stroke-dasharray': dash }));
+      }
+      svg.appendChild(svgEl('line', { x1: axis - 0.5, x2: axis - 0.5, y1: 0, y2: ht, stroke: stroke, 'stroke-width': 1.25, 'stroke-dasharray': dash }));
+    }
+    g.appendChild(svg);
+    g.appendChild(el('div', 'gl', ghostLabel()));
+    return g;
+  }
+  function relabelGhosts() {
+    document.querySelectorAll('#rows .ghost').forEach(function (g) {
+      var label = ghostLabel(), t = g.querySelector('.gt');
+      g.querySelector('.gl').textContent = label;
+      g.setAttribute('aria-label', (t ? t.textContent : 'Chart') + ': ' + label);
+    });
+  }
+
+  // ---------- sign-in to Zebra BI ----------
+  // The server's auth block comes with every get_report, library, start_sign_in, sign_out and draw_chart. The builder
+  // shows one banner from it, and when signed_in flips to true it fetches the renderer and draws the ghosts one by
+  // one with draw_chart, the first on screen first.
+  var WAIT_AGAIN_MS = 5 * 60 * 1000;  // the browser sign-in this long without an answer: offer the button again
+  var SALES = 'https://zebrabi.com/contact-sales/', SUPPORT = 'support@zebrabi.com';
+  var waitingSince = null, waitTimer = null, signedInNote = false, signedInTimer = null, rendererFetch = null;
+  var drawing = false, drawErrors = {};  // vid -> {args, text}: Zebra BI's reason, until the chart's arguments change
+
+  function argsKey(vid) { var v = rep && rep.visuals[vid]; return v ? JSON.stringify(v.args) : ''; }
+  function drawError(vid) { var e = drawErrors[vid]; return e && e.args === argsKey(vid) ? e.text : null; }
+  function undrawn() {
+    var out = [];
+    if (!rep) return out;
+    rep.rows.forEach(function (row) { row.cells.forEach(function (c) {
+      if (c.type === 'chart' && !results[c.visual] && !errors[c.visual] && !drawError(c.visual)) out.push(c);
+    }); });
+    return out;
+  }
+  function canDraw() { return !!(auth && auth.signed_in && !auth.refusal && auth.state !== 'waiting'); }
+
+  function takeAuth(a) {
+    if (!a || typeof a !== 'object') return;
+    var before = auth;
+    auth = a;
+    if (a.state === 'waiting') { if (!waitingSince) waitingSince = Date.now(); }
+    else waitingSince = null;
+    clearTimeout(waitTimer);
+    if (waitingSince) waitTimer = setTimeout(renderBanner, Math.max(0, waitingSince + WAIT_AGAIN_MS - Date.now()) + 50);
+    if (before && !before.signed_in && a.signed_in) {  // the AHA moment: the browser handed back
+      signedInNote = true; clearTimeout(signedInTimer); signedInTimer = null;
+    }
+    if (!a.signed_in) { signedInNote = false; clearTimeout(signedInTimer); signedInTimer = null; }
+    if (a.signed_in && !rendererText) fetchRenderer();
+    if (!before || before.signed_in !== a.signed_in || before.state !== a.state || !!before.refusal !== !!a.refusal) relabelGhosts();
+    renderBanner();
+    kickDraw();
+  }
+
+  function fetchRenderer() {
+    if (rendererFetch) return rendererFetch;
+    rendererFetch = callTool('get_renderer').then(function (r) {
+      rendererText = sc(r).renderer; rendererError = null; rendererFetch = null;
+      remountCharts(); kickDraw();
+    }, function (e) {
+      rendererFetch = null;
+      var s = e.result && e.result.structuredContent;
+      if (!(s && s.needs_sign_in)) { rendererError = e.message; remountCharts(); }
+    });
+    return rendererFetch;
+  }
+
+  // The draw queue: one chart at a time, the first one on screen first, then the rest top to bottom.
+  function kickDraw() {
+    if (drawing || view !== 'editor' || !canDraw() || !rendererText) return;
+    var boxes = [];
+    undrawn().forEach(function (c) {
+      var box = document.querySelector('#rows .chart[data-cell="' + c.id + '"]');
+      if (!box) return;
+      var r = box.getBoundingClientRect();
+      boxes.push({ cell: c, seen: r.bottom > 0 && r.top < window.innerHeight ? 0 : 1, top: r.top });
+    });
+    if (!boxes.length) { settleSignedIn(); return; }
+    boxes.sort(function (a, b) { return a.seen - b.seen || a.top - b.top; });
+    var cell = boxes[0].cell, s = slug, vid = cell.visual, key = argsKey(vid);
+    drawing = true;
+    callTool('draw_chart', { report: s, cell: cell.id }).then(function (r) {
+      drawing = false;
+      var d = sc(r);
+      if (s !== slug || !rep) return;
+      if (d.gone) { reportGone(); return; }
+      if (d.drawn && d.result) results[d.visual || vid] = d.result;
+      else if (d.error) drawErrors[d.visual || vid] = { args: key, text: d.error };
+      var box = document.querySelector('#rows .chart[data-cell="' + cell.id + '"]'), now = byIdNow()[cell.id];
+      if (box && now) mountChart(box, now, !!d.drawn);
+      reportSize();
+      if (d.auth) takeAuth(d.auth); else kickDraw();
+    }, function (e) {
+      drawing = false;
+      if (s !== slug || !rep) return;
+      drawErrors[vid] = { args: key, text: e.message };
+      var box = document.querySelector('#rows .chart[data-cell="' + cell.id + '"]');
+      if (box) mountChart(box, cell);
+      kickDraw();
+    });
+  }
+  function byIdNow() { return rep ? cellsById() : {}; }
+  function settleSignedIn() {  // every chart drawn: the quiet "Signed in" note stays a few seconds, then goes
+    if (!signedInNote || signedInTimer) return;
+    signedInTimer = setTimeout(function () { signedInNote = false; signedInTimer = null; renderBanner(); }, 8000);
+  }
+
+  function openLink(url) {
+    return request('ui/open-link', { url: url }).then(function (r) {
+      if (r && r.isError) throw new Error('refused');
+    }).catch(function () {
+      var w = null;
+      try { w = window.open(url, '_blank', 'noopener'); } catch (e) { w = null; }
+      if (!w) toast('Open this page in your browser: ' + url, null, null, 20000);
+    });
+  }
+  function startSignIn(btn) {
+    if (btn) btn.disabled = true;
+    var old = document.querySelector('.toast'); if (old) old.remove();  // an export's "sign in first" is answered
+    return callTool('start_sign_in').then(function (r) {
+      var d = sc(r);
+      if (d.url && !d.opened) openLink(d.url);
+      if (d.auth) takeAuth(d.auth); else renderBanner();
+    }, function (e) {
+      if (btn) btn.disabled = false;
+      var s = e.result && e.result.structuredContent;
+      if (s && s.auth) takeAuth(s.auth);
+      fail(e);
+    });
+  }
+  function signOut() {
+    return callTool('sign_out').then(function (r) {
+      signedInNote = false;
+      takeAuth(sc(r).auth || { signed_in: false, state: 'idle', url: null, refusal: null });
+      toast('Signed out of Zebra BI. The charts already drawn stay.');
+    }, fail);
+  }
+
+  function bannerButton(label, cls, run) {
+    var b = el('button', cls, label); b.type = 'button';
+    b.onclick = function () { run(b); };
+    return b;
+  }
+  function renderBanner() {
+    var box = $('signin');
+    if (!box) return;
+    var focused = box.contains(document.activeElement) ? document.activeElement.textContent : null;
+    box.innerHTML = ''; box.className = 'signin';
+    if (view !== 'editor' || !rep || !auth) return;
+    var a = auth, left = undrawn().length, msg = el('div', 'msg'), acts = el('div', 'acts');
+    var signIn = function (label) { return bannerButton(label, 'primary', startSignIn); };
+    if (a.state === 'waiting') {
+      msg.textContent = 'Finish signing in in your browser. Your charts appear here as soon as you are back.';
+      if (a.url) acts.appendChild(bannerButton('Open the sign-in page again', 'link', function () { openLink(a.url); }));
+      if (waitingSince && Date.now() - waitingSince >= WAIT_AGAIN_MS) acts.appendChild(signIn('Sign in to Zebra BI'));
+    } else if (a.refusal) {
+      var r = a.refusal, k = r.kind;
+      if (k === 'trial_ended') {
+        msg.textContent = r.date ? 'Your Zebra BI trial ended on ' + r.date + '. Your report and its texts stay; the charts need a Zebra BI licence.'
+                                 : (r.message || 'Your Zebra BI trial ended. Your report and its texts stay; the charts need a Zebra BI licence.');
+        acts.appendChild(bannerButton('Contact sales', 'primary', function () { openLink(SALES); }));
+      } else if (k === 'no_licence') {
+        msg.textContent = 'Zebra BI found no licence for your company.';
+        acts.appendChild(signIn('Sign in again'));
+      } else if (k === 'no_verified_email') {
+        msg.textContent = r.message || 'Microsoft shared no verified email address for your account.';
+        acts.appendChild(bannerButton(SUPPORT, 'link', function () { openLink('mailto:' + SUPPORT); }));
+      } else if (k === 'expired') {
+        msg.textContent = 'Your Zebra BI sign-in has expired. Sign in again to draw the charts.';
+        acts.appendChild(signIn('Sign in again'));
+      } else {
+        msg.textContent = r.message || 'Zebra BI did not draw the charts.';
+        acts.appendChild(bannerButton('Contact sales', 'primary', function () { openLink(SALES); }));
+      }
+      if (!left) return;  // nothing in this report waits for it: the charts drawn before stay as they are
+    } else if (!a.signed_in) {
+      if (!left) return;
+      box.classList.add('ask');
+      msg.textContent = 'Your report is ready. Sign in to Zebra BI to draw its ' + (left === 1 ? 'chart.' : left + ' charts.');
+      acts.appendChild(signIn('Sign in to Zebra BI'));
+    } else if (signedInNote) {
+      box.className = 'signin quiet';
+      box.innerHTML = ICONS.check.replace('class="tick" ', '');
+      box.appendChild(el('span', null, 'Signed in to Zebra BI'));
+      return;
+    } else {
+      return;
+    }
+    box.appendChild(msg); box.appendChild(acts);
+    if (focused) {  // a redraw keeps the keyboard where it was
+      var same = Array.prototype.slice.call(acts.querySelectorAll('button')).filter(function (b) { return b.textContent === focused; })[0];
+      if (same) same.focus();
+    }
+  }
+
+  // An export refused while charts wait: the server's reason, and the way to the banner's button.
+  function exportWaits(s, what, waiting, said) {
+    var m = /^(No [^:]+ was saved: \d+ charts? (?:is|are) not drawn yet)/.exec(said || '');
+    var reason = (m ? m[1] : 'No ' + what + ' was saved: ' + plural(waiting.length, 'chart') + ' not drawn yet') + '.';
+    var here = view === 'editor' && slug === s;
+    var next = !here ? ' Open the report to see why and sign in.'
+      : auth && auth.refusal && auth.refusal.kind !== 'expired' ? ' The note above the report says why.'
+      : ' Sign in to Zebra BI with the button above the report first.';
+    toast(reason + next, null, null, 10000);
+    if (here) {
+      var box = $('signin');
+      if (box && box.firstChild) {
+        box.scrollIntoView({ block: 'center' });
+        var b = box.querySelector('button'); if (b) b.focus();
+      }
+    }
   }
   function frameFor(src) { var hit = null; frames.forEach(function (st, f) { if (f.contentWindow === src) hit = f; }); return hit; }
   function sendData(f) {
@@ -527,6 +823,7 @@
       sendData(f);
     } else if (m.method === 'ui/notifications/size-changed' && m.params && m.params.height) {
       f.style.height = Math.ceil(m.params.height) + 8 + 'px';  // a little slack: the reported height can trail the drawn one
+      var g = f.parentNode && f.parentNode.querySelector('.ghost'); if (g) g.remove();
       reportSize();
     }
   }
@@ -636,7 +933,9 @@
     requestAnimationFrame(function () {
       var byId = cellsById();
       document.querySelectorAll('.chart').forEach(function (box) { mountChart(box, byId[box.dataset.cell]); });
+      renderBanner();
       reportSize();
+      kickDraw();
     });
   }
 
@@ -758,9 +1057,10 @@
   }
   function keepEdits(pending, wasMoved) {
     var mine = rep, title = $('title').textContent;
-    return callTool('get_report', { report: slug, follow: 'none' }).then(function (r) {
+    return callTool('get_report', { report: slug, follow: 'none', draw: false }).then(function (r) {
       var d = sc(r);
       if (d.gone) { reportGone(); return; }
+      if (d.auth) auth = d.auth;
       var fresh = d.report, now = {}, before = {}, lost = 0;
       fresh.rows.forEach(function (row) { row.cells.forEach(function (c) { now[c.id] = c; }); });
       mine.rows.forEach(function (row) { row.cells.forEach(function (c) { before[c.id] = c; }); });
@@ -817,25 +1117,25 @@
   // ---------- loading and following ----------
   function loadReport(s, force) {
     slug = s; dirty = false; edits = {}; moved = false;
-    return callTool('get_report', { report: s, follow: 'none' }).then(function (r) {
+    return callTool('get_report', { report: s, follow: 'none', draw: false }).then(function (r) {
       var d = sc(r);
       if (d.gone) { reportGone(); return; }
       rep = d.report; results = d.results || {}; errors = d.errors || {}; checks = d.checks || {};
-      show('editor'); renderEditor();
+      show('editor'); renderEditor(); takeAuth(d.auth);
     }, fail);
   }
   function reportGone() { slug = null; rep = null; goHome().then(function () { toast('This report was deleted. It is in Recently deleted.'); }); }
   function poll(force) {
     if (view !== 'editor' || dirty || saving || dragId || busy || !slug) return Promise.resolve();
-    return callTool('get_report', { report: slug, follow: follow, since: force ? undefined : rep && rep.rev }).then(function (r) {
+    return callTool('get_report', { report: slug, follow: follow, since: force ? undefined : rep && rep.rev, draw: false }).then(function (r) {
       var d = sc(r);
       if (d.switched) {
         return loadReport(d.switched).then(function () { toast('Opened in chat: ' + (rep ? rep.title : d.switched)); });
       }
       if (d.gone) { reportGone(); return; }
-      if (d.unchanged) return;
+      if (d.unchanged) { takeAuth(d.auth); return; }
       rep = d.report; results = d.results || {}; errors = d.errors || {}; checks = d.checks || {};
-      renderEditor(); status('');
+      renderEditor(); status(''); takeAuth(d.auth);
     }, function () { status('Not connected'); });
   }
 
@@ -879,9 +1179,10 @@
       { label: 'Duplicate', run: function () { duplicateReport(slug, null, true); } },
       { label: 'Save as PDF', run: function () { savePdf(slug); } },
       { label: 'Save as PowerPoint', run: function () { savePptx(slug); } },
-      { label: 'All reports', run: function () { goHome(); } },
-      { label: 'Delete', danger: true, sep: true, run: function () { deleteReport(slug, rep.title); } }
+      { label: 'All reports', run: function () { goHome(); } }
     ];
+    if (auth && (auth.signed_in || auth.refusal)) items.push({ label: 'Sign out of Zebra BI', sep: true, run: signOut });
+    items.push({ label: 'Delete', danger: true, sep: true, run: function () { deleteReport(slug, rep.title); } });
     if (folded.length) items[0].sep = true;
     openMenu($('report-menu'), folded.concat(items), null, e);
   };
@@ -907,11 +1208,15 @@
     follow = ctx.displayMode === 'inline' ? 'thread' : 'last';  // in a chat: that chat's report; in the sidebar: the last one
     notify('ui/notifications/initialized');
     status('Loading…');
-    return callTool('get_renderer').then(function (r) { rendererText = sc(r).renderer; }, function (e) { rendererError = e.message; });
+    return callTool('get_renderer').then(function (r) { rendererText = sc(r).renderer; }, function (e) {
+      var s = e.result && e.result.structuredContent;
+      if (s && s.auth) auth = s.auth;
+      if (!(s && s.needs_sign_in)) rendererError = e.message;  // before sign-in the ghosts stand in; fetched again after
+    });
   }).then(function () {
     return callTool('library');
   }).then(function (r) {
-    lib = sc(r); started = true;
+    lib = sc(r); started = true; takeAuth(lib.auth);
     var s = launchSlug || (follow === 'last' ? lib.last : lib.current);
     return s ? loadReport(s) : goHome();
   }).then(function () {
