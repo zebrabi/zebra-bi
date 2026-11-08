@@ -623,7 +623,7 @@
       host.appendChild(r);
       host.appendChild(slot(ri + 1));
     });
-    $('note').textContent = rep.rows.length ? 'Drag a cell by ⠿ to move it, into another row (up to 3 side by side) or between rows. Saved to the report file on this computer.' : '';
+    $('note').textContent = rep.rows.length ? 'Drag a cell by the handle at its top right to move it, into another row (up to 3 side by side) or between rows. Saved to the report file on this computer.' : '';
     requestAnimationFrame(function () {
       var byId = cellsById();
       document.querySelectorAll('.chart').forEach(function (box) { mountChart(box, byId[box.dataset.cell]); });
