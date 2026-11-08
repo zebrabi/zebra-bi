@@ -399,6 +399,36 @@ class Deck(unittest.TestCase):
             R.to_deck(self.rep)
 
 
+class BrokenFiles(unittest.TestCase):
+    """One broken report file in the folder never takes the list, the search by title or Recently deleted with it."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        os.environ["ZEBRA_BI_REPORTS"] = self.tmp
+        self.good = R.create("October close")
+        for slug, body in (("nested", "[" * 100000), ("number-title", json.dumps(dict(R.new("x"), title=7))),
+                           ("a-list", "[1, 2]"), ("huge", " " * (R.MAX_FILE + 1) + "{}")):
+            os.makedirs(os.path.join(self.tmp, slug))
+            with open(os.path.join(self.tmp, slug, R.FILE), "w") as f:
+                f.write(body)
+
+    def tearDown(self):
+        os.environ.pop("ZEBRA_BI_REPORTS", None)
+        shutil.rmtree(self.tmp)
+
+    def test_the_good_report_still_lists_and_opens(self):
+        self.assertEqual([r["report"] for r in R.reports()], [self.good])
+        self.assertEqual(R.find("October close"), self.good)
+        for slug in ("nested", "number-title", "a-list", "huge"):
+            with self.assertRaises(ValueError):
+                R.load(R.path_for(slug))
+
+    def test_recently_deleted_skips_a_broken_entry(self):
+        entry = R.trash(self.good)
+        R.trash("nested")
+        self.assertEqual([d["entry"] for d in R.deleted()], [entry])
+
+
 class Concurrency(unittest.TestCase):
     """The chat's server and the builder's are separate processes: neither may write over the other's change."""
 
