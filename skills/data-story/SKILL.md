@@ -63,6 +63,7 @@ The conversation is the story. Never build or open a PDF or an Office file as pa
 
 - **Claude Code** (a Bash tool exists): once the charts are drawn and before you write the reply, save the story quietly as `.zebra/stories/<slug>/story.json` (format: `references/story-json.md`) with the narrative and the exact `render_visual` arguments, so `story-pdf` (PDF), `story-artifact` (an artifact page) or `story-office` (PowerPoint, Excel) can build a file later if someone asks for one. It is a copy for later files, never a stand-in for telling the story. Do not mention the file, its path or that the story was saved: the user sees the story, and a file is built only when they ask for one.
 - **Chat** (no file system): offer the story as a JSON block in the same format, so it can be kept in a Project.
+- **Report builder** (the `create_report` tool is here): end the reply with one line offering to turn the story into a report the user can arrange and save as PDF or PowerPoint. On yes, the `report-builder` skill builds it from the same `render_visual` arguments.
 
 ## When render_visual is not available
 

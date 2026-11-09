@@ -20,7 +20,8 @@ ARGS = {"title": "Sales by region", "chart_type": "variance", "category_columns"
 RESULT = {"content": [{"type": "text", "text": "Rendered a variance table."}], "isError": False,
           "structuredContent": {"visual": {"title": "Sales by region", "ycol_ac": [{"value": 226.3}]}}}
 FAKE_MCP = "http://127.0.0.1:9/mcp"  # nothing listens there
-APP_ONLY = ("library", "get_report", "get_renderer", "save_layout", "purge_report", "start_sign_in", "sign_out", "draw_chart")
+APP_ONLY = ("library", "get_report", "get_renderer", "save_layout", "purge_report", "start_sign_in", "sign_out", "draw_chart",
+            "chart_card")
 
 
 def cache(report_dir, vid, args, result=RESULT, endpoint=None):
@@ -759,9 +760,9 @@ class Proc:
         assert msg["id"] == self.n, msg
         return msg
 
-    def page(self):
-        """The builder page's address and text, as the host reads them."""
-        uri = self.rpc("resources/list")["result"]["resources"][0]["uri"]
+    def page(self, which=0):
+        """The builder page's address and text (which=1: the chart card's), as the host reads them."""
+        uri = self.rpc("resources/list")["result"]["resources"][which]["uri"]
         return uri, self.rpc("resources/read", {"uri": uri})["result"]["contents"][0]["text"]
 
     def key(self):
@@ -900,10 +901,12 @@ class Server(unittest.TestCase):
         self.assertEqual(self.report(slug)["checks"], {"cells": {"c1": {"note": ["99.0"]}}})  # nothing was kept
 
     def test_the_page_sends_the_key_to_exactly_the_app_only_tools(self):
-        page = self.server.page()[1]
-        self.assertNotIn("__ZEBRA_BI_APP_KEY__", page)
-        self.assertEqual(page.count(self.server.key()), 1)
-        sent = re.findall(r"'(\w+)'", re.search(r"var APP_ONLY = \[([^\]]*)\];", page).group(1))
+        sent = []
+        for which in (0, 1):  # the builder and the chart card: between them, every app-only tool
+            page = self.server.page(which)[1]
+            self.assertNotIn("__ZEBRA_BI_APP_KEY__", page)
+            self.assertEqual(page.count(self.server.key()), 1)
+            sent = sorted(set(sent) | set(re.findall(r"'(\w+)'", re.search(r"var APP_ONLY = \[([^\]]*)\];", page).group(1))))
         tools = self.rpc("tools/list")["result"]["tools"]
         app_only = [t for t in tools if t.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]]
         self.assertEqual(sorted(sent), sorted(t["name"] for t in app_only))

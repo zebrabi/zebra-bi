@@ -929,3 +929,65 @@ def server_note(res):
     """The server's own text for a drawn chart (it lists every adjustment it made), one clean line."""
     content = res.get("content") if isinstance(res.get("content"), list) else []
     return S.clean(" ".join(str(c.get("text", "")) for c in content if isinstance(c, dict) and c.get("type") == "text"), 600)
+
+
+# ---------- charts shown in the chat ----------
+# A chart the model shows in the chat, outside any report, is kept under root()/.chat-charts/<id>: chart.json holds
+# its arguments and visuals/chart.json its drawn result, as a report keeps its charts. The id is a hash of the
+# arguments, so showing the same chart again finds it drawn. The chat's card reads it by id; it never names a report.
+
+CHAT = ".chat-charts"
+CHAT_ID = re.compile(r"[0-9a-f]{16}")
+CHAT_VISUAL = "chart"
+CHAT_DAYS = 30  # a chart nobody showed for this long is removed
+
+
+def chat_folder(cid):
+    if not isinstance(cid, str) or not CHAT_ID.fullmatch(cid):
+        raise ValueError("no chart %r" % cid)
+    base = os.path.join(root(), CHAT)
+    if os.path.islink(base):
+        raise ValueError("%s is a symbolic link" % base)
+    return os.path.join(base, cid)
+
+
+def show_chart(args):
+    """Keep a chart shown in the chat. Returns its id."""
+    if not isinstance(args, dict) or not args:
+        raise ValueError("chart needs the render_visual arguments")
+    cid = S.args_hash(args)
+    folder = chat_folder(cid)
+    prune_chat()
+    os.makedirs(folder, exist_ok=True)
+    S.write_atomic(os.path.join(folder, "chart.json"), json.dumps({"args": args, "shown_at": now()}))
+    return cid
+
+
+def chat_args(cid):
+    """The arguments of a chart shown in the chat; raises ValueError when there is none."""
+    path = os.path.join(chat_folder(cid), "chart.json")
+    raw = read_regular(path)
+    try:
+        data = json.loads(raw) if raw is not None else None
+    except ValueError:
+        raise ValueError("no chart %r" % cid)
+    if not (isinstance(data, dict) and isinstance(data.get("args"), dict)):
+        raise ValueError("no chart %r" % cid)
+    return data["args"]
+
+
+def prune_chat():
+    """Remove the chat's charts nobody showed for CHAT_DAYS."""
+    base = os.path.join(root(), CHAT)
+    if not os.path.isdir(base) or os.path.islink(base):
+        return
+    cutoff = time.time() - CHAT_DAYS * 86400
+    for name in os.listdir(base):
+        folder = os.path.join(base, name)
+        if not CHAT_ID.fullmatch(name) or os.path.islink(folder) or not os.path.isdir(folder):
+            continue
+        try:
+            if os.path.getmtime(os.path.join(folder, "chart.json")) < cutoff:
+                shutil.rmtree(folder)
+        except OSError:
+            pass

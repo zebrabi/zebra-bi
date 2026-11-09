@@ -16,6 +16,10 @@ POST /fake sets the fake, one or more of:
   {"delay": ms}            how long draw_chart takes, so the charts arrive one by one
   {"links": []}            clear the links the page asked the host to open (the page reads them as top.links)
 draw_chart, while the fake auth is signed in, puts the hidden chart back and lets the server draw it from its cache.
+
+/card#<render_visual arguments, URI-encoded JSON> calls show_chart with them and mounts the chart card as a chat
+would, 720 px wide. chart_card, while the fake auth is signed in, puts a result stashed for that chart as
+<stash>/chat/<chart id>.json in place and lets the server draw it from its cache.
 """
 import copy, glob, http.server, json, os, re, shutil, subprocess, sys, threading, time
 
@@ -87,7 +91,20 @@ def faked(method, params):
         return rpc(method, params)
     if name == "get_renderer" and not a["signed_in"]:
         return result("The Zebra BI renderer comes with sign-in to Zebra BI.", {"needs_sign_in": True, "auth": a}, True)
-    if name == "draw_chart":
+    if name == "chart_card":
+        first = rpc(method, params)
+        sc = first.get("result", {}).get("structuredContent") or {}
+        cid = sc.get("chart") or ""
+        src = os.path.join(STASH, "chat", cid + ".json")
+        if (not sc.get("drawn") and a["signed_in"] and not a["refusal"] and a["state"] != "waiting"
+                and re.fullmatch(r"[0-9a-f]{16}", cid) and os.path.isfile(src)):
+            dst = os.path.join(os.path.abspath(REPORTS), ".chat-charts", cid, "visuals")
+            os.makedirs(dst, exist_ok=True)
+            shutil.move(src, os.path.join(dst, "chart.json"))
+            out = rpc(method, params)
+        else:
+            out = first
+    elif name == "draw_chart":
         time.sleep(FAKE["delay"] / 1000.0)
         first = rpc(method, params)
         sc = first.get("result", {}).get("structuredContent") or {}
@@ -129,6 +146,26 @@ window.addEventListener('message',e=>{ if(e.source!==a.contentWindow) return; co
 </script>"""
 
 
+CARD = """<!doctype html><meta charset="utf-8"><title>dev host: chart card</title>
+<body style="margin:0;background:#ddd;padding:24px"><iframe id="a" sandbox="allow-scripts allow-same-origin" style="width:720px;height:200px;border:0;background:#fff;display:block"></iframe>
+<script>
+const a=document.getElementById('a'); window.links=[]; let shown=null;
+const rpc=(method,params)=>fetch('/rpc',{method:'POST',body:JSON.stringify({method,params})}).then(r=>r.json());
+const chart=JSON.parse(decodeURIComponent(location.hash.slice(1)));
+rpc('tools/call',{name:'show_chart',arguments:{chart}}).then(r=>{ shown=r.result; window.said=r.result;
+  return rpc('resources/list',{}); }).then(l=>rpc('resources/read',{uri:l.result.resources[1].uri})).then(r=>{ a.srcdoc=r.result.contents[0].text; });
+window.addEventListener('message',e=>{ if(e.source!==a.contentWindow) return; const m=e.data; if(!m||m.jsonrpc!=='2.0') return;
+  const reply=(r)=>a.contentWindow.postMessage({jsonrpc:'2.0',id:m.id,result:r},'*');
+  if(m.method==='ui/initialize') { reply({protocolVersion:'2026-01-26',hostInfo:{name:'devhost'},hostCapabilities:{serverTools:{},openLinks:{}},hostContext:{displayMode:'inline',theme:'light'}});
+    setTimeout(()=>a.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:shown},'*'),30); }
+  else if(m.method==='ui/notifications/size-changed') a.style.height=Math.ceil(m.params.height)+'px';
+  else if(m.method==='ui/open-link') { window.links.push(m.params&&m.params.url); reply({}); }
+  else if(m.method==='tools/call') rpc('tools/call',m.params).then(r=>a.contentWindow.postMessage({jsonrpc:'2.0',id:m.id,result:r.result,error:r.error},'*'));
+  else if(m.id!=null&&m.method) reply({});
+});
+</script>"""
+
+
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -137,7 +174,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
-        self.wfile.write(PAGE.encode())
+        self.wfile.write((CARD if self.path.split("#")[0].split("?")[0] == "/card" else PAGE).encode())
 
     def do_POST(self):
         if self.headers.get("Origin") not in ORIGINS or self.path not in ("/rpc", "/fake"):

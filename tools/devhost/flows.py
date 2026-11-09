@@ -2,14 +2,14 @@
 """Drive the report builder's flows in the dev host with agent-browser; print one line per step. Dev only.
 
   ZEBRA_BI_REPORTS=<copy of reports> CLAUDE_PLUGIN_DATA=<scratch> python3 tools/devhost/devhost.py scripts/report_server.py 8768 &
-  ZEBRA_BI_REPORTS=<same copy> CLAUDE_PLUGIN_DATA=<same scratch> python3 -I tools/devhost/flows.py <out dir> [all|main|sign-in]
+  ZEBRA_BI_REPORTS=<same copy> CLAUDE_PLUGIN_DATA=<same scratch> python3 -I tools/devhost/flows.py <out dir> [all|main|sign-in|card]
 
 The copy needs "october-close-test" and "p-l-close-october-2026" with their cached charts; the flows change it. The
 scratch folder holds a copy of the renderer (renderer/visual.html and visual.json) and no auth.json: the sign-in
 flows fake Zebra BI's sign-in through the dev host's /fake, so nothing reaches Zebra BI. A step with an expectation
 prints ok or FAIL; the run exits 1 when any step failed.
 """
-import json, os, subprocess, sys
+import json, os, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -268,12 +268,59 @@ def sign_in_flows():
     ab("eval", "fetch('/fake',{method:'POST',body:JSON.stringify({auth:null,refuse:null,delay:0})}).then(r=>r.text())")
 
 
+def card_flows():
+    """show_chart's card in a chat: the placeholder and the sign-in button, waiting, then the chart drawn after sign-in,
+    and a refusal. The drawn chart is a report chart's cached result, stashed for the dev host to put in place."""
+    import hashlib, shutil, urllib.parse
+    reports = os.environ["ZEBRA_BI_REPORTS"]
+    shutil.rmtree(os.path.join(reports, ".chat-charts"), ignore_errors=True)
+    slug = "p-l-close-october-2026"
+    with open(os.path.join(reports, slug, "report.zbreport"), encoding="utf-8") as f:
+        visuals = json.load(f)["visuals"]
+    vid = next(v for v in visuals if os.path.isfile(os.path.join(reports, slug, "visuals", v + ".json")))
+    args = visuals[vid]["args"]
+    cid = hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()[:16]
+    stash = os.path.join(os.path.dirname(os.path.abspath(reports)), "devhost-stash", "chat")
+    os.makedirs(stash, exist_ok=True)
+    shutil.copy(os.path.join(reports, slug, "visuals", vid + ".json"), os.path.join(stash, cid + ".json"))
+    card = lambda a: "http://127.0.0.1:8768/card?%d#%s" % (time.time() * 1000, urllib.parse.quote(json.dumps(a)))  # a new page each time
+    PRE[0] = ""
+    ab("eval", "fetch('/fake',{method:'POST',body:JSON.stringify({auth:{signed_in:false,state:'idle'},refuse:null})}).then(r=>r.text())")
+    ab("set", "viewport", "800", "900")
+    ab("open", card(args))
+    ab("wait", "4000")
+    step("card-ghost", "return 'said: '+window.said.content[0].text.slice(0,60)+' / model sees: '+Object.keys(window.said.structuredContent).join(',')"
+         "+' / ghost: '+!!$('.ghost')+' / label: '+$('.ghost .gl').textContent+' / '+banner()+' / buttons: '+btns()+' / frame: '+f.style.height",
+         "model sees: chart,title,drawn", "ghost: true", "label: Zebra BI chart, drawn after sign-in",
+         "Sign in to Zebra BI to draw this chart.", "buttons: Sign in to Zebra BI")
+    ab("screenshot", os.path.join(OUT, "card-1-ghost.png"))
+    step("card-start", "links.length=0; all('#signin button')[0].click(); await sleep(1500);"
+         "return banner()+' / opened: '+links.join(',')",
+         "Finish signing in in your browser. The chart appears here as soon as you are back.",
+         "opened: https://sign-in.example.invalid/")
+    step("card-aha", "await fake({auth:{signed_in:true,state:'signed_in'}}); await sleep(7000);"
+         "const fr=$('#chart iframe'); return 'drawn: '+!!fr+' / ghost: '+!!$('.ghost')+' / banner: \"'+banner()+'\" / height: '+(fr&&fr.style.height)",
+         "drawn: true", "ghost: false", 'banner: \\"\\"')
+    ab("screenshot", os.path.join(OUT, "card-2-drawn.png"))
+    other = dict(args, title=(args.get("title") or "Chart") + " (copy)")
+    ab("eval", "fetch('/fake',{method:'POST',body:JSON.stringify({auth:{signed_in:true,state:'signed_in',refusal:"
+       "{kind:'trial_ended',date:'22 Nov 2026',message:''}}})}).then(r=>r.text())")
+    ab("open", card(other))
+    ab("wait", "4000")
+    step("card-trial", "return banner()+' / buttons: '+btns()+' / ghost: '+!!$('.ghost')",
+         "Your Zebra BI trial ended on 22 Nov 2026. The chart needs a Zebra BI licence.", "buttons: Contact sales", "ghost: true")
+    ab("screenshot", os.path.join(OUT, "card-3-trial.png"))
+    ab("eval", "fetch('/fake',{method:'POST',body:JSON.stringify({auth:null,refuse:null,delay:0})}).then(r=>r.text())")
+
+
 if __name__ == "__main__":
     which = sys.argv[2] if len(sys.argv) > 2 else "all"
     if which in ("all", "main"):
         main_flows()
     if which in ("all", "sign-in"):
         sign_in_flows()
+    if which in ("all", "card"):
+        card_flows()
     ab("close")
     if FAILED:
         print("failed: " + ", ".join(FAILED))

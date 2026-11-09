@@ -23,6 +23,10 @@ when the host reads it. The key keeps out a model that can read neither that pag
 the model read MCP resources, or a model with a shell (Codex), can get it, so a call ChatGPT and Codex mark as the
 model's is refused with or without the key.
 
+show_chart shows one chart in the chat, outside any report, as its own small app page (assets/chart-card.html); the
+chart is kept under the reports folder's .chat-charts and the card reads it by id through chart_card (app only), so
+the model gets no chart data back.
+
 In ChatGPT and Codex desktop the builder opens from the sidebar (entrypoint "global") or beside a chat
 ("thread"). The renderer is nested in the builder through iframe srcdoc: the desktop hosts block blob: frames.
 Standard library only. stdout carries JSON-RPC alone; anything else goes to stderr.
@@ -78,23 +82,31 @@ def read_key(path):
         return None
 
 
-def app_page():
-    """The builder page with its key in it, and its address. The address carries a hash of that page: hosts cache an
-    app page by its URI, so a changed page, or a new key, must get a new one."""
-    if "page" not in state:
+CARD = os.path.join(HERE, "..", "assets", "chart-card.html")
+PAGES = {"builder": (APP, "report-builder", "The Zebra BI report builder: charts and text in rows."),
+         "card": (CARD, "chart-card", "One Zebra BI chart in the chat.")}
+
+
+def app_page(name="builder"):
+    """An app page with its key in it, and its address: the builder, or the card that shows one chart in the chat.
+    The address carries a hash of that page: hosts cache an app page by its URI, so a changed page, or a new key,
+    must get a new one."""
+    slot = "page:" + name
+    if slot not in state:
+        path, base, _ = PAGES[name]
         try:
-            with open(APP, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 page = f.read().replace(KEY_SLOT, app_key())
-        except OSError as e:  # the chat's tools still work; the builder cannot
-            log("the report builder is unavailable:", e)
-            state["page"] = (None, "ui://zebra-bi/report-builder.html")
+        except OSError as e:  # the chat's tools still work; this page cannot
+            log("the %s page is unavailable:" % name, e)
+            state[slot] = (None, "ui://zebra-bi/%s.html" % base)
         else:
-            state["page"] = (page, "ui://zebra-bi/report-builder-%s.html" % hashlib.sha256(page.encode("utf-8")).hexdigest()[:12])
-    return state["page"]
+            state[slot] = (page, "ui://zebra-bi/%s-%s.html" % (base, hashlib.sha256(page.encode("utf-8")).hexdigest()[:12]))
+    return state[slot]
 
 
-def app_uri():
-    return app_page()[1]
+def app_uri(name="builder"):
+    return app_page(name)[1]
 
 
 MIME = "text/html;profile=mcp-app"
@@ -150,10 +162,10 @@ def chart_schema():
     return state["schema"]
 
 
-def ui(entrypoints=False, app_only=False):
+def ui(entrypoints=False, app_only=False, page="builder"):
     if app_only:
         return {"ui": {"visibility": ["app"]}}
-    uri = app_uri()
+    uri = app_uri(page)
     meta = {"ui": {"resourceUri": uri}, "ui/resourceUri": uri, "openai/outputTemplate": uri}
     if entrypoints:
         meta["openai/ui"] = {"entrypoints": [{"type": "global"}, {"type": "thread"}]}
@@ -201,6 +213,16 @@ def tools():
          "description": "Bring a report back from Recently deleted and open it.",
          "inputSchema": obj({"report": {"type": "string", "description": "Name or title from list_reports deleted=true."}}, ["report"]),
          "annotations": write},
+        {"name": "show_chart", "title": "Zebra BI chart",
+         "description": "Show one Zebra BI chart in the chat, drawn with render_visual: the default way to show business "
+                        "figures (actuals against plan, previous year or forecast; a ranking; a trend). Send aggregated "
+                        "rows only, one per category, the scenarios as columns AC, PL, PY, FC and time_axis for periods. "
+                        "Tell the story in your reply, its numbers read from the rows you sent. One call per chart. "
+                        "Before the user signs in to Zebra BI the chart shows as a placeholder and is drawn after sign-in. "
+                        "For a report the user arranges and saves as PDF or PowerPoint, use create_report and add_chart "
+                        "with the same arguments.",
+         "inputSchema": obj({"chart": chart}, ["chart"]), "annotations": {"readOnlyHint": False, "idempotentHint": True},
+         "_meta": ui(page="card")},
         {"name": "add_chart", "title": "Add a Zebra BI chart to the report",
          "description": "Draw a Zebra BI chart with render_visual and add it to the report: `message` goes above the "
                         "chart (its supporting message, numbers in **bold**), `note` under it (two or three sentences of "
@@ -297,6 +319,9 @@ def tools():
         {"name": "draw_chart", "title": "Draw one chart", "description": "App only: draw one chart cell of a report.",
          "inputSchema": obj({"report": {"type": "string"}, "cell": {"type": "string"}, "app_key": key}, ["report", "cell"]),
          "annotations": {"readOnlyHint": False}, "_meta": app},
+        {"name": "chart_card", "title": "Chart for the chat", "description": "App only: one chart shown in the chat.",
+         "inputSchema": obj({"chart": {"type": "string"}, "app_key": key}, ["chart"]), "annotations": {"readOnlyHint": False},
+         "_meta": app},
         {"name": "start_sign_in", "title": "Sign in to Zebra BI", "description": "App only: open the Zebra BI sign-in page.",
          "inputSchema": obj({"app_key": key}), "annotations": {"readOnlyHint": False, "openWorldHint": True}, "_meta": app},
         {"name": "sign_out", "title": "Sign out of Zebra BI", "description": "App only: revoke and forget the Zebra BI sign-in.",
@@ -547,7 +572,11 @@ def draw(slug, vid, args, signed=None):
     """(result, None) for a chart drawn now or before; (None, Wait) for one that waits for sign-in or for what Zebra
     BI's refusal names, which is recorded for the auth block; (None, error result) when Zebra BI cannot draw it for its
     own reasons. Without sign-in Zebra BI is not asked. signed is auth() when the caller has it."""
-    folder = os.path.dirname(R.path_for(slug))
+    return draw_in(os.path.dirname(R.path_for(slug)), vid, args, signed)
+
+
+def draw_in(folder, vid, args, signed=None):
+    """draw() for the chart vid kept in folder: a report's, or a chart shown in the chat."""
     res = R.cached(folder, vid, args)
     if res is not None:
         return res, None
@@ -586,6 +615,20 @@ def waits(lead, wait):
     return ("%s Zebra BI did not draw it: %s. It stays in the report and every text stays. Keep building the draft; the "
             "builder shows the user the next step, so end your reply by saying in one line that the charts are not drawn "
             "and why." % (lead, told(r)))
+
+
+def shown_waits(lead, wait):
+    """What the model is told about a chart shown in the chat but not drawn yet."""
+    r = wait.refusal
+    if r is None:
+        return ("%s It shows as a placeholder and is drawn when the user signs in to Zebra BI. Answer as usual, then end "
+                "your reply by inviting the user to sign in: the \"Sign in to Zebra BI\" button on the chart, or the user "
+                "says \"sign me in\" and you call sign_in." % lead)
+    if r["kind"] == "expired":
+        return ("%s The user's Zebra BI sign-in has expired, so it is drawn when they sign in again. Answer as usual, then "
+                "end your reply by inviting the user to sign in again with the button on the chart." % lead)
+    return ("%s Zebra BI did not draw it: %s. The chart shows the user the next step; say in one line that the chart is "
+            "not drawn and why." % (lead, told(r)))
 
 
 def results_for(rep, slug, draw_now=True):
@@ -688,6 +731,17 @@ def call(name, args, thread):
                     {"deleted": slug})
     if name == "restore_report":
         return opened(R.restore(R.deleted_entry(args.get("report"))), thread, "Restored from Recently deleted.")
+    if name == "show_chart":
+        chart = args.get("chart")
+        cid = R.show_chart(chart)
+        res, err = draw_in(R.chat_folder(cid), R.CHAT_VISUAL, chart)
+        if err and not isinstance(err, Wait):
+            return err
+        title = chart.get("title") or "the chart"
+        out = {"chart": cid, "title": chart.get("title"), "drawn": res is not None}
+        if isinstance(err, Wait):
+            return text(shown_waits("Showed %r in the chat." % title, err), out)
+        return text("Showed %r in the chat. Zebra BI: %s" % (title, R.server_note(res)), out)
     if name == "add_chart":
         slug = target(args, thread)
         recipe = args.get("recipe") if isinstance(args.get("recipe"), dict) else None
@@ -806,17 +860,18 @@ def call(name, args, thread):
     if name == "sign_in":
         signed = auth()
         if signed["signed_in"] and not signed["refusal"]:
-            return text("The user is already signed in to Zebra BI; the builder draws the charts.",
+            return text("The user is already signed in to Zebra BI; the builder and the charts in the chat draw themselves.",
                         {"url": None, "opened": False, "signed_in": True})
         try:
             url, shown = start_sign_in()
         except S.Failed as e:
             return text(S.clean(e, 600), error=True)
         if shown:
-            return text("The Zebra BI sign-in page opened in the user's browser. The builder draws the charts as soon as "
-                        "they have signed in there; tell the user so in one line.", {"url": url, "opened": True})
-        return text("The Zebra BI sign-in page could not be opened from here; open it for the user: %s. The builder draws "
-                    "the charts as soon as they have signed in there." % url, {"url": url, "opened": False})
+            return text("The Zebra BI sign-in page opened in the user's browser. The charts, in the chat and in the "
+                        "builder, are drawn as soon as they have signed in there; tell the user so in one line.",
+                        {"url": url, "opened": True})
+        return text("The Zebra BI sign-in page could not be opened from here; open it for the user: %s. The charts, in the "
+                    "chat and in the builder, are drawn as soon as they have signed in there." % url, {"url": url, "opened": False})
     # ----- app only -----
     if name == "library":
         return text("library", {"reports": R.reports(), "deleted": R.deleted(), "current": R.resolve(thread), "last": R.last(),
@@ -831,6 +886,14 @@ def call(name, args, thread):
         n = S.sign_out(say=lambda line, warning=False: log(line))  # never print: stdout is the JSON-RPC stream
         forget_refusal()
         return text("signed out", {"signed_out": n, "auth": auth()})
+    if name == "chart_card":
+        cid = args.get("chart")
+        chart = R.chat_args(cid)
+        res, err = draw_in(R.chat_folder(cid), R.CHAT_VISUAL, chart)
+        return text("drawn" if res is not None else "not drawn",
+                    {"chart": cid, "title": chart.get("title"), "subtitle": chart.get("subtitle"), "ghost": ghost(chart),
+                     "drawn": res is not None, "result": res,
+                     "error": None if err is None or isinstance(err, Wait) else err["content"][0]["text"], "auth": auth()})
     if name == "draw_chart":
         slug = args.get("report")
         if not R.exists(slug):
@@ -917,17 +980,21 @@ def handle(method, params):
         return {"tools": tools()}
     if method == "resources/list":
         return {"resources": [{"uri": app_uri(), "name": "report-builder", "title": "Zebra BI report builder",
-                               "mimeType": MIME, "_meta": {"ui": {"csp": CSP, "prefersBorder": False}}}]}
+                               "mimeType": MIME, "_meta": {"ui": {"csp": CSP, "prefersBorder": False}}},
+                              {"uri": app_uri("card"), "name": "chart-card", "title": "Zebra BI chart",
+                               "mimeType": MIME, "_meta": {"ui": {"csp": CSP, "prefersBorder": True}}}]}
     if method == "resources/templates/list":
         return {"resourceTemplates": []}
     if method == "resources/read":
-        page, uri = app_page()
-        if page is None or params.get("uri") != uri:
-            raise KeyError("unknown resource %r" % params.get("uri"))
-        return {"contents": [{"uri": uri, "mimeType": MIME, "text": page,
-                              "_meta": {"ui": {"csp": CSP, "prefersBorder": False},
-                                        "openai/widgetCSP": {"connect_domains": [], "resource_domains": FONTS, "frame_domains": []},
-                                        "openai/widgetDescription": "The Zebra BI report builder: charts and text in rows."}}]}
+        for name in PAGES:
+            page, uri = app_page(name)
+            if page is not None and params.get("uri") == uri:
+                return {"contents": [{"uri": uri, "mimeType": MIME, "text": page,
+                                      "_meta": {"ui": {"csp": CSP, "prefersBorder": name == "card"},
+                                                "openai/widgetCSP": {"connect_domains": [], "resource_domains": FONTS,
+                                                                     "frame_domains": []},
+                                                "openai/widgetDescription": PAGES[name][2]}}]}
+        raise KeyError("unknown resource %r" % params.get("uri"))
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
         if name in app_only_tools():
