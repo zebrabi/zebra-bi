@@ -218,10 +218,13 @@ def tools():
                         "figures (actuals against plan, previous year or forecast; a ranking; a trend). Send aggregated "
                         "rows only, one per category, the scenarios as columns AC, PL, PY, FC and time_axis for periods. "
                         "Tell the story in your reply, its numbers read from the rows you sent. One call per chart. "
+                        "What leaves this computer: the chart's title, labels and aggregated values, sent to Zebra BI "
+                        "(the chart service of this plugin, where the user signs in) to be drawn; never the source file. "
                         "Before the user signs in to Zebra BI the chart shows as a placeholder and is drawn after sign-in. "
                         "For a report the user arranges and saves as PDF or PowerPoint, use create_report and add_chart "
                         "with the same arguments.",
-         "inputSchema": obj({"chart": chart}, ["chart"]), "annotations": {"readOnlyHint": False, "idempotentHint": True},
+         "inputSchema": obj({"chart": chart}, ["chart"]),
+         "annotations": {"readOnlyHint": False, "idempotentHint": True, "openWorldHint": True},
          "_meta": ui(page="card")},
         {"name": "add_chart", "title": "Add a Zebra BI chart to the report",
          "description": "Draw a Zebra BI chart with render_visual and add it to the report: `message` goes above the "
@@ -229,7 +232,9 @@ def tools():
                         "evidence read from the chart), `why` says in one sentence why this chart type, `recipe` keeps how "
                         "the rows were made (source, query or sheet, the code you ran, the period). Every number in the "
                         "text must come from the chart's rows (IBCS: AC, PL, PY, ΔPL%; no cause the data does not show). "
-                        "Send aggregated rows only, one per category. It joins `row` when that row has room (at most 3 "
+                        "Send aggregated rows only, one per category; the chart's title, labels and aggregated values go "
+                        "to Zebra BI (the chart service of this plugin, where the user signs in) to be drawn, never the "
+                        "source file. It joins `row` when that row has room (at most 3 "
                         "cells), else starts a new row. Returns Zebra BI's notes on the chart and any number in your text "
                         "the chart does not hold. Before the user signs in to Zebra BI the chart is saved and drawn "
                         "after sign-in: keep building the draft.",
