@@ -17,9 +17,10 @@ The file is built by a script in Claude Code, so do not run anything here. Say i
 
 - A slug or path given: use `.zebra/stories/<slug>/story.json`.
 - "This story" right after `data-story`: use the story it just saved. If it was told in chat without being saved, write `story.json` now from the conversation (the exact `render_visual` arguments it used, the key message as `title`, supporting messages as section `heading`s) per the `story.json` format of the `data-story` skill (`references/story-json.md` there).
+- A report from the report builder (the user names a Zebra BI report): pass its folder as an absolute path in quotes, `"$HOME/Zebra BI Reports/<name>"` on macOS and `"$HOME/Documents/Zebra BI Reports/<name>"` elsewhere (or under `ZEBRA_BI_REPORTS` when that is set), in place of the story folder. The PDF keeps the report's title and its rows, up to three charts or texts side by side. Build it as it is: the layout and the text are the user's.
 - Nothing given: list `.zebra/stories/*/story.json` with their titles and dates, and ask which one.
 
-If the story was not run through `data-story` (no key message, a chart without a message above it), fix that first: the PDF carries the same IBCS narrative that the `data-story` skill writes.
+If a story was not run through `data-story` (no key message, a chart without a message above it), fix that first: the PDF carries the same IBCS narrative that the `data-story` skill writes.
 
 ## 2. Build
 

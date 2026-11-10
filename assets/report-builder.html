@@ -1,0 +1,1245 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zebra BI reports</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;700&amp;display=swap">
+<!--
+  The Zebra BI report builder, an MCP App served by report_server.py. Two views: the home ("All reports": open,
+  create, rename, duplicate, delete, Recently deleted) and the editor (rows of up to three chart or text cells).
+  It is two things at once:
+  - an MCP App to its host (ChatGPT, Codex, Claude): ui/initialize, tools/call of the server's tools, size-changed;
+  - a host to the Zebra BI renderer: every chart cell nests the renderer page in an iframe through srcdoc with
+    sandbox allow-scripts and answers its ui/initialize with the cell's width, then sends it the chart's
+    render_visual result. srcdoc, not a blob: URL, because the desktop hosts' CSP blocks blob: frames; the frame's
+    opaque origin also keeps the renderer off the location.origin path that throws in blob: frames.
+  Every edit is a tool call and every report is the server's file; the page keeps no state beyond what it shows.
+  Opened inline in a chat it follows that chat's report; opened from the sidebar it follows the report opened last.
+-->
+<style>
+  /* Zebra BI brand: black and Power BI yellow on white, Open Sans Light and Bold (the system font where it cannot
+     load). Yellow is a fill with black text on it; focus rings and drag markers stay black, which reads on white.
+     The charts keep their IBCS colours. */
+  :root { --ink:#000000; --muted:#5f6264; --hairline:#d9dadb; --paper:#ffffff; --soft:#f4f4f4; --accent:#FFD800;
+    --accent-dark:#FBBA00; --focus:#000000; --danger:#A4262C; --font:'Open Sans', system-ui, -apple-system, sans-serif;
+    color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 300 14px/1.5 var(--font); caret-color: var(--ink); }
+  ::selection { background: var(--accent); color: var(--ink); }
+  b, strong { font-weight: 700; }
+  /* The bar stays on one line at every width. When it does not fit, fitBar() folds it a step at a time:
+     fit-1 drops the brand, Reload and the Full screen label; fit-2 leaves the back link its arrow; fit-3 turns
+     the layouts into a menu; fit-4 moves Notes and + Text into the More menu. */
+  .bar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+    min-height: 52px; padding: 9px 20px; overflow: hidden; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--hairline); }
+  .bar > *, #editor-actions > * { flex: none; }
+  .bar .brand { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+  .bar .spacer { flex: 1 1 auto; min-width: 4px; }
+  #editor-actions { display: inline-flex; align-items: center; gap: 8px; }
+  button { font: inherit; font-size: 13px; line-height: 18px; padding: 5px 11px; border: 1px solid var(--hairline); border-radius: 6px;
+    background: var(--paper); color: var(--ink); cursor: pointer; white-space: nowrap; }
+  button:hover { background: var(--soft); }
+  button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  button svg { display: block; width: 16px; height: 16px; flex: none; }
+  button.icon, .withicon { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  button.icon { padding: 5px 6px; }
+  .seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--paper); }
+  .seg button { border: 0; border-radius: 6px; padding: 4px 10px; }
+  .seg button[aria-checked=true] { background: var(--accent); font-weight: 700; }
+  .seg button[aria-checked=true]:hover { background: var(--accent-dark); }
+  #layout-pick { display: none; }
+  #layout-pick span { font-weight: 700; }
+  .bar.fit-1 .brand, .bar.fit-1 #reload, .bar.fit-1 #full .lbl { display: none; }
+  .bar.fit-1 #full { padding: 5px 6px; }
+  .bar.fit-2 #back .lbl { display: none; }
+  .bar.fit-3 #layouts { display: none; }
+  .bar.fit-3 #layout-pick { display: inline-flex; }
+  .bar.fit-4 #notes-toggle, .bar.fit-4 #add-text { display: none; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
+  button.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+  button.danger { color: var(--danger); }
+  button.link { border: 0; padding: 5px 6px; background: none; color: var(--muted); }
+  button.link:hover { color: var(--ink); background: none; }
+  input[type=text] { font: inherit; padding: 6px 10px; border: 1px solid var(--hairline); border-radius: 6px; min-width: 0; }
+  input[type=text]:focus { outline: 2px solid var(--focus); outline-offset: -1px; }
+  .status { flex: none; width: 76px; font-size: 12px; color: var(--muted); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  main { max-width: 1280px; margin: 0 auto; padding: 20px 20px 80px; }
+  h1 { margin: 0 0 16px; font: 700 26px/1.2 var(--font); letter-spacing: -.01em; outline: none; border-radius: 4px; }
+  h1[contenteditable]:focus { box-shadow: 0 0 0 2px var(--focus); }
+  [hidden] { display: none !important; }
+
+  /* home */
+  .home-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .home-head h1 { margin: 0 auto 0 0; }
+  .newform { display: flex; gap: 8px; margin: 0 0 16px; }
+  .newform input { flex: 1 1 auto; max-width: 480px; }
+  .search { width: min(260px, 100%); margin-bottom: 12px; }
+  .list { border-top: 1px solid var(--hairline); }
+  .item { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-bottom: 1px solid var(--hairline); }
+  .item:hover { background: var(--soft); }
+  .item .main { flex: 1 1 auto; min-width: 0; cursor: pointer; border-radius: 4px; }
+  .item .main:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .item .t { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .m { font-size: 12px; color: var(--muted); }
+  .item .badge { font-size: 11px; color: var(--ink); background: var(--accent); border-radius: 3px; padding: 1px 6px;
+    margin-left: 8px; font-weight: 700; }
+  .item input { width: 100%; max-width: 480px; }
+  details.deleted { margin-top: 28px; }
+  details.deleted summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .confirm { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--danger); }
+  .empty { margin: 24px 0; padding: 40px; border: 1px dashed var(--hairline); border-radius: 8px; color: var(--muted); text-align: center; }
+
+  /* menu */
+  .menu { position: fixed; z-index: 20; min-width: 160px; padding: 4px; background: var(--paper); border: 1px solid var(--hairline);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+  .menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 4px; padding: 7px 10px; }
+  .menu button:focus-visible { outline: none; background: var(--soft); box-shadow: inset 0 0 0 2px var(--focus); }
+  .menu .tick { width: 16px; height: 16px; flex: none; }
+  .menu hr { border: 0; border-top: 1px solid var(--hairline); margin: 4px 2px; }
+
+  /* editor */
+  .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .slot { height: 14px; margin: 2px 0; border-radius: 4px; }
+  .slot.over { height: 36px; background: rgba(255,216,0,.18); outline: 2px dashed var(--focus); }
+  /* Cells sit side by side as the PDF prints them, but never narrower than a chart can be read at (about 340 px):
+     in a narrow window a row wraps instead. */
+  .cell { position: relative; flex: 1 1 340px; min-width: 0; border: 1px solid transparent; border-radius: 8px; padding: 6px; }
+  .cell:hover { border-color: var(--hairline); }
+  .cell.over-before { box-shadow: -3px 0 0 var(--focus); }
+  .cell.over-after { box-shadow: 3px 0 0 var(--focus); }
+  .cell.dragging { opacity: .4; }
+  .tools { position: absolute; top: 4px; right: 4px; display: none; gap: 4px; z-index: 2; }
+  .cell:hover .tools { display: flex; }
+  .tools span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; background: var(--paper);
+    border: 1px solid var(--hairline); color: var(--muted); cursor: pointer; user-select: none; }
+  .tools span:hover { color: var(--ink); }
+  .tools svg, .why-btn svg { width: 14px; height: 14px; display: block; }
+  @media (hover: none) { .tools { display: flex; } }
+  .tools .grip { cursor: grab; }
+  .chart iframe { display: block; width: 100%; height: 0; border: 0; background: #fff; }
+  .chart .err { padding: 24px 8px; color: var(--muted); font-size: 13px; }
+  .chart .err { color: var(--danger); }
+  .text { min-height: 2.6em; padding: 4px 6px; outline: none; border-radius: 4px; white-space: pre-wrap; max-width: 75ch; }
+  .text:focus { box-shadow: 0 0 0 2px var(--focus); }
+  .text:empty::before { content: 'Write here…'; color: var(--muted); }
+  .chart-note { min-height: 1.6em; margin-top: 8px; font-size: 13px; }
+  .chart-note:empty::before { content: 'Add the evidence: the numbers from this chart that prove its message…'; }
+  .key, .chart-msg, .kpi .v, .kpi .l { outline: none; border-radius: 4px; white-space: pre-wrap; }
+  .key:focus, .chart-msg:focus, .kpi .v:focus, .kpi .l:focus { box-shadow: 0 0 0 2px var(--focus); }
+  .key { min-height: 1.5em; margin: -6px 0 14px; font-size: 17px; font-weight: 700; line-height: 1.4; max-width: 75ch; }
+  .key:empty::before { content: 'Add the key message: what happened, how big, against what…'; color: var(--muted); font-weight: 400; }
+  /* KPI tiles: all in one row, two by two once four no longer fit, never three and a lone fourth. */
+  .kpis { display: grid; grid-template-columns: repeat(var(--tiles), minmax(0, 1fr)); gap: 14px; margin: 0 0 18px; }
+  .kpis.n1 { --tiles: 1; } .kpis.n2 { --tiles: 2; } .kpis.n3 { --tiles: 3; } .kpis.n4 { --tiles: 4; }
+  @media (max-width: 720px) { .kpis.n4 { --tiles: 2; } }
+  @media (max-width: 460px) { .kpis.n3 { --tiles: 1; } }
+  .kpi { border-top: 2px solid var(--ink); padding-top: 6px; }
+  .kpi .v { font-size: 20px; font-weight: 700; }
+  .kpi .l { font-size: 12px; color: var(--muted); }
+  .chart-head { display: flex; align-items: flex-start; gap: 4px; margin: 0 56px 6px 0; }
+  .chart-msg { flex: 1 1 auto; min-height: 1.4em; font-weight: 700; padding: 2px 4px; }
+  .chart-msg:empty::before { content: 'Add the message for this chart…'; color: var(--muted); font-weight: 400; }
+  .why-btn { border: 0; background: none; padding: 3px; color: var(--muted); }
+  .why-btn:hover { background: none; color: var(--ink); }
+  .why-text { font-size: 12px; color: var(--muted); margin: 0 0 6px 4px; }
+  .flag { display: flex; align-items: center; gap: 8px; margin: 4px 0; padding: 4px 8px; border-radius: 6px; background: #fdecec;
+    color: var(--danger); font-size: 12px; }
+  .flag button { font-size: 12px; padding: 2px 8px; }
+  #layouts { display: inline-flex; gap: 4px; margin-right: 8px; }
+  #layouts button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
+  .layout-hint { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+  .layout-hint:empty { display: none; }
+  .page-mark { display: flex; align-items: center; gap: 8px; margin: 14px 0 4px; font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); }
+  .page-mark::after { content: ''; flex: 1; border-top: 1px dashed var(--hairline); }
+  .note { margin-top: 24px; font-size: 12px; color: var(--muted); }
+
+  /* Sign-in: one banner above the first row, never one per chart. It sticks under the bar, so the button stays in
+     view however far down the report is scrolled. */
+  .signin { position: sticky; top: 60px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--soft);
+    box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+  .signin:empty { display: none; }
+  .signin.ask { background: #fffbe0; border-color: #f3dd6a; }
+  .signin .msg { flex: 1 1 260px; min-width: 0; }
+  .signin .acts { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .signin button.link { padding: 5px 2px; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+  .signin.quiet { position: static; display: inline-flex; padding: 0; border: 0; background: none; box-shadow: none; font-size: 12px;
+    color: var(--muted); gap: 6px; }
+  .signin.quiet svg { width: 14px; height: 14px; display: block; }
+  /* A ghost stands where a chart will be drawn: the chart's own title and subtitle, then light grey dashed outlines
+     in its shape, labelled. No fill, no axis, no numbers: it must never pass for a drawn chart. */
+  .ghost { border: 1px dashed var(--hairline); border-radius: 8px; padding: 10px 12px 12px; background: var(--paper); }
+  .ghost .gt { font-size: 13px; font-weight: 700; color: var(--muted); }
+  .ghost .gs { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .ghost svg { display: block; width: 100%; }
+  .ghost .gl { margin-top: 8px; font-size: 12px; color: var(--muted); text-align: center; }
+  .chart iframe.arrived { animation: arrive .5s ease-out; }
+  @keyframes arrive { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .chart iframe.arrived { animation: none; } }
+  @media (max-width: 560px) {
+    .bar { padding: 8px 12px; }
+    main { padding: 16px 14px 64px; }
+    h1 { font-size: 22px; }
+    .key { font-size: 16px; }
+  }
+
+  /* toast, at the top: ChatGPT lays its own composer over the bottom of the app */
+  .toast { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; background: var(--ink); color: #fff; border-radius: 8px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.2);
+    max-width: calc(100vw - 32px); overflow-wrap: anywhere; }
+  .toast button { background: none; border-color: rgba(255,255,255,.4); color: #fff; padding: 3px 9px; }
+</style></head>
+<body>
+<div class="bar" id="bar">
+  <button class="link withicon" id="back" hidden title="All reports" aria-label="All reports"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3.5M7.5 4 3.5 8l4 4"/></svg><span class="lbl">All reports</span></button>
+  <span class="brand" id="brand">Zebra BI reports</span>
+  <span class="spacer"></span>
+  <span class="status" id="status" role="status"></span>
+  <span id="editor-actions" hidden>
+    <span id="layouts" class="seg" role="radiogroup" aria-label="Layout">
+      <button role="radio" aria-checked="false" data-layout="one-pager" title="Largest variances first, up to three charts a row, notes hidden; the PDF fits one landscape page">One-pager</button><button role="radio" aria-checked="false" data-layout="variance-walk" title="One chart a row in the order they were built, each with its note">Variance walk</button><button role="radio" aria-checked="false" data-layout="board-pack" title="One chart a row, largest variances first; the PDF has a cover and a page per chart">Board pack</button>
+    </span>
+    <button class="withicon" id="layout-pick" aria-haspopup="menu" title="Layout">Layout: <span id="layout-pick-label">none</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.25 3.5 3.5 3.5-3.5"/></svg></button>
+    <button id="add-text" title="Add a text row">+ Text</button>
+    <button id="notes-toggle" aria-pressed="true" title="Show or hide the notes under the charts, here and in the PDF and page">Notes: on</button>
+    <button id="reload" title="Reload from the report file">Reload</button>
+    <button class="dots icon" id="report-menu" aria-haspopup="menu" title="More" aria-label="More"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.25" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="12.75" cy="8" r="1.4"/></svg></button>
+  </span>
+  <button class="withicon" id="full" title="Full screen" aria-label="Full screen"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9.25 6.75M2.5 13.5l4.25-4.25"/></svg><span class="lbl">Full screen</span></button>
+</div>
+
+<main id="home" hidden>
+  <div class="home-head">
+    <h1>Reports</h1>
+    <button class="primary" id="new">New report</button>
+  </div>
+  <div class="newform" id="newform" hidden>
+    <input type="text" id="newtitle" placeholder="Title, for example P&amp;L close November 2026" maxlength="200">
+    <button class="primary" id="newcreate">Create</button>
+    <button id="newcancel">Cancel</button>
+  </div>
+  <input type="text" class="search" id="search" placeholder="Search reports" hidden>
+  <div id="list"></div>
+  <details class="deleted" id="deleted" hidden><summary id="deleted-sum"></summary><div class="list" id="deleted-list"></div></details>
+</main>
+
+<main id="editor" hidden>
+  <h1 id="title" contenteditable="true" spellcheck="false"></h1>
+  <div id="head"></div>
+  <p class="layout-hint" id="layout-hint"></p>
+  <div class="signin" id="signin" role="status" aria-live="polite"></div>
+  <div id="rows"></div>
+  <p class="note" id="note"></p>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  function status(s) { $('status').textContent = s; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  // ---------- this page as an MCP App ----------
+  var nextId = 1, pending = {};
+  function request(method, params) {
+    return new Promise(function (resolve, reject) {
+      var id = nextId++; pending[id] = { resolve: resolve, reject: reject };
+      window.parent.postMessage({ jsonrpc: '2.0', id: id, method: method, params: params || {} }, '*');
+    });
+  }
+  function notify(method, params) { window.parent.postMessage({ jsonrpc: '2.0', method: method, params: params || {} }, '*'); }
+  // The server puts its key here when the host reads this page, and refuses its builder-only tools without it.
+  var APP_KEY = '__ZEBRA_BI_APP_KEY__';
+  var APP_ONLY = ['library', 'get_report', 'get_renderer', 'save_layout', 'purge_report', 'start_sign_in', 'sign_out', 'draw_chart'];
+  function callTool(name, args) {
+    var a = {}, k;
+    for (k in args || {}) a[k] = args[k];
+    if (APP_ONLY.indexOf(name) >= 0) a.app_key = APP_KEY;
+    return request('tools/call', { name: name, arguments: a }).then(function (r) {
+      if (r && r.isError) {
+        var err = new Error((r.content || []).map(function (c) { return c.text || ''; }).join(' ') || name + ' failed');
+        err.result = r; throw err;
+      }
+      return r || {};
+    });
+  }
+  function sc(r) { return (r && r.structuredContent) || {}; }
+  var sizeTimer = null;
+  function reportSize() {
+    clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(function () {
+      notify('ui/notifications/size-changed', { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight });
+    }, 60);
+  }
+
+  // ---------- toast ----------
+  var toastTimer = null;
+  function toast(message, action, onAction, ms) {
+    var old = document.querySelector('.toast'); if (old) old.remove();
+    var t = el('div', 'toast'); t.appendChild(el('span', null, message));
+    if (action) { var b = el('button', null, action); b.onclick = function () { t.remove(); onAction(); }; t.appendChild(b); }
+    document.body.appendChild(t);
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.remove(); }, ms || (action ? 8000 : 4000));
+  }
+  function fail(e) { toast(e && e.message ? e.message : 'Something went wrong'); }
+
+  // ---------- icons: drawn, one stroke weight ----------
+  var ICONS = {
+    more: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.25" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="12.75" cy="8" r="1.4"/></svg>',
+    check: '<svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
+    grip: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="3.5" r="1.3"/><circle cx="10.5" cy="3.5" r="1.3"/><circle cx="5.5" cy="8" r="1.3"/><circle cx="10.5" cy="8" r="1.3"/><circle cx="5.5" cy="12.5" r="1.3"/><circle cx="10.5" cy="12.5" r="1.3"/></svg>',
+    close: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>',
+    info: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M8 7.25v4"/><circle cx="8" cy="4.9" r=".4" fill="currentColor"/></svg>'
+  };
+  function iconEl(tag, cls, name, label) {
+    var e = el(tag, cls); e.innerHTML = ICONS[name]; e.title = label; e.setAttribute('aria-label', label); return e;
+  }
+
+  // ---------- menu ----------
+  // A popup menu of buttons: Up and Down move through it, Escape closes it and gives focus back to its button.
+  // An item with `checked` (true or false) is a choice; `sep` puts a rule above the item. Focus moves into the
+  // menu when it was opened from the keyboard (a click with detail 0), so a mouse user sees no ring.
+  var menuAnchor = null;
+  function openMenu(anchor, items, align, ev) {
+    closeMenu();
+    var m = el('div', 'menu'); m.id = 'menu'; m.setAttribute('role', 'menu');
+    items.forEach(function (it) {
+      if (it.sep) m.appendChild(el('hr'));
+      var b = el('button', it.danger ? 'danger' : null);
+      b.setAttribute('role', it.checked == null ? 'menuitem' : 'menuitemradio');
+      if (it.checked != null) { b.setAttribute('aria-checked', String(!!it.checked)); b.innerHTML = it.checked ? ICONS.check : '<span class="tick"></span>'; }
+      b.appendChild(document.createTextNode(it.label));
+      b.onclick = function (e) { e.stopPropagation(); closeMenu(); it.run(); };
+      m.appendChild(b);
+    });
+    m.addEventListener('keydown', function (e) {
+      var bs = Array.prototype.slice.call(m.querySelectorAll('button')), i = bs.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length].focus();
+      }
+    });
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect(), left = align === 'left' ? r.left : r.right - m.offsetWidth;
+    m.style.top = (r.bottom + 4) + 'px';
+    m.style.left = Math.max(8, Math.min(left, window.innerWidth - m.offsetWidth - 8)) + 'px';
+    menuAnchor = anchor; anchor.setAttribute('aria-expanded', 'true');
+    if (ev && ev.detail === 0) (m.querySelector('[aria-checked=true]') || m.querySelector('button')).focus();
+  }
+  function closeMenu(refocus) {
+    var m = $('menu'); if (m) m.remove();
+    if (menuAnchor) { menuAnchor.setAttribute('aria-expanded', 'false'); if (refocus) menuAnchor.focus(); menuAnchor = null; }
+  }
+  document.addEventListener('click', function (e) { if (!e.target.closest('.menu') && !e.target.closest('[aria-haspopup]')) closeMenu(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && $('menu')) closeMenu(true); });
+
+  // ---------- the bar: one line at every width ----------
+  var FITS = ['fit-1', 'fit-2', 'fit-3', 'fit-4'];
+  function fitBar() {
+    var bar = $('bar');
+    FITS.forEach(function (c) { bar.classList.remove(c); });
+    for (var i = 0; i < FITS.length && bar.scrollWidth > bar.clientWidth; i++) bar.classList.add(FITS[i]);
+  }
+
+  // ---------- state ----------
+  var view = null, follow = 'last', lib = null, slug = null, rep = null, results = {}, errors = {};
+  var rendererText = null, rendererError = null, auth = null;
+  var saving = false, dirty = false, saveTimer = null, dragId = null, busy = false;
+
+  function show(which) {
+    view = which; closeMenu();
+    $('home').hidden = which !== 'home';
+    $('editor').hidden = which !== 'editor';
+    $('back').hidden = which !== 'editor';
+    $('editor-actions').hidden = which !== 'editor';
+    $('brand').textContent = which === 'editor' ? 'Zebra BI report' : 'Zebra BI reports';
+    status('');
+    fitBar();
+  }
+
+  // ---------- actions (every one is a tool call) ----------
+  function act(promise, after) {
+    busy = true;
+    return promise.then(function (r) { busy = false; return after ? after(r) : r; }, function (e) { busy = false; fail(e); });
+  }
+  function openReport(s) { return act(callTool('open_report', { report: s }), function () { return loadReport(s, true); }); }
+  function createReport(title) {
+    return act(callTool('create_report', { title: title }), function (r) { return loadReport(sc(r).report, true); });
+  }
+  function renameReport(s, title) { return act(callTool('rename_report', { report: s, title: title }), function () { toast('Renamed'); return refreshLibrary(); }); }
+  function duplicateReport(s, title, openIt) {
+    return act(callTool('duplicate_report', { report: s, title: title || undefined }), function (r) {
+      var copy = sc(r).report;
+      if (openIt) return loadReport(copy, true).then(function () { toast('Opened the copy'); });
+      return refreshLibrary().then(function () { toast('Duplicated', 'Open', function () { openReport(copy); }); });
+    });
+  }
+  function savePdf(s) { return saveFile(s, 'save_pdf', 'PDF'); }
+  function savePptx(s) { return saveFile(s, 'save_pptx', 'PowerPoint'); }
+  function saveFile(s, tool, what) {
+    toast('Saving the ' + what + '…', null, null, 120000);  // until the result replaces it
+    busy = true;
+    return callTool(tool, { report: s }).then(function (r) {
+      busy = false; toast(what + ' saved: ' + (sc(r).shown || sc(r).file), null, null, 10000);
+    }, function (e) {
+      busy = false;
+      var out = (e.result && e.result.structuredContent) || {};
+      if (out.waiting) { exportWaits(s, what, out.waiting, e.message); return; }
+      var flags = out.flags;
+      if (!flags) { fail(e); return; }
+      toast('Fix or keep the flagged numbers first', null, null, 8000);
+      if (view === 'editor' && slug === s) { var f = document.querySelector('.flag'); if (f) f.scrollIntoView({ block: 'center' }); }
+    });
+  }
+  function deleteReport(s, title) {
+    return act(callTool('delete_report', { report: s }), function () {
+      if (slug === s) { slug = null; rep = null; }
+      return goHome().then(function () {
+        toast('Moved “' + title + '” to Recently deleted', 'Undo', function () {
+          act(callTool('restore_report', { report: s }), function (r) { return loadReport(sc(r).report, true); });
+        });
+      });
+    });
+  }
+  function restoreReport(entry) { return act(callTool('restore_report', { report: entry }), function () { toast('Restored'); return refreshLibrary(); }); }
+  function purgeReport(entry) { return act(callTool('purge_report', { entry: entry }), function () { toast('Deleted for good'); return refreshLibrary(); }); }
+
+  // ---------- home ----------
+  function ago(iso) {
+    if (!iso) return '';
+    var s = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (isNaN(s)) return '';
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    if (s < 86400) return Math.round(s / 3600) + ' h ago';
+    if (s < 30 * 86400) return Math.round(s / 86400) + ' d ago';
+    return new Date(iso).toLocaleDateString();
+  }
+  function plural(n, one) { return n + ' ' + one + (n === 1 ? '' : 's'); }
+
+  // redraw the home only when the library changed, so polling keeps focus and open menus in place
+  var libSeen = null;
+  function refreshLibrary(onlyIfChanged) {
+    return callTool('library').then(function (r) {
+      lib = sc(r); takeAuth(lib.auth);
+      var seen = JSON.stringify({ reports: lib.reports, deleted: lib.deleted, current: lib.current, last: lib.last });
+      if (view === 'home' && (!onlyIfChanged || seen !== libSeen)) { libSeen = seen; renderHome(); }
+    }, fail);
+  }
+  function goHome() { show('home'); return refreshLibrary(); }
+
+  function renderHome() {
+    var reports = lib.reports || [], q = $('search').value.trim().toLowerCase();
+    $('search').hidden = reports.length <= 8;
+    var list = $('list'); list.innerHTML = '';
+    if (!reports.length) {
+      var e = el('div', 'empty'); e.textContent = 'No reports yet. Ask in the chat, for example “build a Zebra BI report of the October P&L”, or start one here with New report.';
+      list.appendChild(e);
+    } else {
+      var box = el('div', 'list');
+      reports.filter(function (r) { return !q || r.title.toLowerCase().indexOf(q) >= 0; }).forEach(function (r) { box.appendChild(reportItem(r)); });
+      list.appendChild(box);
+    }
+    var del = lib.deleted || [];
+    $('deleted').hidden = !del.length;
+    $('deleted-sum').textContent = 'Recently deleted (' + del.length + '), kept for 30 days';
+    var dl = $('deleted-list'); dl.innerHTML = '';
+    del.forEach(function (d) { dl.appendChild(deletedItem(d)); });
+    reportSize();
+  }
+
+  function reportItem(r) {
+    var item = el('div', 'item'), main = el('div', 'main');
+    var t = el('div', 't', r.title);
+    if (r.report === (slug || (follow === 'last' ? lib.last : lib.current))) t.appendChild(el('span', 'badge', 'current'));
+    main.appendChild(t);
+    main.appendChild(el('div', 'm', ['edited ' + ago(r.saved_at), plural(r.charts, 'chart'), plural(r.rows, 'row')].join(' · ')));
+    main.setAttribute('role', 'button'); main.tabIndex = 0; main.setAttribute('aria-label', 'Open ' + r.title);
+    main.onclick = function () { openReport(r.report); };
+    main.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openReport(r.report); } };
+    var dots = iconEl('button', 'dots icon', 'more', 'More'); dots.setAttribute('aria-label', 'More actions for ' + r.title); dots.setAttribute('aria-haspopup', 'menu');
+    dots.onclick = function (e) {
+      e.stopPropagation();
+      openMenu(dots, [
+        { label: 'Open', run: function () { openReport(r.report); } },
+        { label: 'Rename', run: function () { renameInline(item, main, r); } },
+        { label: 'Duplicate', run: function () { duplicateReport(r.report, null, false); } },
+        { label: 'Save as PDF', run: function () { savePdf(r.report); } },
+        { label: 'Save as PowerPoint', run: function () { savePptx(r.report); } },
+        { label: 'Delete', danger: true, sep: true, run: function () { deleteReport(r.report, r.title); } }
+      ], null, e);
+    };
+    item.appendChild(main); item.appendChild(dots);
+    return item;
+  }
+
+  function renameInline(item, main, r) {
+    var input = el('input'); input.type = 'text'; input.value = r.title; input.maxLength = 200;
+    main.replaceWith(input); input.focus(); input.select(); busy = true;
+    var done = false;
+    function finish(save) {
+      if (done) return; done = true; busy = false;
+      var title = input.value.trim();
+      if (save && title && title !== r.title) renameReport(r.report, title); else renderHome();
+    }
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', function () { finish(true); });
+  }
+
+  function deletedItem(d) {
+    var item = el('div', 'item'), main = el('div', 'main');
+    main.style.cursor = 'default';
+    main.appendChild(el('div', 't', d.title));
+    main.appendChild(el('div', 'm', 'deleted ' + ago(d.deleted_at)));
+    var restore = el('button', null, 'Restore'); restore.onclick = function () { restoreReport(d.entry); };
+    var forever = el('button', 'danger', 'Delete forever');
+    forever.onclick = function () {
+      var c = el('div', 'confirm'); c.appendChild(el('span', null, 'Delete “' + d.title + '” forever? This cannot be undone.'));
+      var yes = el('button', 'danger', 'Delete forever'); yes.onclick = function () { purgeReport(d.entry); };
+      var no = el('button', null, 'Cancel'); no.onclick = function () { renderHome(); };
+      c.appendChild(yes); c.appendChild(no);
+      restore.remove(); forever.replaceWith(c);
+    };
+    item.appendChild(main); item.appendChild(restore); item.appendChild(forever);
+    return item;
+  }
+
+  $('new').onclick = function () { $('newform').hidden = false; $('newtitle').value = ''; $('newtitle').focus(); };
+  $('newcancel').onclick = function () { $('newform').hidden = true; };
+  // no <form>: hosts sandbox the app without allow-forms, where a form never fires submit
+  function submitNew() {
+    var title = $('newtitle').value.trim(); if (!title) { $('newtitle').focus(); return; }
+    $('newform').hidden = true; createReport(title);
+  }
+  $('newcreate').onclick = submitNew;
+  $('newtitle').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitNew(); if (e.key === 'Escape') $('newform').hidden = true; });
+  $('search').addEventListener('input', renderHome);
+
+  // ---------- editor: nested Zebra BI renderer frames ----------
+  var frames = new Map();  // iframe -> {vid, sent}
+  function chartTitle(vid) { var v = rep.visuals[vid]; return (v && v.args && v.args.title) || vid; }
+  function cellsById() { var m = {}; rep.rows.forEach(function (row) { row.cells.forEach(function (c) { m[c.id] = c; }); }); return m; }
+  // A chart cell shows the Zebra BI chart once it is drawn and the renderer is here, Zebra BI's reason when it could
+  // not draw the chart for the chart's own arguments, and otherwise a ghost in the chart's shape.
+  function mountChart(box, cell, arrived) {
+    var vid = cell.visual, ghost = arrived ? box.querySelector('.ghost') : null;  // it stays until the chart has its size
+    box.innerHTML = '';
+    if (errors[vid] || drawError(vid)) { box.appendChild(el('div', 'err', errors[vid] || drawError(vid))); return; }
+    if (!results[vid] || !rendererText) {
+      if (results[vid] && rendererError) { box.appendChild(el('div', 'err', rendererError)); return; }
+      box.appendChild(ghostEl(box, cell));
+      return;
+    }
+    var f = document.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-scripts');
+    f.setAttribute('scrolling', 'no');  // the frame takes the height the renderer reports; no inner scrollbar
+    f.setAttribute('title', chartTitle(vid));
+    if (arrived) f.className = 'arrived';
+    box.appendChild(f);
+    if (ghost) box.appendChild(ghost);
+    frames.set(f, { vid: vid, sent: false });
+    f.srcdoc = rendererText;
+  }
+  function remountCharts() {
+    if (view !== 'editor' || !rep) return;
+    var byId = cellsById();
+    document.querySelectorAll('#rows .chart').forEach(function (box) {
+      var cell = byId[box.dataset.cell];
+      if (cell && !box.querySelector('iframe')) mountChart(box, cell);
+    });
+    reportSize();
+  }
+
+  // ---------- editor: ghost charts ----------
+  // Heights come from this fixed pattern, never from the chart's numbers, so a ghost says nothing about the data.
+  var GHOST_PATTERN = [0.62, 0.8, 0.5, 0.92, 0.7, 0.44, 0.84, 0.58, 0.74, 0.38, 0.88, 0.66];
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function svgEl(tag, attrs) {
+    var e = document.createElementNS(SVG_NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function ghostLabel() {
+    return auth && auth.signed_in && !auth.refusal && auth.state !== 'waiting' ? 'Zebra BI chart, drawing now…' : 'Zebra BI chart, drawn after sign-in';
+  }
+  function ghostEl(box, cell) {
+    var v = (rep.visuals[cell.visual] || {}).args || {};
+    var shape = cell.ghost || { kind: v.time_axis ? 'columns' : 'bars', count: 5 };
+    var n = Math.max(1, shape.count || 1), kind = shape.kind === 'columns' ? 'columns' : 'bars';
+    var g = el('div', 'ghost');
+    g.setAttribute('role', 'img');
+    g.setAttribute('aria-label', (v.title || 'Chart') + ': ' + ghostLabel());
+    if (v.title) g.appendChild(el('div', 'gt', v.title));
+    if (v.subtitle) g.appendChild(el('div', 'gs', v.subtitle));
+    var w = Math.max(200, (box.clientWidth || 340) - 26), stroke = '#b9bbbd', dash = '4 3', svg, i, p;
+    if (kind === 'columns') {
+      var h = 150, base = h - 6, step = (w - 8) / n, cw = Math.max(4, Math.min(36, step * 0.6));
+      svg = svgEl('svg', { width: w, height: h, viewBox: '0 0 ' + w + ' ' + h, 'aria-hidden': 'true' });
+      for (i = 0; i < n; i++) {
+        p = GHOST_PATTERN[i % GHOST_PATTERN.length];
+        var ch = Math.round((base - 10) * p);
+        svg.appendChild(svgEl('rect', { x: (4 + i * step + (step - cw) / 2).toFixed(1), y: base - ch, width: cw.toFixed(1), height: ch,
+          rx: 2, fill: 'none', stroke: stroke, 'stroke-width': 1.25, 'stroke-dasharray': dash }));
+      }
+      svg.appendChild(svgEl('line', { x1: 0, x2: w, y1: base + 0.5, y2: base + 0.5, stroke: stroke, 'stroke-width': 1.25, 'stroke-dasharray': dash }));
+    } else {
+      var rowH = 22, bh = 12, top = 4, ht = top * 2 + n * rowH, lab = Math.round(w * 0.24), axis = lab + 10, room = w - axis - 6;
+      svg = svgEl('svg', { width: w, height: ht, viewBox: '0 0 ' + w + ' ' + ht, 'aria-hidden': 'true' });
+      for (i = 0; i < n; i++) {
+        p = GHOST_PATTERN[(i * 5 + 3) % GHOST_PATTERN.length];
+        var y = top + i * rowH + (rowH - bh) / 2;
+        svg.appendChild(svgEl('line', { x1: 0, x2: Math.round(lab * (0.55 + 0.4 * GHOST_PATTERN[(i + 2) % GHOST_PATTERN.length])), y1: y + bh / 2, y2: y + bh / 2,
+          stroke: '#d9dadb', 'stroke-width': 1.25, 'stroke-dasharray': '2 3' }));
+        svg.appendChild(svgEl('rect', { x: axis, y: y, width: Math.max(8, Math.round(room * p)), height: bh, rx: 2,
+          fill: 'none', stroke: stroke, 'stroke-width': 1.25, 'stroke-dasharray': dash }));
+      }
+      svg.appendChild(svgEl('line', { x1: axis - 0.5, x2: axis - 0.5, y1: 0, y2: ht, stroke: stroke, 'stroke-width': 1.25, 'stroke-dasharray': dash }));
+    }
+    g.appendChild(svg);
+    g.appendChild(el('div', 'gl', ghostLabel()));
+    return g;
+  }
+  function relabelGhosts() {
+    document.querySelectorAll('#rows .ghost').forEach(function (g) {
+      var label = ghostLabel(), t = g.querySelector('.gt');
+      g.querySelector('.gl').textContent = label;
+      g.setAttribute('aria-label', (t ? t.textContent : 'Chart') + ': ' + label);
+    });
+  }
+
+  // ---------- sign-in to Zebra BI ----------
+  // The server's auth block comes with every get_report, library, start_sign_in, sign_out and draw_chart. The builder
+  // shows one banner from it, and when signed_in flips to true it fetches the renderer and draws the ghosts one by
+  // one with draw_chart, the first on screen first.
+  var WAIT_AGAIN_MS = 5 * 60 * 1000;  // the browser sign-in this long without an answer: offer the button again
+  var SALES = 'https://zebrabi.com/contact-sales/', SUPPORT = 'support@zebrabi.com';
+  var waitingSince = null, waitTimer = null, signedInNote = false, signedInTimer = null, rendererFetch = null;
+  var drawing = false, drawErrors = {};  // vid -> {args, text}: Zebra BI's reason, until the chart's arguments change
+
+  function argsKey(vid) { var v = rep && rep.visuals[vid]; return v ? JSON.stringify(v.args) : ''; }
+  function drawError(vid) { var e = drawErrors[vid]; return e && e.args === argsKey(vid) ? e.text : null; }
+  function undrawn() {
+    var out = [];
+    if (!rep) return out;
+    rep.rows.forEach(function (row) { row.cells.forEach(function (c) {
+      if (c.type === 'chart' && !results[c.visual] && !errors[c.visual] && !drawError(c.visual)) out.push(c);
+    }); });
+    return out;
+  }
+  // The charts the page cannot show yet: the undrawn ones, and drawn ones too while the renderer, which comes with
+  // the sign-in, is missing (a report drawn on another sign-in, or with the renderer cache gone).
+  function unshown() {
+    if (rendererText) return undrawn();
+    var out = [];
+    if (!rep) return out;
+    rep.rows.forEach(function (row) { row.cells.forEach(function (c) {
+      if (c.type === 'chart' && !errors[c.visual] && !drawError(c.visual)) out.push(c);
+    }); });
+    return out;
+  }
+  function canDraw() { return !!(auth && auth.signed_in && !auth.refusal && auth.state !== 'waiting'); }
+
+  function takeAuth(a) {
+    if (!a || typeof a !== 'object') return;
+    var before = auth;
+    auth = a;
+    if (a.state === 'waiting') { if (!waitingSince) waitingSince = Date.now(); }
+    else waitingSince = null;
+    clearTimeout(waitTimer);
+    if (waitingSince) waitTimer = setTimeout(renderBanner, Math.max(0, waitingSince + WAIT_AGAIN_MS - Date.now()) + 50);
+    if (before && !before.signed_in && a.signed_in) {  // the AHA moment: the browser handed back
+      signedInNote = true; clearTimeout(signedInTimer); signedInTimer = null;
+    }
+    if (!a.signed_in) { signedInNote = false; clearTimeout(signedInTimer); signedInTimer = null; }
+    if (a.signed_in && !rendererText) fetchRenderer();
+    if (!before || before.signed_in !== a.signed_in || before.state !== a.state || !!before.refusal !== !!a.refusal) relabelGhosts();
+    renderBanner();
+    kickDraw();
+  }
+
+  function fetchRenderer() {
+    if (rendererFetch) return rendererFetch;
+    rendererFetch = callTool('get_renderer').then(function (r) {
+      rendererText = sc(r).renderer; rendererError = null; rendererFetch = null;
+      remountCharts(); kickDraw();
+    }, function (e) {
+      rendererFetch = null;
+      var s = e.result && e.result.structuredContent;
+      if (!(s && s.needs_sign_in)) { rendererError = e.message; remountCharts(); }
+    });
+    return rendererFetch;
+  }
+
+  // The draw queue: one chart at a time, the first one on screen first, then the rest top to bottom.
+  function kickDraw() {
+    if (drawing || view !== 'editor' || !canDraw() || !rendererText) return;
+    var boxes = [];
+    undrawn().forEach(function (c) {
+      var box = document.querySelector('#rows .chart[data-cell="' + c.id + '"]');
+      if (!box) return;
+      var r = box.getBoundingClientRect();
+      boxes.push({ cell: c, seen: r.bottom > 0 && r.top < window.innerHeight ? 0 : 1, top: r.top });
+    });
+    if (!boxes.length) { settleSignedIn(); return; }
+    boxes.sort(function (a, b) { return a.seen - b.seen || a.top - b.top; });
+    var cell = boxes[0].cell, s = slug, vid = cell.visual, key = argsKey(vid);
+    drawing = true;
+    callTool('draw_chart', { report: s, cell: cell.id }).then(function (r) {
+      drawing = false;
+      var d = sc(r);
+      if (s !== slug || !rep) return;
+      if (d.gone) { reportGone(); return; }
+      if (d.drawn && d.result) results[d.visual || vid] = d.result;
+      else if (d.error) drawErrors[d.visual || vid] = { args: key, text: d.error };
+      var box = document.querySelector('#rows .chart[data-cell="' + cell.id + '"]'), now = byIdNow()[cell.id];
+      if (box && now) mountChart(box, now, !!d.drawn);
+      reportSize();
+      if (d.auth) takeAuth(d.auth); else kickDraw();
+    }, function (e) {
+      drawing = false;
+      if (s !== slug || !rep) return;
+      drawErrors[vid] = { args: key, text: e.message };
+      var box = document.querySelector('#rows .chart[data-cell="' + cell.id + '"]');
+      if (box) mountChart(box, cell);
+      kickDraw();
+    });
+  }
+  function byIdNow() { return rep ? cellsById() : {}; }
+  function settleSignedIn() {  // every chart drawn: the quiet "Signed in" note stays a few seconds, then goes
+    if (!signedInNote || signedInTimer) return;
+    signedInTimer = setTimeout(function () { signedInNote = false; signedInTimer = null; renderBanner(); }, 8000);
+  }
+
+  function openLink(url) {
+    return request('ui/open-link', { url: url }).then(function (r) {
+      if (r && r.isError) throw new Error('refused');
+    }).catch(function () {
+      var w = null;
+      try { w = window.open(url, '_blank', 'noopener'); } catch (e) { w = null; }
+      if (!w) toast('Open this page in your browser: ' + url, null, null, 20000);
+    });
+  }
+  function startSignIn(btn) {
+    if (btn) btn.disabled = true;
+    var old = document.querySelector('.toast'); if (old) old.remove();  // an export's "sign in first" is answered
+    return callTool('start_sign_in').then(function (r) {
+      var d = sc(r);
+      if (d.url && !d.opened) openLink(d.url);
+      if (d.auth) takeAuth(d.auth); else renderBanner();
+    }, function (e) {
+      if (btn) btn.disabled = false;
+      var s = e.result && e.result.structuredContent;
+      if (s && s.auth) takeAuth(s.auth);
+      fail(e);
+    });
+  }
+  function signOut() {
+    return callTool('sign_out').then(function (r) {
+      signedInNote = false;
+      takeAuth(sc(r).auth || { signed_in: false, state: 'idle', url: null, refusal: null });
+      toast('Signed out of Zebra BI. The charts already drawn stay.');
+    }, fail);
+  }
+
+  function bannerButton(label, cls, run) {
+    var b = el('button', cls, label); b.type = 'button';
+    b.onclick = function () { run(b); };
+    return b;
+  }
+  function renderBanner() {
+    var box = $('signin');
+    if (!box) return;
+    var focused = box.contains(document.activeElement) ? document.activeElement.textContent : null;
+    box.innerHTML = ''; box.className = 'signin';
+    if (view !== 'editor' || !rep || !auth) return;
+    var a = auth, left = unshown().length, msg = el('div', 'msg'), acts = el('div', 'acts');
+    var signIn = function (label) { return bannerButton(label, 'primary', startSignIn); };
+    if (a.state === 'waiting') {
+      msg.textContent = 'Finish signing in in your browser. Your charts appear here as soon as you are back.';
+      if (a.url) acts.appendChild(bannerButton('Open the sign-in page again', 'link', function () { openLink(a.url); }));
+      if (waitingSince && Date.now() - waitingSince >= WAIT_AGAIN_MS) acts.appendChild(signIn('Sign in to Zebra BI'));
+    } else if (a.refusal) {
+      var r = a.refusal, k = r.kind;
+      if (k === 'trial_ended') {
+        msg.textContent = r.date ? 'Your Zebra BI trial ended on ' + r.date + '. Your report and its texts stay; the charts need a Zebra BI licence.'
+                                 : (r.message || 'Your Zebra BI trial ended. Your report and its texts stay; the charts need a Zebra BI licence.');
+        acts.appendChild(bannerButton('Contact sales', 'primary', function () { openLink(SALES); }));
+      } else if (k === 'no_licence') {
+        msg.textContent = 'Zebra BI found no licence for your company.';
+        acts.appendChild(signIn('Sign in again'));
+      } else if (k === 'no_verified_email') {
+        msg.textContent = r.message || 'Microsoft shared no verified email address for your account.';
+        acts.appendChild(bannerButton(SUPPORT, 'link', function () { openLink('mailto:' + SUPPORT); }));
+      } else if (k === 'expired') {
+        msg.textContent = 'Your Zebra BI sign-in has expired. Sign in again to draw the charts.';
+        acts.appendChild(signIn('Sign in again'));
+      } else {
+        msg.textContent = r.message || 'Zebra BI did not draw the charts.';
+        acts.appendChild(bannerButton('Contact sales', 'primary', function () { openLink(SALES); }));
+      }
+      if (!left) return;  // nothing in this report waits for it: the charts drawn before stay as they are
+    } else if (!a.signed_in) {
+      if (!left) return;
+      box.classList.add('ask');
+      msg.textContent = 'Your report is ready. Sign in to Zebra BI to draw its ' + (left === 1 ? 'chart.' : left + ' charts.');
+      acts.appendChild(signIn('Sign in to Zebra BI'));
+    } else if (signedInNote) {
+      box.className = 'signin quiet';
+      box.innerHTML = ICONS.check.replace('class="tick" ', '');
+      box.appendChild(el('span', null, 'Signed in to Zebra BI'));
+      return;
+    } else {
+      return;
+    }
+    box.appendChild(msg); box.appendChild(acts);
+    if (focused) {  // a redraw keeps the keyboard where it was
+      var same = Array.prototype.slice.call(acts.querySelectorAll('button')).filter(function (b) { return b.textContent === focused; })[0];
+      if (same) same.focus();
+    }
+  }
+
+  // An export refused while charts wait: the server's reason, and the way to the banner's button.
+  function exportWaits(s, what, waiting, said) {
+    var m = /^(No [^:]+ was saved: \d+ charts? (?:is|are) not drawn yet)/.exec(said || '');
+    var reason = (m ? m[1] : 'No ' + what + ' was saved: ' + plural(waiting.length, 'chart') + ' not drawn yet') + '.';
+    var here = view === 'editor' && slug === s;
+    var next = !here ? ' Open the report to see why and sign in.'
+      : auth && auth.refusal && auth.refusal.kind !== 'expired' ? ' The note above the report says why.'
+      : ' Sign in to Zebra BI with the button above the report first.';
+    toast(reason + next, null, null, 10000);
+    if (here) {
+      var box = $('signin');
+      if (box && box.firstChild) {
+        box.scrollIntoView({ block: 'center' });
+        var b = box.querySelector('button'); if (b) b.focus();
+      }
+    }
+  }
+  function frameFor(src) { var hit = null; frames.forEach(function (st, f) { if (f.contentWindow === src) hit = f; }); return hit; }
+  function sendData(f) {
+    var st = frames.get(f); if (!st || st.sent) return; st.sent = true;
+    f.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: {} }, '*');
+    f.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: results[st.vid] }, '*');
+  }
+  function answerFrame(f, m) {
+    if (m.id != null && m.method) {
+      if (m.method === 'ui/initialize') {
+        var w = f.clientWidth;
+        f.contentWindow.postMessage({ jsonrpc: '2.0', id: m.id, result: {
+          protocolVersion: (m.params && m.params.protocolVersion) || '2026-01-26',
+          hostInfo: { name: 'zebra-bi-report', version: '1' }, hostCapabilities: {},
+          hostContext: { toolInfo: { id: 1, tool: { name: 'render_visual', inputSchema: { type: 'object' } } },
+            theme: 'light', displayMode: 'inline', maxWidth: w, viewport: { width: w } } } }, '*');
+        setTimeout(function () { sendData(f); }, 50);
+      } else {
+        f.contentWindow.postMessage({ jsonrpc: '2.0', id: m.id, result: {} }, '*');
+      }
+    } else if (m.method === 'ui/notifications/initialized') {
+      sendData(f);
+    } else if (m.method === 'ui/notifications/size-changed' && m.params && m.params.height) {
+      f.style.height = Math.ceil(m.params.height) + 8 + 'px';  // a little slack: the reported height can trail the drawn one
+      var g = f.parentNode && f.parentNode.querySelector('.ghost'); if (g) g.remove();
+      reportSize();
+    }
+  }
+
+  window.addEventListener('message', function (ev) {
+    var m = ev.data; if (!m || m.jsonrpc !== '2.0') return;
+    var f = frameFor(ev.source);
+    if (f) { answerFrame(f, m); return; }
+    if (ev.source !== window.parent) return;
+    if (m.id != null && !m.method && pending[m.id]) {
+      var p = pending[m.id]; delete pending[m.id];
+      if (m.error) p.reject(new Error(m.error.message || 'request failed')); else p.resolve(m.result);
+    } else if (m.id != null && m.method) {
+      window.parent.postMessage({ jsonrpc: '2.0', id: m.id, result: {} }, '*');
+    } else if (m.method === 'ui/notifications/tool-result') {
+      var s = sc(m.params).report;  // the host ran open_report / create_report / ... for this view: show its report
+      if (s && s !== slug && started) loadReport(s, true);
+      else if (s && !started) launchSlug = s;
+    }
+  });
+
+  // ---------- editor: rendering ----------
+  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function formatted(text) { return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }  // **bold**, as story.para
+
+  // Numbers no chart holds, from the server's checks: one line each, with Keep as mine.
+  var checks = {};
+  function flagged(where) {
+    var p = where.split(':');
+    if (p[0] === 'key') return checks.key_message || [];
+    if (p[0] === 'kpi') return (checks.kpis || [])[+p[1]] || [];
+    return ((checks.cells || {})[p[1]] || {})[p[2]] || [];
+  }
+  function flagBox(where, owner, anyChart) {
+    var box = el('div', 'flags'); box.dataset.flags = where; box._owner = owner; box._any = anyChart;
+    fillFlags(box);
+    return box;
+  }
+  function fillFlags(box) {
+    box.innerHTML = '';
+    var owner = box._owner;
+    flagged(box.dataset.flags).filter(function (raw) { return (owner.kept || []).indexOf(raw) < 0; }).forEach(function (raw) {
+      var f = el('div', 'flag');
+      f.appendChild(el('span', null, raw + (box._any ? ' is not in any chart' : ' is not in this chart')));
+      var keep = el('button', null, 'Keep as mine'); keep.title = 'Keep this number although no chart holds it';
+      keep.onclick = function () { owner.kept = (owner.kept || []).concat([raw]); noteEdit(owner, 'kept'); f.remove(); saveNow(); };
+      f.appendChild(keep); box.appendChild(f);
+    });
+  }
+  function refreshFlags() { document.querySelectorAll('[data-flags]').forEach(fillFlags); }
+
+  function renderHead() {
+    var head = $('head'); head.innerHTML = '';
+    var key = editable(rep, 'key_message', 'key'); key.id = 'key'; head.appendChild(key);
+    head.appendChild(flagBox('key', rep, true));
+    if (rep.kpis && rep.kpis.length) {
+      var grid = el('div', 'kpis n' + Math.min(rep.kpis.length, 4)); grid.id = 'kpis';
+      rep.kpis.forEach(function (tile) {
+        var k = el('div', 'kpi'); k.appendChild(editable(tile, 'value', 'v')); k.appendChild(editable(tile, 'label', 'l'));
+        grid.appendChild(k);
+      });
+      head.appendChild(grid);
+      rep.kpis.forEach(function (tile, i) { head.appendChild(flagBox('kpi:' + i, rep, true)); });
+    }
+    var any = LAYOUT_NAMES[rep.layout] ? rep.layout : 'one-pager';  // the radio that takes Tab when none is set
+    document.querySelectorAll('#layouts button').forEach(function (b) {
+      b.setAttribute('aria-checked', String(b.dataset.layout === rep.layout));
+      b.tabIndex = b.dataset.layout === any ? 0 : -1;
+    });
+    $('layout-pick-label').textContent = LAYOUT_NAMES[rep.layout] || 'none';
+    $('layout-hint').textContent = LAYOUT_HINTS[rep.layout] || '';
+    fitBar();
+  }
+
+  var LAYOUT_NAMES = { 'one-pager': 'One-pager', 'variance-walk': 'Variance walk', 'board-pack': 'Board pack' };
+
+  // What each layout does, as the PDF prints it too (report.py arrange, pdf.py).
+  var LAYOUT_HINTS = {
+    'one-pager': 'One-pager: largest variances first, up to three charts a row, notes hidden. The PDF prints it on one landscape page.',
+    'variance-walk': 'Variance walk: one chart a row in the order they were built, each with its note.',
+    'board-pack': 'Board pack: one chart a row, largest variances first. The PDF puts the key message and KPI tiles on a cover and each chart on its own page.'
+  };
+
+  function renderEditor() {
+    frames.clear();
+    if (document.activeElement !== $('title')) $('title').textContent = rep.title;
+    renderHead();
+    var on = rep.show_notes !== false;
+    $('notes-toggle').textContent = on ? 'Notes: on' : 'Notes: off'; $('notes-toggle').setAttribute('aria-pressed', String(on));
+    fitBar();
+    var host = $('rows'); host.innerHTML = '';
+    if (!rep.rows.length) {
+      host.appendChild(el('div', 'empty', 'This report is empty. Ask in the chat, for example “add a chart of sales by region against plan to the report”, or add text with + Text.'));
+    }
+    host.appendChild(slot(0));
+    var page = 1;  // a board pack's cover is page 1; every row with a chart starts the next page in the PDF
+    rep.rows.forEach(function (row, ri) {
+      if (rep.layout === 'board-pack' && row.cells.some(function (c) { return c.type === 'chart'; })) {
+        host.appendChild(el('div', 'page-mark', 'Page ' + (++page)));
+      }
+      var r = el('div', 'row');
+      row.cells.forEach(function (cell) { r.appendChild(cellEl(cell, ri)); });
+      host.appendChild(r);
+      host.appendChild(slot(ri + 1));
+    });
+    $('note').textContent = rep.rows.length ? 'Drag a cell by the handle at its top right to move it, into another row (up to 3 side by side) or between rows. Saved to the report file on this computer.' : '';
+    requestAnimationFrame(function () {
+      var byId = cellsById();
+      document.querySelectorAll('.chart').forEach(function (box) { mountChart(box, byId[box.dataset.cell]); });
+      renderBanner();
+      reportSize();
+      kickDraw();
+    });
+  }
+
+  function slot(index) {
+    var s = el('div', 'slot');
+    s.addEventListener('dragover', function (e) { if (dragId) { e.preventDefault(); s.classList.add('over'); } });
+    s.addEventListener('dragleave', function () { s.classList.remove('over'); });
+    s.addEventListener('drop', function (e) { e.preventDefault(); s.classList.remove('over'); moveCell(dragId, { newRow: index }); });
+    return s;
+  }
+
+  // Text the user edits in place: plain text with **bold** marks while focused, formatted otherwise.
+  function editable(cell, key, cls) {
+    var t = el('div', cls); t.contentEditable = 'true';
+    var shown = function () { t.innerHTML = formatted(cell[key] || ''); };
+    shown();
+    t.addEventListener('focus', function () { t.textContent = cell[key] || ''; });
+    t.addEventListener('blur', shown);
+    t.addEventListener('input', function () { cell[key] = t.innerText.replace(/\n$/, ''); noteEdit(cell, key); scheduleSave(); });
+    return t;
+  }
+
+  function cellEl(cell, ri) {
+    var c = el('div', 'cell'); c.dataset.cell = cell.id;
+    var tools = el('div', 'tools');
+    var grip = iconEl('span', 'grip', 'grip', 'Drag to move'); grip.draggable = true;
+    grip.addEventListener('dragstart', function (e) {
+      dragId = cell.id; c.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', cell.id);
+    });
+    grip.addEventListener('dragend', function () { dragId = null; c.classList.remove('dragging'); });
+    var del = iconEl('span', null, 'close', 'Remove from the report');
+    del.addEventListener('click', function () { removeCell(cell.id); });
+    tools.appendChild(grip); tools.appendChild(del); c.appendChild(tools);
+    if (cell.type === 'chart') {
+      var head = el('div', 'chart-head');
+      head.appendChild(editable(cell, 'message', 'chart-msg'));  // the message above the chart
+      if (cell.why) {
+        var why = el('div', 'why-text', cell.why); why.hidden = true;
+        var wb = iconEl('button', 'why-btn', 'info', 'Why this chart');
+        wb.onclick = function () { why.hidden = !why.hidden; };
+        head.appendChild(wb); c.appendChild(head); c.appendChild(why);
+      } else {
+        c.appendChild(head);
+      }
+      c.appendChild(flagBox('cell:' + cell.id + ':message', cell, false));
+      var box = el('div', 'chart'); box.dataset.cell = cell.id; c.appendChild(box);
+      if (rep.show_notes !== false) {
+        c.appendChild(editable(cell, 'note', 'text chart-note'));  // the evidence under the chart
+        c.appendChild(flagBox('cell:' + cell.id + ':note', cell, false));
+      }
+    } else {
+      c.appendChild(editable(cell, 'text', 'text'));
+      c.appendChild(flagBox('cell:' + cell.id + ':text', cell, true));
+    }
+    c.addEventListener('dragover', function (e) {
+      if (!dragId || dragId === cell.id) return;
+      var full = rep.rows[ri].cells.length >= 3 && !rep.rows[ri].cells.some(function (x) { return x.id === dragId; });
+      if (full) return;
+      e.preventDefault();
+      var rect = c.getBoundingClientRect(), after = e.clientX > rect.left + rect.width / 2;
+      c.classList.toggle('over-after', after); c.classList.toggle('over-before', !after);
+    });
+    c.addEventListener('dragleave', function () { c.classList.remove('over-after', 'over-before'); });
+    c.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var after = c.classList.contains('over-after');
+      c.classList.remove('over-after', 'over-before');
+      moveCell(dragId, { beside: cell.id, after: after });
+    });
+    return c;
+  }
+
+  // ---------- editor: edits, saved through save_layout ----------
+  function takeCell(id) {
+    for (var ri = 0; ri < rep.rows.length; ri++) {
+      var cells = rep.rows[ri].cells;
+      for (var ci = 0; ci < cells.length; ci++) if (cells[ci].id === id) return cells.splice(ci, 1)[0];
+    }
+    return null;
+  }
+  function prune() { rep.rows = rep.rows.filter(function (r) { return r.cells.length; }); }
+  function moveCell(id, where) {
+    if (!id || where.beside === id) return;
+    var cell = takeCell(id); if (!cell) return;
+    if (where.newRow != null) {
+      var idx = where.newRow, emptied = rep.rows.findIndex(function (r) { return !r.cells.length; });
+      if (emptied >= 0 && emptied < idx) idx -= 1;
+      prune();
+      rep.rows.splice(Math.max(0, Math.min(idx, rep.rows.length)), 0, { cells: [cell] });
+    } else {
+      prune();
+      for (var ri = 0; ri < rep.rows.length; ri++) {
+        var cells = rep.rows[ri].cells, at = cells.findIndex(function (c) { return c.id === where.beside; });
+        if (at >= 0) { cells.splice(where.after ? at + 1 : at, 0, cell); break; }
+      }
+    }
+    dragId = null; moved = true;
+    renderEditor(); saveNow();
+  }
+  function removeCell(id) { takeCell(id); prune(); moved = true; renderEditor(); saveNow(); }
+  function addText() {
+    var used = [0]; rep.rows.forEach(function (r) { r.cells.forEach(function (c) { used.push(+c.id.slice(1)); }); });
+    var id = 'c' + (Math.max.apply(null, used) + 1);
+    rep.rows.push({ cells: [{ id: id, type: 'text', text: '' }] });
+    moved = true; renderEditor(); saveNow();
+    setTimeout(function () { var t = document.querySelector('[data-cell="' + id + '"] .text'); if (t) t.focus(); }, 50);
+  }
+  function scheduleSave() { dirty = true; status('Editing…'); clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 700); }
+
+  // What the user changed since the last save. The chat can save in between, and the builder's save is then refused
+  // as a conflict; these edits are put back onto the report as it now is and saved again, so nothing typed is lost.
+  // A move, a removal or a new row cannot be replayed safely and is reported instead.
+  var edits = {}, moved = false;
+  function noteEdit(obj, key) {
+    if (obj === rep) edits['rep:' + key] = true;
+    else if (obj && obj.id && obj.type) edits['cell:' + obj.id + ':' + key] = true;
+    else edits['rep:kpis'] = true;  // a KPI tile
+  }
+  function keepEdits(pending, wasMoved) {
+    var mine = rep, title = $('title').textContent;
+    return callTool('get_report', { report: slug, follow: 'none', draw: false }).then(function (r) {
+      var d = sc(r);
+      if (d.gone) { reportGone(); return; }
+      if (d.auth) auth = d.auth;
+      var fresh = d.report, now = {}, before = {}, lost = 0;
+      fresh.rows.forEach(function (row) { row.cells.forEach(function (c) { now[c.id] = c; }); });
+      mine.rows.forEach(function (row) { row.cells.forEach(function (c) { before[c.id] = c; }); });
+      Object.keys(pending).forEach(function (k) {
+        var p = k.split(':');
+        if (p[0] === 'rep') { if (p[1] === 'title') fresh.title = title; else fresh[p[1]] = mine[p[1]]; return; }
+        var into = now[p[1]], from = before[p[1]];
+        if (into && from && into.type === from.type) into[p[2]] = from[p[2]]; else lost += 1;
+      });
+      rep = fresh; results = d.results || {}; errors = d.errors || {}; checks = d.checks || {};
+      renderEditor();
+      if (Object.keys(pending).length) saveNow();
+      toast(wasMoved ? 'The report changed in the chat while you were arranging it. Your text is kept; the move is not.'
+            : lost ? 'The report changed in the chat meanwhile. One of your edits was on a cell that is gone.'
+            : 'The report changed in the chat meanwhile. Your edits are kept.', null, null, 8000);
+    }, fail);
+  }
+  // A pending edit saved now, before anything that reloads the report (a layout switch), so it is not lost.
+  function flushSave() {
+    if (!dirty && !saving) return Promise.resolve();
+    return saveNow();
+  }
+  function saveNow() {
+    clearTimeout(saveTimer); dirty = true;
+    if (saving) return new Promise(function (resolve) { saveTimer = setTimeout(function () { resolve(saveNow()); }, 300); });
+    saving = true; status('Saving…');
+    var sent = edits, sentMoved = moved;  // edits made while this save is on its way stay in `edits`
+    edits = {}; moved = false;
+    var rows = rep.rows.map(function (r) { return { cells: r.cells.map(function (c) {
+      var out = c.type === 'chart' ? { id: c.id, type: 'chart', visual: c.visual, note: c.note || '', message: c.message || '' }
+                                   : { id: c.id, type: 'text', text: c.text };
+      out.kept = c.kept || [];
+      return out;
+    }) }; });
+    return callTool('save_layout', { report: slug, rev: rep.rev, title: $('title').textContent, rows: rows, show_notes: rep.show_notes !== false,
+                              key_message: rep.key_message || '', kpis: rep.kpis || [], kept: rep.kept || [] }).then(function (r) {
+      rep.rev = sc(r).rev; dirty = false; saving = false; status('Saved');
+      if (sc(r).checks) { checks = sc(r).checks; refreshFlags(); }
+    }, function (e) {
+      saving = false; dirty = false;
+      var s = e.result && e.result.structuredContent;
+      if (s && s.gone) { reportGone(); return; }
+      if (s && s.conflict) {
+        var pending = Object.assign(sent, edits), wasMoved = sentMoved || moved;
+        edits = {}; moved = false; status('');
+        return keepEdits(pending, wasMoved);
+      }
+      Object.assign(edits, sent); moved = moved || sentMoved;  // kept for the next save
+      status('Not saved');
+      toast('Not saved: ' + (e && e.message ? e.message : 'the report file refused the change'), null, null, 10000);
+    });
+  }
+
+  // ---------- loading and following ----------
+  function loadReport(s, force) {
+    slug = s; dirty = false; edits = {}; moved = false;
+    return callTool('get_report', { report: s, follow: 'none', draw: false }).then(function (r) {
+      var d = sc(r);
+      if (d.gone) { reportGone(); return; }
+      rep = d.report; results = d.results || {}; errors = d.errors || {}; checks = d.checks || {};
+      show('editor'); renderEditor(); takeAuth(d.auth);
+    }, fail);
+  }
+  function reportGone() { slug = null; rep = null; goHome().then(function () { toast('This report was deleted. It is in Recently deleted.'); }); }
+  function poll(force) {
+    if (view !== 'editor' || dirty || saving || dragId || busy || !slug) return Promise.resolve();
+    return callTool('get_report', { report: slug, follow: follow, since: force ? undefined : rep && rep.rev, draw: false }).then(function (r) {
+      var d = sc(r);
+      if (d.switched) {
+        return loadReport(d.switched).then(function () { toast('Opened in chat: ' + (rep ? rep.title : d.switched)); });
+      }
+      if (d.gone) { reportGone(); return; }
+      if (d.unchanged) { takeAuth(d.auth); return; }
+      rep = d.report; results = d.results || {}; errors = d.errors || {}; checks = d.checks || {};
+      renderEditor(); status(''); takeAuth(d.auth);
+    }, function () { status('Not connected'); });
+  }
+
+  $('title').addEventListener('input', function () { edits['rep:title'] = true; scheduleSave(); });
+  $('title').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('title').blur(); } });
+  $('back').onclick = function () { goHome(); };
+  $('add-text').onclick = addText;
+  function setLayout(layout) {
+    flushSave().then(function () {
+      return act(callTool('arrange_report', { report: slug, layout: layout }), function () { return loadReport(slug); });
+    });
+  }
+  function toggleNotes() { rep.show_notes = rep.show_notes === false; noteEdit(rep, 'show_notes'); renderEditor(); scheduleSave(); }
+  document.querySelectorAll('#layouts button').forEach(function (b) {
+    b.onclick = function () { if (b.getAttribute('aria-checked') !== 'true') setLayout(b.dataset.layout); };
+  });
+  $('layouts').addEventListener('keydown', function (e) {  // a radio group: the arrows move the choice
+    var bs = Array.prototype.slice.call(document.querySelectorAll('#layouts button')), i = bs.indexOf(document.activeElement);
+    if (i < 0 || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
+    e.preventDefault();
+    var next = bs[(i + (e.key === 'ArrowRight' ? 1 : bs.length - 1)) % bs.length];
+    next.focus(); next.click();
+  });
+  $('layout-pick').onclick = function (e) {
+    e.stopPropagation();
+    openMenu($('layout-pick'), Object.keys(LAYOUT_NAMES).map(function (id) {
+      return { label: LAYOUT_NAMES[id], checked: rep.layout === id, run: function () { if (rep.layout !== id) setLayout(id); } };
+    }), 'left', e);
+  };
+  $('reload').onclick = function () { poll(true); };
+  $('notes-toggle').onclick = toggleNotes;
+  $('report-menu').onclick = function (e) {
+    e.stopPropagation();
+    var bar = $('bar'), folded = [];  // what the bar folded away at this width comes first
+    if (bar.classList.contains('fit-4')) {
+      folded.push({ label: '+ Text', run: addText });
+      folded.push({ label: rep.show_notes !== false ? 'Hide notes' : 'Show notes', run: toggleNotes });
+    }
+    if (bar.classList.contains('fit-1')) folded.push({ label: 'Reload', run: function () { poll(true); } });
+    var items = [
+      { label: 'Duplicate', run: function () { duplicateReport(slug, null, true); } },
+      { label: 'Save as PDF', run: function () { savePdf(slug); } },
+      { label: 'Save as PowerPoint', run: function () { savePptx(slug); } },
+      { label: 'All reports', run: function () { goHome(); } }
+    ];
+    if (auth && (auth.signed_in || auth.refusal)) items.push({ label: 'Sign out of Zebra BI', sep: true, run: signOut });
+    items.push({ label: 'Delete', danger: true, sep: true, run: function () { deleteReport(slug, rep.title); } });
+    if (folded.length) items[0].sep = true;
+    openMenu($('report-menu'), folded.concat(items), null, e);
+  };
+  $('full').onclick = function () { request('ui/request-display-mode', { mode: 'fullscreen' }).catch(function () {}); };
+
+  var lastWidth = window.innerWidth;
+  window.addEventListener('resize', function () {
+    closeMenu();
+    fitBar();
+    if (view === 'editor' && rep && Math.abs(window.innerWidth - lastWidth) > 40) { lastWidth = window.innerWidth; renderEditor(); }
+  });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitBar);  // Open Sans is wider than the fallback
+
+  // ---------- start ----------
+  var started = false, launchSlug = null;
+  status('Connecting…');
+  request('ui/initialize', {
+    appInfo: { name: 'zebra-bi-report', version: '1' },
+    appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+    protocolVersion: '2026-01-26'
+  }).then(function (init) {
+    var ctx = (init && init.hostContext) || {};
+    follow = ctx.displayMode === 'inline' ? 'thread' : 'last';  // in a chat: that chat's report; in the sidebar: the last one
+    notify('ui/notifications/initialized');
+    status('Loading…');
+    return callTool('get_renderer').then(function (r) { rendererText = sc(r).renderer; }, function (e) {
+      var s = e.result && e.result.structuredContent;
+      if (s && s.auth) auth = s.auth;
+      if (!(s && s.needs_sign_in)) rendererError = e.message;  // before sign-in the ghosts stand in; fetched again after
+    });
+  }).then(function () {
+    return callTool('library');
+  }).then(function (r) {
+    lib = sc(r); started = true; takeAuth(lib.auth);
+    var s = launchSlug || (follow === 'last' ? lib.last : lib.current);
+    return s ? loadReport(s) : goHome();
+  }).then(function () {
+    setInterval(function () {
+      if (document.hidden) return;
+      if (view === 'editor') poll(false);
+      else if (view === 'home' && !busy && !$('menu') && $('newform').hidden) refreshLibrary(true);
+    }, 4000);
+  }, function () { status('Not connected'); });
+})();
+</script>
+</body></html>

@@ -5,8 +5,9 @@
   python3 -I artifact.py record <story-dir> <artifact-url>
 
 `build` reuses story.py: every visual in story.json is rendered (or reused from visuals/<id>.json),
-then each chart is drawn by the Zebra BI renderer in headless Chrome at the page's column width and
-captured at 2x (zoffice.snapshot). It writes <story-dir>/artifact/: index.html (the page, a fragment
+then each chart is drawn by the Zebra BI renderer in headless Chrome at the width it is shown at (the
+page's column, or its cell when a row puts cells side by side) and captured at 2x (zoffice.snapshot).
+<story-dir> may also be a report builder folder (report.zbreport): its rows become the page's rows. It writes <story-dir>/artifact/: index.html (the page, a fragment
 the artifact host wraps in its own document) and charts/<id>.png. With --live it also writes
 zebra-renderer.txt, the renderer the page loads to draw each chart live in place of its picture; the
 pictures stay when it cannot. It prints JSON: the page to publish, the files to publish with it
@@ -30,6 +31,7 @@ from zoffice import ooxml as X, snapshot as SN  # noqa: E402
 
 TEMPLATE = os.path.join(HERE, "..", "assets", "artifact-template.html")
 WIDTH = 760  # the page column (47.5rem), which the charts are drawn at
+GAP = 20  # between cells side by side in a row (1.25rem)
 RENDERER_FILE = "zebra-renderer.txt"
 FONT_HOST = "https://fonts.googleapis.com/"  # the only stylesheet host an artifact page may load
 
@@ -144,43 +146,60 @@ def font_link(brand):
     return '<link rel="stylesheet" href="%s">' % html.escape(url) if url.startswith(FONT_HOST) else ""
 
 
+def picture_widths(story):
+    """{visual id: the CSS width its picture is drawn at}: the column, or its cell when it sits in a row."""
+    widths = {s["visual"]: WIDTH for s in story.get("sections", []) if s.get("visual")}
+    for row in S.rows(story):
+        n = len(row["cells"])
+        for c in row["cells"]:
+            if c.get("visual"):
+                widths.setdefault(c["visual"], (WIDTH - GAP * (n - 1)) // n)
+    return widths
+
+
 def assemble_page(story, results, brand, sizes, live=False, renderer_sha=None):
     """The artifact page as one HTML fragment. sizes: {visual id: (css width, css height)} of each picture."""
     e = html.escape
     kpis = "".join('<div class="zs-kpi"><b>%s</b><span>%s</span></div>' % (e(k["value"]), e(k["label"])) for k in story.get("kpis", []))
+
+    def figure(vid, lead):
+        if vid not in results:
+            sys.exit("the story names visual %r, which is not in visuals" % vid)
+        args = (story.get("visuals", {}).get(vid) or {}).get("args") or {}
+        alt = "%sZebra BI chart: %s%s." % (lead, args.get("title", vid), (", " + args["subtitle"]) if args.get("subtitle") else "")
+        w, h = sizes.get(vid) or (WIDTH, 400)
+        frame = '<iframe title="%s" scrolling="no"></iframe>' % e(args.get("title", vid)) if live else ""
+        return ('<figure class="zs-plate" data-v="%s" data-w="%d" data-h="%d"><img src="charts/%s.png" width="%d" height="%d" alt="%s">%s</figure>'
+                % (e(vid), w, h, e(vid), w, h, e(alt), frame))
+
     sections = []
     for s in story["sections"]:
-        figure = ""
-        vid = s.get("visual")
-        if vid:
-            if vid not in results:
-                sys.exit("section %r names visual %r, which is not in visuals" % (s.get("heading"), vid))
-            args = (story.get("visuals", {}).get(vid) or {}).get("args") or {}
-            alt = "%s. Zebra BI chart: %s%s." % (s.get("heading", ""), args.get("title", vid), (", " + args["subtitle"]) if args.get("subtitle") else "")
-            w, h = sizes.get(vid) or (WIDTH, 400)
-            frame = '<iframe title="%s" scrolling="no"></iframe>' % e(args.get("title", vid)) if live else ""
-            figure = ('<figure class="zs-plate" data-v="%s" data-w="%d" data-h="%d"><img src="charts/%s.png" width="%d" height="%d" alt="%s">%s</figure>'
-                      % (e(vid), w, h, e(vid), w, h, e(alt), frame))
+        fig = figure(s["visual"], s.get("heading", "") + ". ") if s.get("visual") else ""
         sections.append('<section class="zs-section"><div class="zs-text"><h2>%s</h2>\n%s</div>%s</section>'
-                        % (e(s.get("heading", "")), S.para(s.get("body", "")), figure))
+                        % (e(s.get("heading", "")), S.para(s.get("body", "")), fig))
+    for row in S.rows(story):
+        def chart_cell(c):
+            if not (c.get("message") or c.get("note")):
+                return figure(c["visual"], "")
+            msg = '<p class="zs-msg">%s</p>' % S.inline(c["message"]) if c.get("message") else ""
+            note = '<div class="zs-text zs-note">%s</div>' % S.para(c["note"]) if c.get("note") else ""
+            return '<div class="zs-cell">%s%s%s</div>' % (msg, figure(c["visual"], ""), note)
+        cells = [chart_cell(c) if c.get("visual") else '<div class="zs-text">%s</div>' % S.para(c["text"]) for c in row["cells"]]
+        sections.append('<section class="zs-section zs-row zs-cols-%d">%s</section>' % (len(cells), "".join(cells)))
     nxt = ""
     if story.get("next"):
         nxt = '<section class="zs-section zs-next"><h2>%s</h2><ul>%s</ul></section>' % (
             e(story.get("next_heading", "Where to look next")),
             "".join("<li>%s</li>" % re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", e(n)) for n in story["next"]))
-    src = story.get("source", {})
-    footer = "Source: %s. Built %s." % (e(src.get("label", src.get("name", "unknown"))), dt.date.today().isoformat())
-    if brand.get("credit"):
-        footer += " &middot; " + e(brand["credit"])
     tokens = S.brand_tokens(brand, story)
     embed = lambda obj: json.dumps(obj, ensure_ascii=False).replace("<", "\\u003c")
     live_block = ""
     if live:
-        used = {s["visual"]: results[s["visual"]] for s in story["sections"] if s.get("visual")}
+        used = {vid: results[vid] for vid in S.story_visuals(story)}
         live_block = LIVE % {"visuals": embed(used), "file": RENDERER_FILE, "sha": renderer_sha, "version": S.version()}
     fills = {"PAGE_TITLE": e(page_title(story)), "FONT_LINK": font_link(brand), "BRAND_CSS": tokens["BRAND_CSS"],
              "KICKER": tokens["KICKER"], "LOGO": tokens["LOGO"], "TITLE": e(story["title"]), "SUBTITLE": e(story.get("subtitle", "")),
-             "KPIS": kpis, "SECTIONS": "\n".join(sections), "NEXT": nxt, "FOOTER": footer, "LIVE": live_block}
+             "KPIS": kpis, "SECTIONS": "\n".join(sections), "NEXT": nxt, "FOOTER": S.footer(story, brand), "LIVE": live_block}
     with open(TEMPLATE, encoding="utf-8") as f:
         page = f.read()
     return re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: fills[m.group(1)], page)
@@ -206,19 +225,23 @@ def build(story_dir, live=False, brand_dir=None):
     if not SN.find_chrome():
         sys.exit("The artifact needs Google Chrome, Microsoft Edge or Chromium to draw the charts, and none was found "
                  "(set ZEBRA_BI_CHROME to its path). Nothing was written.")
-    with open(os.path.join(story_dir, "story.json"), encoding="utf-8") as f:
-        story = json.load(f)
+    story = S.load(story_dir)
     results = S.render_visuals(story_dir, story)
     renderer_path, meta = S.renderer()
-    used = [s["visual"] for s in story["sections"] if s.get("visual")]
+    used = S.story_visuals(story)
     missing = [v for v in used if v not in results]
     if missing:
-        sys.exit("sections name visuals that are not in story.json: %s" % ", ".join(missing))
+        sys.exit("the story names visuals that are not in its visuals: %s" % ", ".join(missing))
+    widths = picture_widths(story)
     out = os.path.join(story_dir, "artifact")
     charts = os.path.join(out, "charts")
     try:
         X.build_dir(out)
-        snaps, _ = SN.snapshot_all({v: results[v] for v in used}, renderer_path, charts, width=WIDTH, min_aspect=0)
+        snaps = {}
+        for width in sorted(set(widths.values()), reverse=True):  # each chart drawn at the width it is shown at
+            got, _ = SN.snapshot_all({v: results[v] for v in used if widths[v] == width}, renderer_path, charts,
+                                     width=width, min_aspect=0)
+            snaps.update(got)
     except ValueError as err:
         sys.exit("%s. Nothing was written." % err)
     except RuntimeError as err:
@@ -227,7 +250,7 @@ def build(story_dir, live=False, brand_dir=None):
     for vid in used:
         files["charts/%s.png" % vid] = os.path.abspath(snaps[vid])
         px = png_size(snaps[vid])
-        sizes[vid] = (px[0] // 2, px[1] // 2) if px else (WIDTH, 400)
+        sizes[vid] = (px[0] // 2, px[1] // 2) if px else (widths[vid], 400)
     if live:
         dst = X.write_atomic(os.path.join(out, RENDERER_FILE), X.read(renderer_path, "rb"))
         files[RENDERER_FILE] = os.path.abspath(dst)

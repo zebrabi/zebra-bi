@@ -29,13 +29,21 @@ client, opens the browser for an authorization-code grant with PKCE (S256)
 and a loopback redirect on 127.0.0.1, and keeps the token in auth.json next
 to the renderer cache (0600). The token is kept per endpoint and sent only
 to that endpoint, as `Authorization: Bearer`. When it has expired and no
-refresh token was issued, the next call needs `sign-in` again.
+refresh token was issued, the next call needs `sign-in` again. The same flow
+(SignInFlow) runs without blocking in the report server: begin_sign_in starts
+it, a daemon thread takes the redirect, and sign-in.json beside auth.json
+(0600) tells every process whether a sign-in is waiting or failed.
 
 When the server cannot be used, a build stops with one line and writes no
 file: "Zebra BI is unavailable (<reason>)" or "Zebra BI needs sign-in
 (<endpoint>)". A build whose visuals are all cached needs no server.
 """
-import base64, datetime as dt, hashlib, html, http.client, http.server, json, os, re, secrets, sys, time, urllib.error, urllib.parse, urllib.request, webbrowser
+import base64, contextlib, datetime as dt, hashlib, html, http.client, http.server, json, os, re, secrets, sys, threading, time, urllib.error, urllib.parse, urllib.request, webbrowser
+
+try:
+    import fcntl
+except ImportError:  # Windows: no flock; two sign-ins started at the same moment are unlikely there
+    fcntl = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "..", "assets", "story-template.html")
@@ -399,77 +407,245 @@ class Callback(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class Failed(Exception):
+    """A sign-in that did not finish; its message is the one line that says why."""
+
+
+class TimedOut(Failed):
+    pass
+
+
+class SignInFlow:
+    """One browser sign-in to ENDPOINT in three steps. start() reads the server's sign-in metadata, registers a public
+    client, listens on a 127.0.0.1 port and returns the sign-in page to open; wait() takes the browser's answer on that
+    port; finish() trades it for a token and keeps it in auth.json. Each raises Failed when it cannot go on.
+    `story.py sign-in` runs them in a row; the report server runs wait and finish in a thread (begin_sign_in)."""
+
+    def __init__(self):
+        self.srv = self.meta = self.resource = self.client_id = self.verifier = self.redirect = None
+
+    def start(self):
+        try:
+            self.meta, self.resource = discover()
+        except Unavailable as e:
+            raise Failed("Zebra BI sign-in is unavailable (%s). Nothing was saved." % e)
+        meta = self.meta
+        srv = self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Callback)
+        srv.daemon_threads = True
+        srv.timeout, srv.answer, srv.state = 1, None, secrets.token_urlsafe(24)
+        self.redirect = "http://127.0.0.1:%d/callback" % srv.server_address[1]
+        try:
+            if not safe_url(meta.get("registration_endpoint")):
+                raise Failed("Zebra BI sign-in is unavailable (%s offers no client registration). Nothing was saved." % clean(meta["issuer"]))
+            try:
+                reg = http_json(meta["registration_endpoint"], {
+                    "client_name": "Zebra BI story scripts", "redirect_uris": [self.redirect], "grant_types": ["authorization_code"],
+                    "response_types": ["code"], "token_endpoint_auth_method": "none"})
+            except Unavailable as e:
+                raise Failed("Zebra BI sign-in is unavailable (client registration: %s). Nothing was saved." % e)
+            self.client_id = reg.get("client_id")
+            if not isinstance(self.client_id, str) or not self.client_id:
+                raise Failed("Zebra BI sign-in is unavailable (client registration sent no client_id). Nothing was saved.")
+        except Failed:
+            self.close()
+            raise
+        self.verifier = b64url(secrets.token_bytes(32))
+        query = urllib.parse.urlencode({
+            "response_type": "code", "client_id": self.client_id, "redirect_uri": self.redirect, "state": srv.state,
+            "code_challenge": b64url(hashlib.sha256(self.verifier.encode()).digest()), "code_challenge_method": "S256",
+            "resource": self.resource})
+        return meta["authorization_endpoint"] + ("&" if "?" in meta["authorization_endpoint"] else "?") + query
+
+    def wait(self):
+        """Serve the loopback redirect until the answer whose state matches arrives, or SIGN_IN_WAIT runs out."""
+        deadline = time.time() + SIGN_IN_WAIT
+        try:
+            while self.srv.answer is None and time.time() < deadline:
+                self.srv.handle_request()
+        finally:
+            self.close()
+        if self.srv.answer is None:
+            raise TimedOut("Zebra BI sign-in timed out after %d s. Nothing was saved." % SIGN_IN_WAIT)
+
+    def finish(self):
+        """Check the answer, trade its code for a token and keep it for ENDPOINT. Returns the kept entry."""
+        answer, meta = self.srv.answer, self.meta
+        if "error" in answer:
+            raise Failed("Zebra BI sign-in was refused (%s). Nothing was saved." % clean(answer.get("error_description") or answer["error"], 300))
+        if meta.get("authorization_response_iss_parameter_supported") is True and not answer.get("iss"):  # RFC 9207 section 2.4
+            raise Failed("Zebra BI sign-in answered without naming its issuer. Nothing was saved.")
+        if answer.get("iss") and answer["iss"] != meta["issuer"]:
+            raise Failed("Zebra BI sign-in answered from an unexpected issuer (%s). Nothing was saved." % clean(answer["iss"]))
+        if not answer.get("code"):
+            raise Failed("Zebra BI sign-in sent no authorization code. Nothing was saved.")
+        try:
+            tok = http_json(meta["token_endpoint"], {
+                "grant_type": "authorization_code", "code": answer["code"], "redirect_uri": self.redirect,
+                "client_id": self.client_id, "code_verifier": self.verifier, "resource": self.resource}, form=True)
+            entry = keep({"client_id": self.client_id, "token_endpoint": meta["token_endpoint"], "resource": self.resource,
+                          "revocation_endpoint": meta.get("revocation_endpoint"), "issuer": meta["issuer"],
+                          "signed_in_at": dt.datetime.now().isoformat(timespec="seconds")}, tok)
+        except Unavailable as e:
+            raise Failed("Zebra BI sign-in failed at the token step (%s). Nothing was saved." % e)
+        data = load_auth()
+        data[ENDPOINT] = entry
+        save_auth(data)
+        if read_sign_in().get("state") == "failed":  # an earlier failure is over, whichever way the user signed in
+            clear_sign_in()
+        return entry
+
+    def close(self):
+        if self.srv is not None:
+            self.srv.server_close()
+
+
 def sign_in(open_url=webbrowser.open):
-    """Sign in in the browser and keep the token for ENDPOINT. Exits with one line when it cannot."""
+    """Sign in in the browser and keep the token for ENDPOINT, waiting for the browser. Exits with one line when it cannot."""
     if os.environ.get("ZEBRA_BI_MCP_URL"):
         print("Signing in to %s, which ZEBRA_BI_MCP_URL sets instead of the plugin's own address." % clean(ENDPOINT), flush=True)
+    flow = SignInFlow()
     try:
-        meta, resource = discover()
-    except Unavailable as e:
-        sys.exit("Zebra BI sign-in is unavailable (%s). Nothing was saved." % e)
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Callback)
-    srv.daemon_threads = True
-    srv.timeout, srv.answer, srv.state = 1, None, secrets.token_urlsafe(24)
-    redirect = "http://127.0.0.1:%d/callback" % srv.server_address[1]
-    try:
-        if not safe_url(meta.get("registration_endpoint")):
-            sys.exit("Zebra BI sign-in is unavailable (%s offers no client registration). Nothing was saved." % clean(meta["issuer"]))
-        try:
-            reg = http_json(meta["registration_endpoint"], {
-                "client_name": "Zebra BI story scripts", "redirect_uris": [redirect], "grant_types": ["authorization_code"],
-                "response_types": ["code"], "token_endpoint_auth_method": "none"})
-        except Unavailable as e:
-            sys.exit("Zebra BI sign-in is unavailable (client registration: %s). Nothing was saved." % e)
-        client_id = reg.get("client_id")
-        if not isinstance(client_id, str) or not client_id:
-            sys.exit("Zebra BI sign-in is unavailable (client registration sent no client_id). Nothing was saved.")
-        verifier = b64url(secrets.token_bytes(32))
-        query = urllib.parse.urlencode({
-            "response_type": "code", "client_id": client_id, "redirect_uri": redirect, "state": srv.state,
-            "code_challenge": b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256",
-            "resource": resource})
-        url = meta["authorization_endpoint"] + ("&" if "?" in meta["authorization_endpoint"] else "?") + query
+        url = flow.start()
         print("Opening the Zebra BI sign-in page in your browser. If it does not open, visit:\n%s" % clean(url, 4000), flush=True)
         open_url(url)
-        deadline = time.time() + SIGN_IN_WAIT
-        while srv.answer is None and time.time() < deadline:
-            srv.handle_request()
+        flow.wait()
+        entry = flow.finish()
+    except Failed as e:
+        sys.exit(str(e))
     finally:
-        srv.server_close()
-    answer = srv.answer
-    if answer is None:
-        sys.exit("Zebra BI sign-in timed out after %d s. Nothing was saved." % SIGN_IN_WAIT)
-    if "error" in answer:
-        sys.exit("Zebra BI sign-in was refused (%s). Nothing was saved." % clean(answer.get("error_description") or answer["error"], 300))
-    if meta.get("authorization_response_iss_parameter_supported") is True and not answer.get("iss"):  # RFC 9207 section 2.4
-        sys.exit("Zebra BI sign-in answered without naming its issuer. Nothing was saved.")
-    if answer.get("iss") and answer["iss"] != meta["issuer"]:
-        sys.exit("Zebra BI sign-in answered from an unexpected issuer (%s). Nothing was saved." % clean(answer["iss"]))
-    if not answer.get("code"):
-        sys.exit("Zebra BI sign-in sent no authorization code. Nothing was saved.")
-    try:
-        tok = http_json(meta["token_endpoint"], {
-            "grant_type": "authorization_code", "code": answer["code"], "redirect_uri": redirect,
-            "client_id": client_id, "code_verifier": verifier, "resource": resource}, form=True)
-        entry = keep({"client_id": client_id, "token_endpoint": meta["token_endpoint"], "resource": resource,
-                      "revocation_endpoint": meta.get("revocation_endpoint"), "issuer": meta["issuer"],
-                      "signed_in_at": dt.datetime.now().isoformat(timespec="seconds")}, tok)
-    except Unavailable as e:
-        sys.exit("Zebra BI sign-in failed at the token step (%s). Nothing was saved." % e)
-    data = load_auth()
-    data[ENDPOINT] = entry
-    save_auth(data)
+        flow.close()
     until = dt.datetime.fromtimestamp(entry["expires_at"]).isoformat(timespec="minutes") if entry["expires_at"] else "no stated expiry"
     print("Signed in to Zebra BI (%s). The token is kept in %s, valid until %s." % (ENDPOINT, AUTH, until))
 
 
-def sign_out():
+# A sign-in that runs while a server keeps answering: its state is in sign-in.json beside auth.json, so every process
+# (a host starts several servers) sees how it goes.
+
+def sign_in_path():
+    return os.path.join(os.path.dirname(AUTH), "sign-in.json")
+
+
+def alive(pid):
+    """Whether a process with this id runs."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def read_sign_in():
+    """sign-in.json as written, {} when there is none or it is not a plain file."""
+    path = sign_in_path()
+    if os.path.islink(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def sign_in_state():
+    """The browser sign-in as every process sees it: {"state": "idle"}, {"state": "waiting", "url", "started_at", "pid"}
+    or {"state": "failed", "reason"}. A wait older than SIGN_IN_WAIT, or whose process is gone, is idle."""
+    data = read_sign_in()
+    if data.get("state") == "waiting" and isinstance(data.get("url"), str) and isinstance(data.get("started_at"), (int, float)) \
+            and time.time() - data["started_at"] < SIGN_IN_WAIT and alive(data.get("pid")):
+        return {k: data[k] for k in ("state", "url", "started_at", "pid")}
+    if data.get("state") == "failed" and isinstance(data.get("reason"), str):
+        return {"state": "failed", "reason": data["reason"]}
+    return {"state": "idle"}
+
+
+def write_sign_in(data):
+    os.makedirs(os.path.dirname(AUTH), mode=0o700, exist_ok=True)
+    write_atomic(sign_in_path(), json.dumps(data), mode=0o600)
+    os.chmod(sign_in_path(), 0o600)
+
+
+def clear_sign_in():
+    try:
+        os.remove(sign_in_path())
+    except FileNotFoundError:
+        pass
+
+
+@contextlib.contextmanager
+def sign_in_lock():
+    """Hold sign-in.lock while a process reads and changes sign-in.json, so two never start a sign-in at once."""
+    os.makedirs(os.path.dirname(AUTH), mode=0o700, exist_ok=True)
+    if fcntl is None:
+        yield
+        return
+    fd = os.open(os.path.join(os.path.dirname(AUTH), "sign-in.lock"), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def begin_sign_in():
+    """Start a browser sign-in without waiting for it, and return the sign-in page to open. A daemon thread of this
+    process takes the redirect and keeps the token; sign-in.json says "waiting" meanwhile, is removed when the user
+    has signed in or nobody answered in time, and says "failed" with the reason otherwise. While a sign-in waits in a
+    live process, its page again and no second listener. Raises Failed when it cannot start."""
+    with sign_in_lock():
+        st = sign_in_state()
+        if st["state"] == "waiting":
+            return st["url"]
+        flow = SignInFlow()
+        try:
+            url = flow.start()
+        except Failed as e:
+            write_sign_in({"state": "failed", "reason": str(e)})
+            raise
+        write_sign_in({"state": "waiting", "url": url, "started_at": int(time.time()), "pid": os.getpid()})
+    threading.Thread(target=_finish_sign_in, args=(flow, url), daemon=True).start()
+    return url
+
+
+def _finish_sign_in(flow, url):
+    """The background half of begin_sign_in: wait for the browser, keep the token, say how it went in sign-in.json."""
+    outcome = None
+    try:
+        flow.wait()
+        flow.finish()
+    except TimedOut:
+        pass
+    except Failed as e:
+        outcome = {"state": "failed", "reason": str(e)}
+    except Exception as e:  # a thread must say why it stopped, or the builder waits for nothing
+        outcome = {"state": "failed", "reason": "Zebra BI sign-in failed (%s). Nothing was saved." % clean(e, 300)}
+    finally:
+        flow.close()
+    with sign_in_lock():
+        if read_sign_in().get("url") != url:  # another sign-in has started since; it owns the file
+            return
+        if outcome:
+            write_sign_in(outcome)
+        else:
+            clear_sign_in()
+
+
+def sign_out(say=None):
     """Forget every kept sign-in (an endpoint used before, such as an older address, included), revoking the
-    refresh and access tokens first where the server offers that."""
+    refresh and access tokens first where the server offers that. say(line, warning) reports; the default prints,
+    warnings to stderr. Returns how many sign-ins were forgotten."""
+    say = say or (lambda line, warning=False: print(line, file=sys.stderr if warning else sys.stdout))
     data = load_auth()
     if not data:
-        print("No Zebra BI sign-in is kept in %s." % AUTH)
-        return
+        say("No Zebra BI sign-in is kept in %s." % AUTH)
+        return 0
     for endpoint, entry in data.items():
         if not isinstance(entry, dict):
             continue
@@ -479,11 +655,11 @@ def sign_out():
                     http_json(entry["revocation_endpoint"], {"token": entry[kind], "token_type_hint": kind,
                                                              "client_id": entry.get("client_id", "")}, form=True, ignore_body=True)
                 except Unavailable as e:
-                    print("Could not revoke the %s for %s (%s); forgetting it anyway." % (kind.replace("_", " "), clean(endpoint), e),
-                          file=sys.stderr)
-        print("Signed out of Zebra BI (%s)." % clean(endpoint))
+                    say("Could not revoke the %s for %s (%s); forgetting it anyway." % (kind.replace("_", " "), clean(endpoint), e), True)
+        say("Signed out of Zebra BI (%s)." % clean(endpoint))
     save_auth({})
-    print("Nothing is kept in %s any more." % AUTH)
+    say("Nothing is kept in %s any more." % AUTH)
+    return len(data)
 
 
 def cached_renderer(path, meta_path):
@@ -515,9 +691,10 @@ def renderer_uri():
     return RENDERER_URI
 
 
-def renderer(refresh=False):
+def renderer(refresh=False, raises=False):
     """Return (path, meta) of the cached renderer, fetching it when stale, changed or missing. A copy fetched from
-    another endpoint (a test server, an older address) counts as missing, even when the fetch fails."""
+    another endpoint (a test server, an older address) counts as missing, even when the fetch fails. With nothing
+    to fall back on it stops with the build's one line, or with raises=True raises SignIn or Unavailable."""
     os.makedirs(os.path.dirname(CACHE), mode=0o700, exist_ok=True)
     os.makedirs(CACHE, exist_ok=True)
     path, meta_path = os.path.join(CACHE, "visual.html"), os.path.join(CACHE, "visual.json")
@@ -542,6 +719,8 @@ def renderer(refresh=False):
             print("renderer: fetch failed (%s), using the cached copy from %s" % (
                 "sign-in needed" if isinstance(e, SignIn) else e, meta.get("fetched_at")), file=sys.stderr)
             return path, meta
+        if raises:
+            raise
         stop(e)
     meta = {"uri": uri, "endpoint": ENDPOINT, "sha256": hashlib.sha256(data).hexdigest(),
             "bytes": len(data), "fetched_at": dt.datetime.now().isoformat(timespec="seconds")}
@@ -606,6 +785,69 @@ def render_visuals(story_dir, story):
     return results
 
 
+MAX_CELLS = 3  # cells side by side in one row, as in the report builder
+LAYOUTS = ("one-pager", "variance-walk", "board-pack")  # a report's layouts (report.py), as the PDF prints them
+
+
+def layout(story):
+    """The report layout the story names, when it is one the page knows and the story has rows; else None."""
+    name = story.get("layout")
+    return name if name in LAYOUTS and story.get("rows") else None
+
+
+def load(story_dir):
+    """story.json in story_dir, or the report builder's report there (report.zbreport) as a story with rows."""
+    path = os.path.join(story_dir, "story.json")
+    report_file = os.path.join(story_dir, "report.zbreport")
+    if not os.path.exists(path) and os.path.isfile(report_file):
+        import report as R  # report.py imports this module, so it is imported only when needed
+        try:
+            return R.to_story(R.load(report_file))
+        except ValueError as e:
+            sys.exit("Not built: %s" % e)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except OSError:
+        sys.exit("No story.json or report.zbreport in %s" % story_dir)
+
+
+def rows(story):
+    """The story's rows ([{"cells": [{"visual": id} | {"text": str}]}]), checked: 1 to MAX_CELLS cells each."""
+    out = story.get("rows") or []
+    for i, row in enumerate(out, 1):
+        cells = row.get("cells") if isinstance(row, dict) else None
+        if not isinstance(cells, list) or not 1 <= len(cells) <= MAX_CELLS:
+            sys.exit("row %d needs 1 to %d cells side by side" % (i, MAX_CELLS))
+        for c in cells:
+            if not isinstance(c, dict) or not (c.get("visual") or isinstance(c.get("text"), str)) \
+                    or not isinstance(c.get("note", ""), str) or not isinstance(c.get("message", ""), str):
+                sys.exit("row %d: each cell is {\"visual\": id} or {\"text\": ...}" % i)
+    return out
+
+
+def story_visuals(story):
+    """The visual ids the story shows, in page order, each once."""
+    ids = [s["visual"] for s in story.get("sections", []) if s.get("visual")]
+    ids += [c["visual"] for row in rows(story) for c in row["cells"] if c.get("visual")]
+    return list(dict.fromkeys(ids))
+
+
+def footer(story, brand):
+    """The footer line, escaped: the source when the story names one, the build date, the brand's credit."""
+    src = story.get("source") or {}
+    label = src.get("label") or src.get("name")
+    text = ("Source: %s. " % html.escape(label) if label else "") + "Built %s." % dt.date.today().isoformat()
+    if brand.get("credit"):
+        text += " &middot; " + html.escape(brand["credit"])
+    return text
+
+
+def inline(text):
+    """Escape one line and allow **bold**: a chart's message."""
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html.escape(" ".join(str(text).split())))
+
+
 def para(text):
     """Escape, then allow **bold**; blank lines split paragraphs."""
     out = []
@@ -667,15 +909,27 @@ def assemble(story, results, meta, renderer_path, brand):
                 sys.exit("section %r names visual %r, which is not in visuals" % (s.get("heading"), s["visual"]))
             frame = '<iframe data-v="%s" title="%s"></iframe>' % (e(s["visual"]), e(s.get("heading", s["visual"])))
         sections.append("<section>\n<h2>%s</h2>\n%s\n%s\n</section>" % (e(s.get("heading", "")), para(s.get("body", "")), frame))
+    shape = layout(story)
+    for row in rows(story):
+        cells = []
+        for c in row["cells"]:
+            vid = c.get("visual")
+            if vid:
+                if vid not in results:
+                    sys.exit("a row names visual %r, which is not in visuals" % vid)
+                title = ((story.get("visuals", {}).get(vid) or {}).get("args") or {}).get("title") or vid
+                msg = '<div class="msg">%s</div>' % inline(c["message"]) if c.get("message") else ""
+                note = '<div class="note">%s</div>' % para(c["note"]) if c.get("note") else ""
+                cells.append('<div class="cell">%s<iframe data-v="%s" title="%s"></iframe>%s</div>' % (msg, e(vid), e(title), note))
+            else:
+                cells.append('<div class="cell">%s</div>' % para(c["text"]))
+        page = " page" if shape == "board-pack" and any(c.get("visual") for c in row["cells"]) else ""
+        sections.append('<section class="row cols-%d%s">%s</section>' % (len(cells), page, "".join(cells)))
     nxt = ""
     if story.get("next"):
         nxt = '<section class="next"><h2>%s</h2><ul>%s</ul></section>' % (
             e(story.get("next_heading", "Where to look next")),
             "".join("<li>%s</li>" % re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", e(n)) for n in story["next"]))
-    src = story.get("source", {})
-    footer = "Source: %s. Built %s." % (e(src.get("label", src.get("name", "unknown"))), dt.date.today().isoformat())
-    if brand.get("credit"):
-        footer += " &middot; " + e(brand["credit"])
     with open(TEMPLATE, encoding="utf-8") as f:
         page = f.read()
     # Data and the renderer are embedded as JSON in inert <script type="application/json">
@@ -686,8 +940,10 @@ def assemble(story, results, meta, renderer_path, brand):
     with open(renderer_path, encoding="utf-8") as f:
         renderer_html = f.read()
     fills = {"TITLE": e(story["title"]), "SUBTITLE": e(story.get("subtitle", "")), "KPIS": kpis,
-             "SECTIONS": "\n".join(sections), "NEXT": nxt, "FOOTER": footer, "VERSION": version(),
-             "RENDERER_SHA": meta["sha256"], "VISUALS_JSON": embed(results), "RENDERER_JSON": embed(renderer_html)}
+             "SECTIONS": "\n".join(sections), "NEXT": nxt, "FOOTER": footer(story, brand), "VERSION": version(),
+             "RENDERER_SHA": meta["sha256"], "VISUALS_JSON": embed(results), "RENDERER_JSON": embed(renderer_html),
+             "PAGE_SIZE": "A4 landscape" if shape == "one-pager" else "A4",
+             "BODY_ATTR": ' class="layout-%s"' % shape if shape else ""}
     fills.update(brand_tokens(brand, story))
     # One pass over the template: a value that holds "{{...}}" is never expanded again.
     page = re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: fills[m.group(1)], page)

@@ -10,7 +10,10 @@ Each visual goes into the file as a Zebra BI Charts or Tables for Office add-in 
 settings and data, with the snapshot as the image Office shows where the add-in is not installed.
 The page around each visual follows the brand (brand.py: .zebra/brand/, else the editorial default);
 the charts themselves never change. Every written file passes `check` before its path is printed.
-Standard library only.
+<story-dir> may also be a report builder folder (report.zbreport): it builds as a PowerPoint deck, a cover
+with the key message and KPI tiles, then a slide per chart in the report's reading order with its message as
+the title and its note beside it, each chart drawn at the width the slide gives it. A report whose text holds
+a number no chart supports is not built. Standard library only.
 """
 import datetime as dt, json, os, sys
 
@@ -38,7 +41,25 @@ def build(story_dir, formats, brand_dir=None):
         print("brand warning: " + w, file=sys.stderr)
     if errors:
         sys.exit("brand %r is not valid: %s" % (brand.get("name"), "; ".join(errors)))
-    story = json.load(open(os.path.join(story_dir, "story.json"), encoding="utf-8"))
+    report_file = os.path.join(story_dir, "report.zbreport")
+    report = not os.path.exists(os.path.join(story_dir, "story.json")) and os.path.isfile(report_file)
+    if report:
+        import report as R  # report.py imports story.py, so it is imported only for a report folder
+        try:
+            story = R.to_deck(R.load(report_file))
+        except ValueError as e:
+            sys.exit("Not built: %s" % e)
+        if "xlsx" in formats:
+            print("A report builds as PowerPoint only; no workbook was written.", file=sys.stderr)
+        formats = ["pptx"]
+    else:
+        story = json.load(open(os.path.join(story_dir, "story.json"), encoding="utf-8"))
+        in_rows = {c.get("visual") for r in story.get("rows") or [] if isinstance(r, dict)
+                   for c in r.get("cells") or [] if isinstance(c, dict) and c.get("visual")}
+        left_out = sorted(in_rows - {s.get("visual") for s in story.get("sections", [])})
+        if left_out:
+            print("story.json rows name charts a deck or workbook cannot show (only the sections are slides and "
+                  "sheets): %s" % ", ".join(left_out), file=sys.stderr)
     results = S.render_visuals(story_dir, story)  # first, so `Sending <n> chart(s)` comes before any call to the MCP
     renderer_path, meta = S.renderer()
     used = [s["visual"] for s in story.get("sections", []) if s.get("visual")]
@@ -51,12 +72,14 @@ def build(story_dir, formats, brand_dir=None):
         if not v:
             sys.exit("visual %r has no structuredContent.visual in its result; delete visuals/%s.json and build again" % (vid, vid))
         visuals[vid] = v
-    snaps, chrome = SN.snapshot_all({v: results[v] for v in used}, renderer_path, os.path.join(story_dir, "snapshots"))
+    width = P.chart_width(brand) if report else SN.WIDTH
+    snaps, chrome = SN.snapshot_all({v: results[v] for v in used}, renderer_path, os.path.join(story_dir, "snapshots"), width)
     if not chrome:
         print("No Chrome, Edge or Chromium found (set ZEBRA_BI_CHROME): the files carry a placeholder image, "
               "so readers without the Zebra BI add-in see no chart.", file=sys.stderr)
-    src = story.get("source", {})
-    footer = "Source: %s. Built %s." % (src.get("label") or src.get("name") or "unknown", dt.date.today().isoformat())
+    src = story.get("source") or {}
+    label = src.get("label") or src.get("name")
+    footer = ("Source: %s. " % label if label else "") + "Built %s." % dt.date.today().isoformat()
     slug = os.path.basename(os.path.normpath(story_dir))
     written, failed = [], False
     for fmt in formats:

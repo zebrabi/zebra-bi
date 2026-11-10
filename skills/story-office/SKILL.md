@@ -17,6 +17,8 @@ The file is built by a script in Claude Code, so do not run anything here. Say i
 
 Same as step 1 of the `story-pdf` skill: a slug or path, the story just saved by `data-story`, or a list of `.zebra/stories/*/story.json` to pick from. A story told in chat without being saved is written to `story.json` first, in the format of the `data-story` skill (`references/story-json.md` there).
 
+A report saved by the Zebra BI report builder (a folder holding `report.zbreport`) builds too, as PowerPoint only: a cover with the key message and KPI tiles, then a slide per chart in the report's order with its message as the title and its note beside it.
+
 Pick the format from the request: "deck", "slides", "PowerPoint" → `--pptx`; "Excel", "workbook", "the data" → `--xlsx`; "Office", "both" or unclear → both.
 
 ## 2. Build

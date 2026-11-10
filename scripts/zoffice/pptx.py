@@ -19,6 +19,7 @@ P_NS = ('xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
 EMU = 914400  # per inch
 MIN_REGION = 2.5  # inches: the finding, a gap and a readable chart
 MIN_VISUAL = 1.0  # inches left for the chart, or the layout cannot hold a section
+CHART_SHARE = 0.66  # of the content width on a report's chart slide; its note and the user's text take the rest
 CT = {
     "presentation": T.CT["presentation"],
     "slide": "application/vnd.openxmlformats-officedocument.presentationml.slide+xml",
@@ -168,6 +169,19 @@ class Geometry:
         return (x, top, cx, max(0, self.H - top - int(0.45 * self.inch)))
 
 
+def _base(brand):
+    template = (brand.get("deck") or {}).get("template")
+    return T.from_template(template) if template else T.default_base(brand)
+
+
+def chart_width(brand):
+    """The CSS width (96 px an inch) a report's chart slide gives its chart, so the snapshot is drawn at the width
+    it is shown at and its axis labels fit."""
+    base = _base(brand)
+    lay = base.layout("content", (brand.get("deck") or {}).get("layouts") or {})
+    return int(Geometry(base).region(lay)[2] * CHART_SHARE * 96 / EMU)
+
+
 def _rel(src_dir, target):
     return posixpath.relpath(target, src_dir)
 
@@ -179,7 +193,7 @@ def build(story, visuals, snapshots, out, footer, brand):
     template = (brand.get("deck") or {}).get("template")
     ink, muted, hair = ("ink", "muted", c["hairline"]) if template else (c["ink"], c["muted"], c["hairline"])
     mark = c.get("accent") or ink
-    base = T.from_template(template) if template else T.default_base(brand)
+    base = _base(brand)
     editorial = not template  # our hairlines belong to the default design; a company template brings its own
     mapping = (brand.get("deck") or {}).get("layouts") or {}
     L = {r: base.layout(r, mapping) for r in ("title", "content", "closing")}
@@ -215,12 +229,15 @@ def build(story, visuals, snapshots, out, footer, brand):
     tx, ty, tw, th = tp["rect"]
     shapes, extra, sid = [placeholder(2, tp, story.get("title", ""))], [], 10
     sub = lay["ph"].get("subTitle")
+    subtitle = story.get("subtitle", "")  # none (a report): no empty "Click to add subtitle" on the cover
     if sub and sub["rect"]:
-        shapes.append(placeholder(3, sub, story.get("subtitle", "")))
+        if subtitle:
+            shapes.append(placeholder(3, sub, subtitle))
         below = sub["rect"][1] + sub["rect"][3]
     else:
-        shapes.append(textbox(3, "Subtitle", tx, ty + th + int(0.15 * inch), tw, int(0.7 * inch),
-                              paragraphs(story.get("subtitle", ""), 16, muted)))
+        if subtitle:
+            shapes.append(textbox(3, "Subtitle", tx, ty + th + int(0.15 * inch), tw, int(0.7 * inch),
+                                  paragraphs(subtitle, 16, muted)))
         below = ty + th + int(0.85 * inch)
     kick = (str(story.get("kicker") or "").strip() or str(brand.get("kicker") or "").strip())[:60]  # story first, as story.kicker
     if kick and ty > int(0.9 * inch):
@@ -259,42 +276,64 @@ def build(story, visuals, snapshots, out, footer, brand):
         extra.append(("rIdZsLogo", R + "image", "../media/zsLogo.png"))
     slides.append((shapes, lay, extra, story.get("subtitle", "")))
 
-    # 2. One slide per supporting message: the message as the slide title, the finding, the visual.
+    # 2. One slide per supporting message: the message as the slide title, the finding, the visual. A report's
+    #    chart (a section with a note) puts the chart on the left and its note and the user's text beside it.
     lay = L["content"]
     tp = g.title_ph(lay)
     rx, ry, rw, rh = g.region(lay)
     n_we = 0
+
+    def visual_frame(vid, x, y, box_w, box_h, centre=False):
+        """The add-in part for one visual, fitted into the box (centred across it on request): (shape, slide
+        relationships)."""
+        nonlocal n_we
+        if box_w <= 0 or box_h < int(MIN_VISUAL * inch):
+            raise ValueError("layout %r leaves no room for a chart; choose another content layout in the brand "
+                             "(deck.layouts.content)" % lay["name"])
+        v = visuals[vid]
+        n_we += 1
+        png = snapshots[vid]
+        iw, ih = X.png_size(png)
+        w, h = fit(iw, ih, box_w, box_h)
+        if centre:
+            x += (box_w - w) // 2
+        kind = "tables" if V.is_table(v) else "charts"
+        if kind == "charts":
+            props = {"ZBILicenseSettings": "", "ChartSettings": X.compact(V.chart_settings(v)),
+                     "zebrabi:table-data": X.double_encoded(V.chart_dataview(v)), "ChartChooserStore": ""}
+        else:
+            props = {"ZBILicenseSettings": "", "ZBITablesSettings": X.compact(V.table_settings(v, "pptx")),
+                     "zebrabi:matrix-data": X.double_encoded(V.table_data(v, "pptx")), "TableChooserStore": ""}
+        pkg.add_file("ppt/media/zsSnapshot%d.png" % n_we, png)
+        pkg.add("ppt/webextensions/webextension%d.xml" % n_we, X.webextension(kind, props, snapshot_rid="rId1"), X.CT_WEBEXT)
+        pkg.add("ppt/webextensions/_rels/webextension%d.xml.rels" % n_we,
+                X.rels([("rId1", X.R_IMAGE, "../media/zsSnapshot%d.png" % n_we)]))
+        return (addin(5, "Zebra BI %s: %s" % ("Tables" if kind == "tables" else "Charts", V.title(v) or vid),
+                      "rIdZsWe", "rIdZsSnap", x, y, w, h),
+                [("rIdZsSnap", X.R_IMAGE, "../media/zsSnapshot%d.png" % n_we),
+                 ("rIdZsWe", X.R_WEBEXT, "../webextensions/webextension%d.xml" % n_we)])
+
     for s in story.get("sections", []):
         shapes, extra = [placeholder(2, tp, s.get("heading", ""))], []
-        finding_h = int(0.8 * inch)
-        shapes.append(textbox(3, "Finding", rx, ry, rw, finding_h, paragraphs(s.get("body", ""), 14, ink)))
         vid = s.get("visual")
+        if vid and s.get("kind") == "report-chart":
+            side = paragraphs(s["note"], 14, ink) if s["note"] else ""
+            side += "".join(paragraphs(t, 12, ink) for t in s.get("texts", []) if t.strip())
+            if side:
+                cw, gap = int(rw * CHART_SHARE), int(0.3 * inch)
+                frame, extra = visual_frame(vid, rx, ry, cw, rh)
+                shapes += [frame, textbox(3, "Note", rx + cw + gap, ry, rw - cw - gap, rh, side)]
+            else:  # nothing beside it: the chart is centred on the slide
+                frame, extra = visual_frame(vid, rx, ry, rw, rh, centre=True)
+                shapes.append(frame)
+            slides.append((shapes, lay, extra, s["note"]))
+            continue
+        finding_h = int(0.8 * inch) if vid else rh  # a text slide gets the whole content area
+        shapes.append(textbox(3, "Finding", rx, ry, rw, finding_h, paragraphs(s.get("body", ""), 14, ink)))
         if vid:
-            v = visuals[vid]
-            n_we += 1
-            png = snapshots[vid]
-            iw, ih = X.png_size(png)
             top = ry + finding_h + int(0.15 * inch)
-            box_h = ry + rh - top
-            if rw <= 0 or box_h < int(MIN_VISUAL * inch):
-                raise ValueError("layout %r leaves no room for a chart under the finding; choose another content "
-                                 "layout in the brand (deck.layouts.content)" % lay["name"])
-            w, h = fit(iw, ih, rw, box_h)
-            kind = "tables" if V.is_table(v) else "charts"
-            if kind == "charts":
-                props = {"ZBILicenseSettings": "", "ChartSettings": X.compact(V.chart_settings(v)),
-                         "zebrabi:table-data": X.double_encoded(V.chart_dataview(v)), "ChartChooserStore": ""}
-            else:
-                props = {"ZBILicenseSettings": "", "ZBITablesSettings": X.compact(V.table_settings(v, "pptx")),
-                         "zebrabi:matrix-data": X.double_encoded(V.table_data(v, "pptx")), "TableChooserStore": ""}
-            pkg.add_file("ppt/media/zsSnapshot%d.png" % n_we, png)
-            pkg.add("ppt/webextensions/webextension%d.xml" % n_we, X.webextension(kind, props, snapshot_rid="rId1"), X.CT_WEBEXT)
-            pkg.add("ppt/webextensions/_rels/webextension%d.xml.rels" % n_we,
-                    X.rels([("rId1", X.R_IMAGE, "../media/zsSnapshot%d.png" % n_we)]))
-            shapes.append(addin(5, "Zebra BI %s: %s" % ("Tables" if kind == "tables" else "Charts", V.title(v) or vid),
-                                "rIdZsWe", "rIdZsSnap", rx, top, w, h))
-            extra = [("rIdZsSnap", X.R_IMAGE, "../media/zsSnapshot%d.png" % n_we),
-                     ("rIdZsWe", X.R_WEBEXT, "../webextensions/webextension%d.xml" % n_we)]
+            frame, extra = visual_frame(vid, rx, top, rw, ry + rh - top)
+            shapes.append(frame)
         slides.append((shapes, lay, extra, s.get("body", "")))
 
     # 3. Where to look next.
