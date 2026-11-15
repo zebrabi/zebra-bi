@@ -398,6 +398,22 @@ check("the server lists profile_source and routes it", () => {
   assert.strictEqual(srv.profileSourceTool({ path: CLEAN }).ok, true);
 });
 
+// One file named directly used to skip the extension filter the folder walk applies, so a
+// secrets file came back with its first line as a column name. The CSV is the control.
+check("a single file that is not a data file is refused, a CSV beside it is read", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zbi-ps-single-"));
+  const secret = "FAKE_KEY=not-a-real-secret";
+  const files = { ".env": secret, "id_test": secret, "notes.md": secret, "history": secret };
+  for (const [n, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), body + "\n");
+  fs.writeFileSync(path.join(dir, "sales.csv"), "Month,Actual\n2026-01,120\n");
+  for (const n of Object.keys(files)) {
+    const out = ps.profileSource({ path: path.join(dir, n) });
+    assert.strictEqual(out.ok, false, `${n} was read`);
+    assert.ok(!JSON.stringify(out).includes(secret), `${n} leaked its content`);
+  }
+  assert.strictEqual(ps.profileSource({ path: path.join(dir, "sales.csv") }).ok, true);
+});
+
 // --- report ---------------------------------------------------------------------------------
 
 let failed = 0;

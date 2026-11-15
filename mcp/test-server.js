@@ -215,15 +215,22 @@ function rpc(messages) {
     }
   });
 
-  // The checker writes nothing and connects nowhere (checker.yml enforces the second), and the
-  // labels are how a host learns that without asking the person before every call.
-  check("every advertised tool is labelled read-only, non-destructive and closed-world", () => {
-    for (const t of replies.find((x) => x.id === 2).result.tools) {
+  // A host may run a read-only tool without asking. That is right for the encoders, which read
+  // nothing, and wrong for a tool that reads a path it is handed and returns what it found.
+  check("only the encoders carry the labels that skip confirmation", () => {
+    const READS_FILES = ["validate_report", "propose_pages", "profile_project", "profile_source",
+      "write_visual", "write_page", "write_report"];
+    const tools = replies.find((x) => x.id === 2).result.tools;
+    for (const t of tools) {
       const a = t.annotations || {};
-      assert.strictEqual(a.readOnlyHint, true, `${t.name} is not labelled read-only`);
-      assert.strictEqual(a.destructiveHint, false, `${t.name} is not labelled non-destructive`);
-      assert.strictEqual(a.openWorldHint, false, `${t.name} is not labelled closed-world`);
+      if (READS_FILES.includes(t.name) || !t.name.match(/^(encode_|plan_)/)) {
+        assert.notStrictEqual(a.readOnlyHint, true, `${t.name} reads files but invites auto-approval`);
+      } else {
+        assert.strictEqual(a.readOnlyHint, true, `${t.name} reads nothing but is not labelled`);
+        assert.strictEqual(a.openWorldHint, false, `${t.name} is not labelled closed-world`);
+      }
     }
+    assert.strictEqual(tools.filter((t) => (t.annotations || {}).readOnlyHint).length, 11);
   });
 
   check("tools/call returns the finding over the wire", () => {

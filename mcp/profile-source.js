@@ -60,7 +60,14 @@ const NEVER_SIGNED_HINT = /price|qty|quantity|units|count|rate|level|number|weig
 
 function listFiles(root) {
   const st = fs.statSync(root);
-  if (st.isFile()) return [root];
+  // One file gets the same filter as a folder walk. Without it, any path the agent was handed
+  // (a .env, a key file, a shell history) came back with its first line as a column name.
+  if (st.isFile()) {
+    const name = path.basename(root);
+    const ext = path.extname(name).toLowerCase();
+    if (name.startsWith(".") || name.startsWith("_")) return [];
+    return TEXT_EXT.has(ext) || JSON_EXT.has(ext) || BINARY_EXT.has(ext) ? [root] : [];
+  }
   const out = [];
   const walk = (dir, depth) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
