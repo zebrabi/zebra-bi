@@ -1,5 +1,6 @@
 {
   "mcpServers": {
-    "zebra-bi": { "type": "http", "url": "https://mcp.zebrabi.com/mcp" }
+    "zebra-bi": { "type": "http", "url": "https://mcp.zebrabi.com/mcp" },
+    "zebra-bi-reports": { "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/server.js"] }
   }
 }

@@ -1,6 +1,6 @@
 ---
 name: data-story
-description: "Turn a dataset into an IBCS data story told in the conversation: one key message, supporting messages, and a Zebra BI chart (render_visual) for each one. Takes a CSV or Excel file, Excel in SharePoint/OneDrive, a Power BI semantic model, or a source saved earlier. Use whenever the user asks how the business did from data they point to or keep: a month-end or quarter close ('how did we close September against plan and last year'), actuals against plan, budget, forecast or last year across several views, a performance review, revenue, cost or P&L questions. Also for 'data story', 'tell me what this data says', 'run the same story on the October file', '/zebra-bi:data-story', or a data file with a question about it. Prefer it over chart-from-data and variance-analysis when the answer needs several charts from a dataset; those handle one chart or one gap from figures already in the conversation. To share the story: story-pdf for a PDF, story-artifact for an artifact page, story-office for PowerPoint or Excel."
+description: "Turn a dataset into an IBCS data story told in the conversation: one key message, supporting messages, and a Zebra BI chart for each one. Takes a CSV or Excel file (local or SharePoint/OneDrive), a Power BI semantic model, or a saved source. Use whenever the user asks how the business did from data they point to or keep: a month-end or quarter close, actuals against plan, budget, forecast or last year across several views, a performance review, revenue, cost or P&L questions. Also for 'data story', 'tell me what this data says', 'run the same story on the October file', a data file with a question, and 'build me a report' or 'make a report': by default a report is this story, told in the conversation, so with no data named ask only for the data. For one chart from figures already given, chart-from-data or variance-analysis. Only when the user names it: report-authoring for Power BI Desktop (.pbip), story-pdf for a PDF, story-artifact for a page, story-office for PowerPoint or Excel."
 compatibility: "Needs the Zebra BI MCP (render_visual). Charts render inline in Claude Desktop chat, claude.ai and the desktop Code tab; the Claude Code terminal shows the chart data instead."
 license: Apache-2.0
 ---
@@ -10,6 +10,8 @@ license: Apache-2.0
 The story is told in the conversation: a key message, up to four KPI tiles, 3-5 supporting messages each with one Zebra BI chart, and suggestions. It follows IBCS; read `references/ibcs-narrative.md` before writing and `references/chart-rules.md` before building chart arguments.
 
 ## 1. Resolve the source
+
+A request for a report with no destination named means this story, in the conversation. When no data is named either, ask one question, for the data, and do not ask where the report should live. Power BI Desktop, a PDF, a page or Office files come only when the user names them.
 
 Follow the `data-source` skill when it is available. It profiles the data once and saves a manifest in `.zebra/sources/<name>.json`, so encoding, date order, sheet and query are never asked twice. If the user named a saved source, load it and check it is still current.
 

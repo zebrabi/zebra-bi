@@ -1,0 +1,179 @@
+name: Checker
+
+# The Power BI half of the plugin: the local checker in mcp/, the generated report-authoring skill
+# and the gates in .github/scripts/. Moved here from zebrabi/zebra-bi-agentic with the files.
+#
+# What this cannot do. The disclosure checks on the generated skill live in the generator, in a
+# private repository, and the list they check against names the things it protects. So this
+# workflow cannot re-check that boundary. It checks that the shipped bundle matches the checksums
+# committed beside it and that no file was added, which turns a hand-edit that skips the checksum
+# update into a failed build. It cannot prove the bundle came from the generator: one commit can
+# change a file and its checksum together. Review is the control for that.
+#
+# No `paths:` filter, deliberately. A gate scoped to the files it watches does not run on the pull
+# request that renames one.
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  suites:
+    name: checker (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 and 22: the suites have to pass on the LTS a customer plausibly already has.
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      # No install step and no lockfile: the checker is dependency-free so that it runs on a
+      # locked-down machine. A search rather than two exact paths, so a package.json one directory
+      # over or a committed node_modules/ fails as well.
+      - name: No dependencies crept in
+        run: |
+          found=$(find . -path ./.git -prune -o \
+                    \( -name package.json -o -name package-lock.json -o -name pnpm-lock.yaml \
+                       -o -name yarn.lock -o -name node_modules \) -print | head -20)
+          if [ -n "$found" ]; then
+            echo "::error::a dependency artefact appeared; the checker is meant to be dependency-free (see AGENTS.md)"
+            echo "$found"
+            exit 1
+          fi
+
+      # The checker is the one part of the plugin that must never reach the network or start a
+      # process: the same repository holds scripts that do both, and SECURITY.md states the
+      # difference. Tests are excluded because test-server.js starts the server it tests.
+      - name: The checker stays offline
+        working-directory: mcp
+        run: |
+          shopt -s nullglob
+          found=$(grep -nE "require\((\"|')(node:)?(http|https|http2|net|tls|dgram|dns|child_process|worker_threads|cluster)(\"|')\)|\bfetch\(|\bimport\(" \
+            $(ls *.js | grep -v '^test-') || true)
+          if [ -n "$found" ]; then
+            echo "::error::mcp/ loads a network or process module"
+            echo "$found"
+            exit 1
+          fi
+
+      # Globbed, not listed, so a new test-*.js runs. The floor keeps a broken glob from passing
+      # as "no tests to run".
+      - name: Run every suite
+        working-directory: mcp
+        run: |
+          set -u
+          shopt -s nullglob
+          suites=(test-*.js)
+          if [ "${#suites[@]}" -lt 8 ]; then
+            echo "::error::only ${#suites[@]} suite(s) matched test-*.js, expected at least 8"
+            exit 1
+          fi
+          failed=0
+          for t in "${suites[@]}"; do
+            echo "──────── $t"
+            node "$t" || failed=1
+          done
+          exit $failed
+
+  bundle:
+    name: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      # skills/report-authoring/ is emitted by the generator in the private hub. A direct edit is
+      # reverted by the next build and never went through the disclosure checks.
+      - name: Bundle matches its checksums
+        working-directory: skills/report-authoring
+        run: sha256sum -c .bundle-sha256
+
+      # `sha256sum -c` verifies the files it is told about and says nothing about one that was
+      # added, so count as well.
+      - name: No file was added to the bundle
+        working-directory: skills/report-authoring
+        run: |
+          listed=$(wc -l < .bundle-sha256)
+          actual=$(find . -type f ! -name '.bundle-sha256' | wc -l)
+          if [ "$listed" -ne "$actual" ]; then
+            echo "::error::$actual file(s) in the bundle, $listed in .bundle-sha256; re-run the generator"
+            find . -type f ! -name '.bundle-sha256' | sort
+            exit 1
+          fi
+
+      - name: The rule catalogue parses and is non-empty
+        run: |
+          node -e '
+            const r = require("./skills/report-authoring/rules.json");
+            if (!Array.isArray(r.rules) || r.rules.length < 20) {
+              throw new Error(`rule catalogue is ${r.rules?.length} rules, expected at least 20`);
+            }
+            for (const rule of r.rules) {
+              for (const f of ["id", "severity", "check", "message"]) {
+                if (!rule[f]) throw new Error(`rule ${rule.id ?? "?"} is missing ${f}`);
+              }
+            }
+            console.log(`${r.rules.length} rules, all fields present`);
+          '
+
+      # Claude Code starts the checker from .mcp.json. The entry and the file it names move
+      # together or the installed plugin lists a server that cannot start.
+      - name: The checker's server entry names a file that exists
+        run: |
+          entry=$(jq -er '.mcpServers["zebra-bi-reports"].args[0]' .mcp.json)
+          test "$entry" = '${CLAUDE_PLUGIN_ROOT}/mcp/server.js' || { echo "::error::unexpected checker path: $entry"; exit 1; }
+          test -f mcp/server.js
+          test "$(jq -r '.mcpServers | keys | join(",")' mcp.json)" = "zebra-bi" \
+            || { echo "::error::mcp.json (ChatGPT, Codex, VS Code) carries the hosted server only"; exit 1; }
+
+  gates:
+    name: gates
+    runs-on: ubuntu-latest
+    # A skill body's size and a stated rule count are won once and lost silently, so they are
+    # gates. Data lives in perf/, logic in .github/scripts/. One Node version: these read files and
+    # compare numbers.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: The public-surface gate can still fail
+        run: node .github/scripts/check-public-surface.js --self-test
+
+      - name: The tenant-identifier gate can still fail
+        run: node .github/scripts/check-no-tenant-identifiers.js --self-test
+
+      # All five, then one exit code, so a reviewer sees every number in one log.
+      - name: Run every gate
+        run: |
+          set -u
+          failed=0
+          for g in check-context-budget.js check-rule-count.js check-rule-implementations.js check-public-surface.js check-no-tenant-identifiers.js; do
+            echo "──────── $g"
+            node ".github/scripts/$g" || failed=1
+          done
+          exit $failed

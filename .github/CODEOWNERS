@@ -1,0 +1,19 @@
+# Who is asked to review a change. The last matching line wins.
+# Everything not named below.
+*                             @rokpv-zbi @LukaLeskovsek-ZebraBI
+
+# Code that runs on a customer's machine, and the Power BI skills that drive it.
+/mcp/                         @dhaval-zebra @LukaLeskovsek-ZebraBI @rokpv-zbi
+/install.ps1                  @dhaval-zebra @LukaLeskovsek-ZebraBI @rokpv-zbi
+/skills/report-authoring/     @dhaval-zebra @LukaLeskovsek-ZebraBI
+/skills/report-publishing/    @dhaval-zebra @LukaLeskovsek-ZebraBI
+/skills/setup-doctor/         @dhaval-zebra @LukaLeskovsek-ZebraBI
+/scripts/                     @rokpv-zbi @LukaLeskovsek-ZebraBI
+
+# What builds, checks and releases the plugin, and what tells people how it handles their data.
+/.github/                     @rokpv-zbi @LukaLeskovsek-ZebraBI
+/.mcp.json                    @rokpv-zbi @LukaLeskovsek-ZebraBI
+/mcp.json                     @rokpv-zbi @LukaLeskovsek-ZebraBI
+/SECURITY.md                  @rokpv-zbi @LukaLeskovsek-ZebraBI
+/LICENSE*                     @rokpv-zbi @LukaLeskovsek-ZebraBI
+/NOTICE                       @rokpv-zbi @LukaLeskovsek-ZebraBI
