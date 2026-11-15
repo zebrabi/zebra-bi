@@ -215,6 +215,17 @@ function rpc(messages) {
     }
   });
 
+  // The checker writes nothing and connects nowhere (checker.yml enforces the second), and the
+  // labels are how a host learns that without asking the person before every call.
+  check("every advertised tool is labelled read-only, non-destructive and closed-world", () => {
+    for (const t of replies.find((x) => x.id === 2).result.tools) {
+      const a = t.annotations || {};
+      assert.strictEqual(a.readOnlyHint, true, `${t.name} is not labelled read-only`);
+      assert.strictEqual(a.destructiveHint, false, `${t.name} is not labelled non-destructive`);
+      assert.strictEqual(a.openWorldHint, false, `${t.name} is not labelled closed-world`);
+    }
+  });
+
   check("tools/call returns the finding over the wire", () => {
     const r = replies.find((x) => x.id === 3);
     const payload = JSON.parse(r.result.content[0].text);

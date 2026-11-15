@@ -783,6 +783,17 @@ const WRITERS = {
 /** Everything reachable through tools/call that is not validate_report. */
 const CALLABLE = { ...ENCODERS, ...WRITERS };
 
+/**
+ * Every tool here reads the project it is pointed at, or nothing, and returns text. The write_*
+ * tools return file content for the agent to write; none of them touches the disk or the network.
+ * Saying so lets a host skip its per-call confirmation, which matters to a person who does not
+ * know what a tool is. Every tool gets the same answer, so a new one cannot ship unlabelled; if
+ * one ever writes or connects, it needs its own annotations and this comment is wrong.
+ */
+const READ_ONLY = Object.freeze({
+  readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+});
+
 const TOOLS = [
   {
     name: "validate_report",
@@ -901,7 +912,7 @@ function handle(msg) {
     case "tools/list":
       return respond(id, { tools: [...TOOLS, ...Object.entries(CALLABLE).map(([name, e]) => ({
         name, description: e.description, inputSchema: e.schema,
-      }))] });
+      }))].map((t) => ({ ...t, annotations: READ_ONLY })) });
     case "tools/call": {
       const name = params && params.name;
       if (CALLABLE[name]) {
