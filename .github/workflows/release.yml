@@ -67,7 +67,7 @@ jobs:
       - name: CI passed on the commit
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUIRED: "validate|tests (3.11)|tests (3.13)"
+          REQUIRED: "validate|tests (3.11)|tests (3.13)|checker (node 20)|checker (node 22)|bundle|gates"
         run: |
           runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
             --jq '.check_runs[] | "\(.name)|\(.conclusion)"')
@@ -101,18 +101,26 @@ jobs:
 
       # One ZIP for ChatGPT and Codex (plugin.json) and the claude.ai upload (.claude-plugin), built from
       # the release commit before anything is pushed, so a broken one stops the release. It carries
-      # scripts/ because the story skills run them; every ${CLAUDE_PLUGIN_ROOT} path a skill names must
-      # be in it.
+      # scripts/ because the story skills run them, and mcp/ because .mcp.json starts the Power BI
+      # checker from it; every ${CLAUDE_PLUGIN_ROOT} path a skill or .mcp.json names must be in it.
+      # install.ps1 is the skills-folder route in INSTALL.md.
       - name: Plugin ZIP
         run: |
           zip="zebra-bi-v$VERSION.zip"
-          git archive --format=zip -o "$zip" "$RELEASE_SHA" -- .claude-plugin .mcp.json plugin.json mcp.json assets scripts ':(exclude)scripts/tests' skills README.md LICENSE NOTICE
+          git archive --format=zip -o "$zip" "$RELEASE_SHA" -- .claude-plugin .mcp.json plugin.json mcp.json assets scripts ':(exclude)scripts/tests' skills \
+            mcp ':(exclude)mcp/test-*.js' ':(exclude)mcp/fixtures' install.ps1 \
+            README.md POWER-BI.md INSTALL.md SECURITY.md LICENSE LICENSE-ZEBRA-AGENT-SKILLS NOTICE
           listed=$(unzip -Z1 "$zip")
           missing=0
-          for path in $(grep -rhoE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' skills | sed 's|^${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
+          for path in $(grep -rhoE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' skills .mcp.json | sed 's|^${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
             grep -qxF "$path" <<< "$listed" || { echo "missing from the ZIP: $path"; missing=1; }
           done
           test "$missing" -eq 0
+          # Every file the checker loads, so a new module cannot be left out of the ZIP.
+          for path in $(git ls-tree -r --name-only "$RELEASE_SHA" -- mcp | grep -vE '^mcp/(test-[^/]*\.js|fixtures/)'); do
+            grep -qxF "$path" <<< "$listed" || { echo "missing from the ZIP: $path"; exit 1; }
+          done
+          sha256sum "$zip" | tee "$zip.sha256"
 
       # Atomic, so develop, main and the tag move together or not at all. Without --force, a develop or
       # main that moved since the checks above is rejected rather than overwritten. The deploy key exists
@@ -135,4 +143,5 @@ jobs:
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "v$VERSION" "zebra-bi-v$VERSION.zip" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+        run: gh release create "v$VERSION" "zebra-bi-v$VERSION.zip" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+          --notes "SHA-256 of zebra-bi-v$VERSION.zip: $(cut -d' ' -f1 "zebra-bi-v$VERSION.zip.sha256")"

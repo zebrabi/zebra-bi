@@ -8,7 +8,7 @@ Open pull requests against `develop`, and leave `version` in the manifests alone
 
 ## Releasing
 
-Work merges into `develop`. `main` stays the default branch, so `/plugin marketplace add zebrabi/zebra-bi` and the Anthropic directory install released code, and it moves only on a release. To release, run the **Release** workflow (`release.yml`) from `develop` with the new version. It checks that the version is newer than the one on `develop`, that `v<version>` is not tagged yet, that `validate`, `tests (3.11)` and `tests (3.13)` passed on the `develop` commit, and that `main` has no commits `develop` lacks. It then commits the bump in both manifests on top of that commit (`Release v<version>`), checks that the plugin ZIP carries every file the skills name, and pushes the commit to `develop` and `main` with the `v<version>` tag in one atomic push. Last, it creates a GitHub release with the plugin ZIP.
+Work merges into `develop`. `main` stays the default branch, so `/plugin marketplace add zebrabi/zebra-bi` and the Anthropic directory install released code, and it moves only on a release. To release, run the **Release** workflow (`release.yml`) from `develop` with the new version. It checks that the version is newer than the one on `develop`, that `v<version>` is not tagged yet, that `validate`, `tests (3.11)`, `tests (3.13)`, `checker (node 20)`, `checker (node 22)`, `bundle` and `gates` passed on the `develop` commit, and that `main` has no commits `develop` lacks. It then commits the bump in both manifests on top of that commit (`Release v<version>`), checks that the plugin ZIP carries every file the skills and `.mcp.json` name and every file of the checker, and pushes the commit to `develop` and `main` with the `v<version>` tag in one atomic push. Last, it creates a GitHub release with the plugin ZIP.
 
 The push uses `RELEASE_DEPLOY_KEY`, a write deploy key held by the `release` environment, which accepts only `develop` and waits for an admin's approval. `GITHUB_TOKEN` cannot do it: it may not push commits that change `.github/workflows/`, the rulesets do not let it through, and its pushes start no CI. Three rulesets back this up. `main` (update, force push, deletion) and `Release tags` (`v*`) let through only admins and deploy keys, which GitHub does not tell apart, so the repository must hold no other write deploy key. `develop` requires a reviewed pull request with those three checks, so no one can push a changed workflow to `develop` and run it with the key; deploy keys bypass it only so the release can push its bump commit.
 
@@ -22,9 +22,24 @@ uvx check-jsonschema@0.38.2 --schemafile https://agent-plugins.org/schemas/1.0.0
 uvx check-jsonschema@0.38.2 --schemafile https://agent-plugins.org/schemas/1.0.0/mcp.schema.json mcp.json
 for skill in skills/*/; do uvx --from skills-ref==0.1.1 agentskills validate "$skill"; done
 python3 -I -m unittest discover -s scripts/tests
+(cd mcp && for t in test-*.js; do node "$t"; done)
+(cd skills/report-authoring && sha256sum -c .bundle-sha256)
+for g in .github/scripts/check-*.js; do node "$g"; done
 ```
 
-The last line needs Chrome, Edge or Chromium for the two PDF build tests; without one they are skipped.
+The Python line needs Chrome, Edge or Chromium for the two PDF build tests; without one they are skipped. The last three lines are the Power BI part and need Node 20 or 22, with nothing to install.
+
+## Power BI report authoring
+
+The Power BI part moved here from `zebrabi/zebra-bi-agentic` at its 0.3.2. It is three skills (`report-authoring`, `report-publishing`, `setup-doctor`), the checker in `mcp/`, and the gates in `.github/scripts/` with their data in `perf/`. [`AGENTS.md`](AGENTS.md) is its full contributor contract; read it before changing any of those paths. The rules that differ from the rest of the repository:
+
+- **`skills/report-authoring/` is generated.** It is build output from a private Zebra BI repository, where the disclosure checks run. A pull request cannot change it: the next build reverts the edit. Open an issue and the source changes. `.bundle-sha256` and the `bundle` job fail an edit that skips the checksum; an edit that updates the checksum too passes CI, and only review catches it. A rebuilt bundle and its `.bundle-sha256` are one commit.
+- **The checker has no dependencies and stays offline.** No `package.json`, no lockfile, no `node_modules`, and no network or process module in `mcp/`. The `checker` jobs fail on each. It has to run on a locked-down machine, and `SECURITY.md` states that it makes no network calls.
+- **A rule is a sentence and a function.** The sentence is in `rules.json` (generated), the function in `mcp/checkers.js` (authored here), and `check-rule-implementations.js` fails when they disagree. Every rule needs a fixture where it fires and an otherwise identical one where it stays silent. A rule that fires on a correct report is a defect.
+- **Stated numbers are pinned.** The rule count is stated in `POWER-BI.md`, `CHANGELOG.md` and the setup skill, and `check-rule-count.js` fails when one drifts. Skill sizes are budgeted in `perf/context-budget.json`: every markdown file under `skills/` has an entry, and a raised ceiling is argued in its history.
+- **Two server names.** `.mcp.json` lists the hosted server as `zebra-bi` and the checker as `zebra-bi-reports`. Root `mcp.json`, which ChatGPT, Codex and VS Code read, carries the hosted server only: the OpenAI directory connects one server per plugin, and each host names the plugin root differently. The `bundle` job checks both.
+- **Licence.** These paths are under the Zebra BI Agent Skills Licence (`LICENSE-ZEBRA-AGENT-SKILLS`), not Apache-2.0. Section 5 of that licence sets the terms of a contribution to them.
+- **Test the built bundle from somewhere else.** A skill on the path auto-activates, so a run inside a checkout cannot tell which copy answered. Copy `skills/` and `mcp/` to a bare directory and test there.
 
 ## Data stories
 

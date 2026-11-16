@@ -53,7 +53,7 @@ Record each answer under `confirmed` with today's date. Do not ask about anythin
 
 ## 4. Save
 
-Claude Code: write `.zebra/sources/<name>.json` (create the folder). Names are lowercase with dashes. Never store tokens, passwords, cookies or signed download URLs in a manifest.
+Claude Code: write `.zebra/sources/<name>.json` (create the folder). When the folder has no `.gitignore`, write `.zebra/sources/.gitignore` with the single line `*`, so git ignores the manifests and the data copies beside them, and say so in one line the first time. Leave an existing `.gitignore` there as it is: a team that shares manifests through a repository has edited or emptied it on purpose. Names are lowercase with dashes. Never store tokens, passwords, cookies or signed download URLs in a manifest.
 
 Claude chat: there is no file system. Show the manifest as a JSON block and suggest keeping it in the Project's knowledge, so the next conversation can start from it.
 

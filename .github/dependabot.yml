@@ -1,0 +1,18 @@
+# The workflows pin every action to a commit, so nothing updates them unless something proposes
+# the new commit. This does, once a week, in one pull request against develop.
+# The plugin has no package dependencies: the checker is plain Node.js and the scripts use the
+# Python standard library, so actions are the only ecosystem here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
