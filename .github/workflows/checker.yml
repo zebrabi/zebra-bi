@@ -161,6 +161,15 @@ jobs:
         with:
           node-version: "22"
 
+      # The Release workflow runs only when someone starts a release, so a workflow file GitHub
+      # cannot read shows up nowhere on a pull request. This one did, on 16 Nov: an unquoted
+      # colon in a run line. Every workflow is parsed here instead.
+      - name: Every workflow file parses
+        run: |
+          for f in .github/workflows/*.yml .github/dependabot.yml; do
+            ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$f" || { echo "::error file=$f::GitHub cannot read $f"; exit 1; }
+          done
+
       - name: The public-surface gate can still fail
         run: node .github/scripts/check-public-surface.js --self-test
 
