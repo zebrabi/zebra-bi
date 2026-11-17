@@ -229,6 +229,13 @@ check("a numeric theme or resource type is caught; words and absent types are NO
     "fired on an absent type (not measured)");
 });
 
+check("an absent type on a resource package or item is NOT flagged (not measured)", () => {
+  assert.ok(!reportCodes((r) => { r.resourcePackages = [{ name: "SharedResources", items: [] }]; })
+    .has("report-type-is-a-number"), "fired on a package with no type");
+  assert.ok(!reportCodes((r) => { r.resourcePackages = [{ name: "SharedResources", type: "SharedResources",
+    items: [{ name: "a.json", path: "BaseThemes/a.json" }] }]; }).has("report-type-is-a-number"), "fired on an item with no type");
+});
+
 check("layoutOptimization: a number is caught in every schema; the 1.0.0 string and an absent key are NOT", () => {
   assert.ok(reportCodes((r) => { r.layoutOptimization = 0; }).has("report-layout-optimization-invalid"), "missed 0 under 3.0.0");
   assert.ok(reportCodes((r) => { r.$schema = REPORT_SCHEMA("1.0.0"); r.layoutOptimization = 0; })

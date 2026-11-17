@@ -132,6 +132,31 @@ function themesOf(f) {
     .map((k) => [k, tc[k]]);
 }
 
+/**
+ * The `source =` property of every partition in one model source, as { i, indent, expr } with `i`
+ * the 0-based line, `indent` in columns and `expr` the text after `=` on that line of `lines`
+ * (the raw lines, or `daxOnly` lines for a rule that reads the expression).
+ *
+ * Found through the tree, not by a line regex: `source = ...` is also an ordinary step name inside
+ * an M `let` body, in a partition or an `expression`, and those lines are expression text, not the
+ * partition's property. `classifyLines().inExpr` cannot separate them either, because
+ * `partition X = m` is itself an assignment, so the real `source =` line is `inExpr` too.
+ */
+function partitionSources(src, lines) {
+  const out = [];
+  if (!src.tree) return out;
+  for (const n of src.tree.nodes) {
+    if (n.type !== "partition") continue;
+    for (const pr of n.props) {
+      if (pr.delim !== "=" || pr.name.toLowerCase() !== "source") continue;
+      const i = pr.line - 1;
+      const m = /^[\t ]*source\s*=\s*(.*)$/i.exec(lines[i] || "");
+      if (m) out.push({ i, indent: T.indentOf(lines[i]), expr: m[1] });
+    }
+  }
+  return out;
+}
+
 /** A short rendering of a found value for a finding's detail: absent, number 0, string "5.59". */
 function describeValue(v) {
   if (v === undefined) return "no value";
@@ -251,10 +276,10 @@ const checkers = {
     const packages = Array.isArray(r.parsed.resourcePackages) ? r.parsed.resourcePackages : [];
     packages.forEach((pkg, i) => {
       if (!pkg || typeof pkg !== "object") return;
-      if (typeof pkg.type !== "string") out.push({ location: `definition/report.json:resourcePackages[${i}].type`,
+      if (pkg.type !== undefined && typeof pkg.type !== "string") out.push({ location: `definition/report.json:resourcePackages[${i}].type`,
         detail: `found ${describeValue(pkg.type)}; must be a string such as "SharedResources"` });
       (Array.isArray(pkg.items) ? pkg.items : []).forEach((it, j) => {
-        if (it && typeof it === "object" && typeof it.type !== "string") {
+        if (it && typeof it === "object" && it.type !== undefined && typeof it.type !== "string") {
           out.push({ location: `definition/report.json:resourcePackages[${i}].items[${j}].type`,
             detail: `found ${describeValue(it.type)}; must be a string such as "Image"` });
         }
@@ -461,24 +486,22 @@ const checkers = {
    * `{` outside string literals and comments); (b) a bare `source =` whose next line is not
    * indented deeper, so there is no body at all. A balanced one-line expression and a fenced ```
    * body are normal forms and stay silent, as does every M partition that opens with a bare
-   * `source =`.
+   * `source =`. Only a partition's own `source` property is judged; a `source = ...` step inside
+   * an M body is expression text (see `partitionSources`).
    */
   "partition-source-must-start-below-the-equals-line"(p) {
     if (!p.model || !p.model.present) return [];
     const out = [];
     for (const src of p.model.sources || []) {
       const lines = src.text.split(/\r?\n/);
-      for (let i = 0; i < lines.length; i++) {
-        const m = /^([\t ]*)source\s*=\s*(.*)$/.exec(lines[i]);
-        if (!m) continue;
-        const indent = m[1].replace(/\t/g, "    ").length;
-        const expr = m[2].trim();
+      for (const { i, indent, expr: rawExpr } of partitionSources(src, lines)) {
+        const expr = rawExpr.trim();
         if (expr.startsWith("```")) continue;
         let n = i + 1;
         while (n < lines.length && !lines[n].trim()) n++;
         const next = lines[n];
         if (next === undefined) continue;
-        const nextIndent = (/^[\t ]*/.exec(next)[0]).replace(/\t/g, "    ").length;
+        const nextIndent = T.indentOf(next);
         if (expr === "") {
           if (nextIndent <= indent) out.push({ location: `${src.rel}:${i + 1}`,
             detail: "`source =` has no expression indented below it" });
@@ -531,51 +554,44 @@ const checkers = {
    * DATE among the allowed functions) but measured otherwise on 17 Nov 2026: with the columns bound
    * correctly, the model opens, the calculated table errors (red triangle) and the page is blank;
    * the same table with "2025-01-01" strings renders. Severity `blank` for that reason: nothing
-   * stops the project opening. Fires once per DATATABLE, at the first line with a call, and looks only
-   * inside the row braces, so a DATE( applied OUTSIDE the DATATABLE (ADDCOLUMNS over it, the form the
-   * skill teaches) is silent. `BLANK()` is documented as a constant and was not measured; it is
-   * not flagged.
+   * stops the project opening. Fires once per DATATABLE, at the first row line with a DATE call, and
+   * looks only inside the row braces, so a DATE( applied OUTSIDE the DATATABLE (ADDCOLUMNS over it,
+   * the form the skill teaches) is silent.
+   *
+   * Only DATE is flagged because only DATE was measured. Other calls in a row (TRUE(), FALSE(),
+   * BLANK(), TIME(), ...) were not put through a cold open and are deliberately not flagged; do not
+   * extend the list from memory. Reads the partition's `source` only, through `daxOnly`, so a
+   * commented-out DATATABLE or a `// note(1)` after a row is not code.
    */
   "datatable-rows-must-be-constants"(p) {
     if (!p.model || !p.model.present) return [];
     const out = [];
     for (const src of p.model.sources || []) {
-      const lines = src.text.split(/\r?\n/);
-      for (let i = 0; i < lines.length; i++) {
-        const m = /^([\t ]*)source\s*=\s*(.*)$/.exec(lines[i]);
-        if (!m) continue;
-        const indent = m[1].replace(/\t/g, "    ").length;
-        let text = m[2], j = i + 1;
-        for (; j < lines.length; j++) {
+      const lines = daxOnly(src.text);
+      for (const { i, indent, expr } of partitionSources(src, lines)) {
+        let text = expr;
+        for (let j = i + 1; j < lines.length; j++) {
           if (lines[j].trim() === "") { text += "\n"; continue; }
-          if ((/^[\t ]*/.exec(lines[j])[0]).replace(/\t/g, "    ").length <= indent) break;
+          if (T.indentOf(lines[j]) <= indent) break;
           text += "\n" + lines[j];
         }
         const lineOf = (off) => i + 1 + (text.slice(0, off).match(/\n/g) || []).length;
         const re = /\bDATATABLE\s*\(/gi;
         let dm;
         while ((dm = re.exec(text))) {
-          let k = dm.index + dm[0].length, depth = 1, inStr = false, rowsAt = -1;
+          // daxOnly has blanked string contents, so every bracket left is code.
+          let k = dm.index + dm[0].length, depth = 1, rowsAt = -1;
           for (; k < text.length && depth > 0; k++) {
             const ch = text[k];
-            if (ch === '"') { inStr = !inStr; continue; }
-            if (inStr) continue;
-            if (ch === "{" && rowsAt < 0) { rowsAt = k; }
+            if (ch === "{" && rowsAt < 0) rowsAt = k;
             if (ch === "(") depth++; else if (ch === ")") depth--;
           }
           if (rowsAt < 0) continue;
-          let q = false, hit = -1, name = "";
-          for (let r = rowsAt; r < k; r++) {
-            const ch = text[r];
-            if (ch === '"') { q = !q; continue; }
-            if (q) continue;
-            const cm = /^([A-Za-z_][A-Za-z0-9_.]*)\s*\(/.exec(text.slice(r));
-            if (cm && (r === 0 || !/[A-Za-z0-9_]/.test(text[r - 1])) && cm[1].toUpperCase() !== "BLANK") {
-              hit = r; name = cm[1]; break;
-            }
-          }
-          if (hit >= 0) out.push({ location: `${src.rel}:${lineOf(hit)}`,
-            detail: `a DATATABLE row calls ${name}(...); rows take constants only. Write dates as strings such as "2025-01-31" in a DATETIME column, or build them outside the DATATABLE with ADDCOLUMNS ( ..., "Date", DATE ( [Year], [MonthNo], 1 ) )` });
+          const call = /(?<![\w.])DATE\s*\(/gi;
+          call.lastIndex = rowsAt;
+          const cm = call.exec(text);
+          if (cm && cm.index < k) out.push({ location: `${src.rel}:${lineOf(cm.index)}`,
+            detail: `a DATATABLE row calls DATE(...); rows take constants only. Write dates as strings such as "2025-01-31" in a DATETIME column, or build them outside the DATATABLE with ADDCOLUMNS ( ..., "Date", DATE ( [Year], [MonthNo], 1 ) )` });
         }
       }
     }
@@ -584,16 +600,19 @@ const checkers = {
 
   /**
    * ---------------------------------------------------------------------------------------------
-   * THE THREE DAX RULES. Read this before adding a fourth.
+   * THE FOUR DAX RULES. Read this before adding a fifth.
    *
    * Everything from the first `=` onward is DAX, and this file has always treated it as opaque on
    * purpose: judging an expression needs the model's names and types, which no file check has.
-   * These three are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
+   * These four are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
    * visible in the text alone. That matters for false positives: an expression that trips one of
    * these cannot work, so the rule cannot fire on a correct report -- which is the bar AGENTS.md
    * sets and the reason the wider "is this DAX sensible" rules were not written.
    *
-   * All three were measured on Desktop 2.157 against a live model, with controls.
+   * The fourth is `datatable-rows-must-be-constants`, above: it reads a partition's `source`
+   * through `daxOnly()` and flags only DATE in a row, the one call measured (A/B cold open).
+   *
+   * The three below were measured on Desktop 2.157 against a live model, with controls.
    * See feedback/2026-09-05-dax-layer-measured.md.
    */
 

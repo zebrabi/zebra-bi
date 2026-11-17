@@ -227,13 +227,15 @@ grep, A9 has not run.
 ### Rules that read INSIDE a DAX expression — the bar is higher
 
 Everything after the first `=` is DAX, and the validator treats it as opaque on purpose: judging an
-expression needs the model's names and types, which no file check has. Three rules are the exception
+expression needs the model's names and types, which no file check has. Four rules are the exception
 (`dax-removefilters-as-table-expression`, `dax-var-named-after-a-function`,
-`dax-unquoted-calculations-table`). Before adding a fourth:
+`dax-unquoted-calculations-table`, `tmdl-datatable-row-calls-a-function`). The fourth reads a
+partition's `source` through `daxOnly()` and flags only `DATE` in a row, the one call measured.
+Before adding a fifth:
 
 - **It must be a hard parse or evaluation error**, not a style or plausibility judgement. An
   expression that trips it cannot work, so the rule cannot fire on a correct report. That property is
-  what makes these three safe; a "this DAX looks wrong" rule has no such guarantee.
+  what makes these four safe; a "this DAX looks wrong" rule has no such guarantee.
 - **Read through `daxOnly()`.** It blanks `///` descriptions, `//` and `--` comments and string
   contents. Matching DAX-shaped text anywhere in a `.tmdl` file is how the `//` rule once produced
   **207 false positives across 7 of the 20 shipped templates**.

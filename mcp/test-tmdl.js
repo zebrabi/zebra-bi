@@ -892,6 +892,19 @@ check("the corrected multi-line form, a one-line expression, an M partition and 
     `fired on normal form #${i + 1}`));
 });
 
+// A lowercase `source = ...` M step inside a `let` body is expression text, not the partition's
+// `source` property, whether the body belongs to a partition or to an `expression`.
+check("a multi-line `source = ...` step inside an M body (partition or expression) is NOT flagged", () => {
+  const inPartition = "table T\n\tpartition T = m\n\t\tmode: import\n\t\tsource =\n\t\t\t\tlet\n"
+    + "\t\t\t\t\tsource = Table.TransformColumnTypes(raw,{\n\t\t\t\t\t\t{\"A\", type text}})\n\t\t\t\tin\n\t\t\t\t\tsource\n";
+  assert.ok(!codes(project({ extraTmdl: inPartition })).has("tmdl-partition-source-on-equals-line"),
+    "fired on an M step inside a partition's let body");
+  const inExpression = "expression src =\n\t\tlet\n\t\t\tsource = Json.Document(Web.Contents(\"https://x\",[\n"
+    + "\t\t\t\tHeaders=[]]))\n\t\tin\n\t\t\tsource\n";
+  assert.ok(!codes(project({ extraTmdl: inExpression })).has("tmdl-partition-source-on-equals-line"),
+    "fired on an M step inside an expression body");
+});
+
 // --- model.tmdl ref lines start at column 0 (17 Nov 2026) --------------------------------------
 // Desktop: "Unexpected line type: ReferenceObject! Document - './model'. Line - '\tref table Financials'".
 // Controls are the shape a project that Desktop opened writes: properties indented, refs at column 0.
@@ -947,6 +960,16 @@ check("constants, strings, negatives, BLANK(), a DATE outside the DATATABLE and 
   rowsOk.forEach((r, n) => assert.ok(!dtCodes(DT_HEAD + r).has("tmdl-datatable-row-calls-a-function"), "fired on control #" + (n + 1)));
   const outside = "\t\tsource =\n\t\t\tADDCOLUMNS (\n\t\t\t\tDATATABLE ( \"Year\", INTEGER, \"MonthNo\", INTEGER, {\n\t\t\t\t\t{2025,1},\n\t\t\t\t\t{2025,2}\n\t\t\t\t} ),\n\t\t\t\t\"Date\", DATE ( [Year], [MonthNo], 1 )\n\t\t\t)\n";
   assert.ok(!dtCodes(outside).has("tmdl-datatable-row-calls-a-function"), "fired on a DATE applied outside the DATATABLE");
+});
+
+// Only DATE was measured; other calls in a row are not judged. Comments are not code.
+check("TRUE()/FALSE() rows, a commented-out DATATABLE and a `//` note after a row are NOT flagged", () => {
+  const cases = [
+    "\t\tsource =\n\t\t\tDATATABLE(\"B\", BOOLEAN, {\n\t\t\t\t{TRUE()},\n\t\t\t\t{FALSE()}\n\t\t\t})\n",
+    "\t\tsource =\n\t\t\t// DATATABLE(\"x\", STRING, {{FORMAT(1)}})\n\t\t\tROW(\"a\",1)\n",
+    "\t\tsource =\n\t\t\tDATATABLE(\"N\", STRING, {\n\t\t\t\t{\"a\"} // see note(1)\n\t\t\t})\n",
+  ];
+  cases.forEach((c, n) => assert.ok(!dtCodes(c).has("tmdl-datatable-row-calls-a-function"), "fired on case #" + (n + 1)));
 });
 
 // --- cultures/ is a FACT, like compatibilityLevel -----------------------------------------
