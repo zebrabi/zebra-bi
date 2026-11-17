@@ -12,6 +12,20 @@ This file starts at the first public release. Versions before it exist in the gi
 never published — the repository was private, with no tags and no releases — so listing them as
 though they shipped would misrepresent what anyone could have installed.
 
+## Unreleased
+
+- Eight new checks for faults that make Power BI Desktop refuse a project (or open an empty Page 1 behind
+  an error dialog) while every earlier check passed it. They read what the catalogue never read: the
+  `.pbip` artifacts list, `definition.pbism`, the shape of `report.json`, and the first line of a
+  TMDL partition. `definition.pbism` below version 4.0 beside a TMDL folder (Desktop looks for
+  `model.bim`); a `model` or `semanticModel` entry in the `.pbip` artifacts; a string
+  `reportVersionAtImport` where the declared report schema wants an object; a numeric `type` in a theme
+  or resource entry; `layoutOptimization` as a number or where the schema does not declare it; and a
+  multi-line partition `source =` that starts its expression on the `=` line; an indented `ref table` line in `model.tmdl`; and a function call such as `DATE()` in a DATATABLE row.
+- A new reference, `references/project-files.md`, holds the five project files the writers do not write (`.pbip`, `definition.pbir`, `report.json`, `definition.pbism`, `definition/model.tmdl`), each with the error Desktop gives when it is wrong, plus the TMDL notes (`source =` on its own line, `ref` lines at column 0, DATATABLE constants only). The skill points to it from "Where things live" and from the pre-flight section.
+- Each check was measured against Microsoft's published JSON schemas and against projects Power BI
+  Desktop opens, and stays silent on all of them.
+
 ## 0.3.2 — 2026-11-04
 
 - The hand-over now leads with the one step a changed model needs before it is opened again:
@@ -87,7 +101,7 @@ thing you can do is tell us when it does not.
 | **`setup-doctor`** | Ten checks on the machine, each with a fix. Two are about your model — scenario measures and a marked date table — and they are the ones that decide whether the report comes out right |
 | **`report-authoring`** | Planning, data binding, IBCS variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates |
 | **`report-publishing`** | The Zebra-specific parts of publishing. Microsoft's own skill does the upload; this covers the visual-track choice and the refresh without which the report arrives empty |
-| **The checker** | 59 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
+| **The checker** | 67 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
 | **18 MCP tools** | Profiling, page proposal, the encoders for the property blobs that cannot be written by hand, and the report writers |
 
 Ten on-demand reference layers sit behind the authoring skill and load only when they are needed:

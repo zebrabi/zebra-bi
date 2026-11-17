@@ -114,6 +114,33 @@ function daxOnly(text) {
   });
 }
 
+// --- helpers for the project-file shape rules (added 17 Nov 2026) --------------------------------
+
+/** Major version of the report.json schema the file declares, or null when none is readable. */
+function reportSchemaMajor(f) {
+  const url = f && !f.parseError && f.parsed && typeof f.parsed === "object" ? f.parsed.$schema : null;
+  const m = typeof url === "string"
+    && /\/item\/report\/definition\/report\/(\d+)\.\d+\.\d+\/schema\.json$/.exec(url);
+  return m ? Number(m[1]) : null;
+}
+
+/** [key, object] for each of themeCollection.baseTheme and .customTheme that is an object. */
+function themesOf(f) {
+  const tc = f && !f.parseError && f.parsed && typeof f.parsed === "object" ? f.parsed.themeCollection : null;
+  if (!tc || typeof tc !== "object") return [];
+  return ["baseTheme", "customTheme"].filter((k) => tc[k] && typeof tc[k] === "object" && !Array.isArray(tc[k]))
+    .map((k) => [k, tc[k]]);
+}
+
+/** A short rendering of a found value for a finding's detail: absent, number 0, string "5.59". */
+function describeValue(v) {
+  if (v === undefined) return "no value";
+  if (v === null) return "null";
+  if (typeof v === "object") return Array.isArray(v) ? "an array" : "an object";
+  return `${typeof v} ${JSON.stringify(v)}`;
+}
+
+
 const checkers = {
   // --- will not open ------------------------------------------------------------------------
 
@@ -126,6 +153,139 @@ const checkers = {
       if (!ok.test(f.parsed?.$schema ?? "")) out.push({ location: `${f.rel}:$schema` });
     }
     return out;
+  },
+
+  // --- project-file shape: faults Desktop refuses that the catalogue never read -------------------
+  //
+  // Added 17 Nov 2026 from seven Microsoft 365 Copilot builds that this checker passed with zero
+  // findings and Power BI Desktop then refused or half-opened. Every shape below is checked against
+  // the Microsoft JSON schema the file declares in `$schema` AND against projects Desktop opens
+  // (Desktop-saved templates and a Copilot-built project that Desktop opened), never against memory. Severity
+  // is `wont-open` for each: the project does not open, or opens on an empty "Page 1" behind an
+  // error dialog.
+
+  /**
+   * `definition.pbism` says `"version": "1.0"` beside a TMDL `definition/` folder. Desktop then
+   * assumes the old model format and looks for `model.bim`. Nothing in the TMDL is wrong, so no
+   * TMDL rule can see it. Only a version that PARSES to a major below 4 is a fault: an absent or
+   * unreadable version has not been through a cold open and is not claimed here.
+   */
+  "pbism-version-must-be-4-for-tmdl-model"(p) {
+    const out = [];
+    for (const f of p.pbismFiles || []) {
+      if (f.parseError || !f.hasTmdl) continue;
+      const v = f.parsed?.version;
+      if (typeof v !== "string" && typeof v !== "number") continue;
+      const m = /^(\d+)(?:\.(\d+))?/.exec(String(v).trim());
+      if (m && Number(m[1]) < 4) {
+        out.push({ location: `${f.rel}:version`,
+          detail: `version is ${JSON.stringify(v)}; a TMDL definition/ folder needs 4.0 or higher (4.2 opens)` });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * The .pbip schema allows only `{ "report": { "path": ... } }` in `artifacts`. A `model` or
+   * `semanticModel` entry is "Property 'model' has not been defined and the schema does not allow
+   * additional properties", and the project is refused before anything is read.
+   */
+  "pbip-artifacts-must-each-be-a-report"(p) {
+    const out = [];
+    for (const f of p.pbipFiles || []) {
+      if (f.parseError || !Array.isArray(f.parsed?.artifacts)) continue;
+      f.parsed.artifacts.forEach((a, i) => {
+        const keys = a && typeof a === "object" && !Array.isArray(a) ? Object.keys(a) : null;
+        if (keys && keys.length === 1 && keys[0] === "report") return;
+        out.push({ location: `${f.rel}:artifacts[${i}]`,
+          detail: keys ? `entry holds ${keys.map((k) => `'${k}'`).join(", ") || "nothing"}; only 'report' is allowed`
+                       : "entry is not an object" });
+      });
+    }
+    return out;
+  },
+
+  /**
+   * `report.json` is validated against the schema it declares, and the schema decides the shape of
+   * `reportVersionAtImport`: report/3.0.0 and later take an object of three version strings,
+   * report/1.0.0 and 2.0.0 take a string. Both directions are faults. A report with no readable
+   * `$schema` is not judged (nothing says which shape applies).
+   */
+  "theme-version-at-import-must-match-report-schema"(p) {
+    const r = p.files.get("definition/report.json");
+    const major = reportSchemaMajor(r);
+    if (major === null) return [];
+    const out = [];
+    for (const [key, theme] of themesOf(r)) {
+      const v = theme.reportVersionAtImport;
+      const loc = `definition/report.json:themeCollection.${key}.reportVersionAtImport`;
+      if (major >= 3) {
+        const ok = v && typeof v === "object" && !Array.isArray(v)
+          && ["visual", "page", "report"].every((k) => typeof v[k] === "string" && /^\d+\.\d+\.\d+$/.test(v[k]));
+        if (!ok) out.push({ location: loc, detail: `schema ${major}.x needs an object with visual, page and report `
+          + `version strings (for example {"visual":"2.11.0","page":"2.1.0","report":"3.0.0"}); found ${describeValue(v)}` });
+      } else if (typeof v !== "string") {
+        out.push({ location: loc, detail: `schema ${major}.x needs a string; found ${describeValue(v)}` });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * Every `type` that names a resource kind is a word, never a number. `"type": 2` (the old enum
+   * value) on a theme is rejected by every report schema version. Themes are held to the two
+   * documented values; resource packages and their items only to "is a string", because their word
+   * lists differ between schema versions and a newer Desktop may add one. Only a PRESENT value is
+   * judged: an absent `type` has not been through a cold open and is not claimed.
+   */
+  "report-type-fields-must-be-declared-strings"(p) {
+    const r = p.files.get("definition/report.json");
+    if (!r || r.parseError || !r.parsed || typeof r.parsed !== "object") return [];
+    const out = [];
+    for (const [key, theme] of themesOf(r)) {
+      if (theme.type !== undefined && theme.type !== "SharedResources" && theme.type !== "RegisteredResources") {
+        out.push({ location: `definition/report.json:themeCollection.${key}.type`,
+          detail: `found ${describeValue(theme.type)}; must be "SharedResources" or "RegisteredResources"` });
+      }
+    }
+    const packages = Array.isArray(r.parsed.resourcePackages) ? r.parsed.resourcePackages : [];
+    packages.forEach((pkg, i) => {
+      if (!pkg || typeof pkg !== "object") return;
+      if (typeof pkg.type !== "string") out.push({ location: `definition/report.json:resourcePackages[${i}].type`,
+        detail: `found ${describeValue(pkg.type)}; must be a string such as "SharedResources"` });
+      (Array.isArray(pkg.items) ? pkg.items : []).forEach((it, j) => {
+        if (it && typeof it === "object" && typeof it.type !== "string") {
+          out.push({ location: `definition/report.json:resourcePackages[${i}].items[${j}].type`,
+            detail: `found ${describeValue(it.type)}; must be a string such as "Image"` });
+        }
+      });
+    });
+    return out;
+  },
+
+  /**
+   * `layoutOptimization` exists only in report/1.0.0, where it is the string "None" or
+   * "PhonePortrait". Anywhere else it is not a declared property, and a number (`0`) is wrong in
+   * every version. Fired only when the key is PRESENT: a 1.0.0 report without it was not cold
+   * opened here and is not claimed.
+   */
+  "report-layout-optimization-must-be-a-declared-string"(p) {
+    const r = p.files.get("definition/report.json");
+    if (!r || r.parseError || !r.parsed || typeof r.parsed !== "object") return [];
+    if (!Object.prototype.hasOwnProperty.call(r.parsed, "layoutOptimization")) return [];
+    const v = r.parsed.layoutOptimization;
+    const major = reportSchemaMajor(r);
+    const loc = "definition/report.json:layoutOptimization";
+    const undeclared = major !== null && major >= 2;
+    if (v !== "None" && v !== "PhonePortrait") {
+      return [{ location: loc, detail: `found ${describeValue(v)}; ${undeclared
+        ? `report schema ${major}.x does not declare it at all, delete the line`
+        : 'the only legal values are "None" and "PhonePortrait"'}` }];
+    }
+    if (undeclared) {
+      return [{ location: loc, detail: `report schema ${major}.x does not declare layoutOptimization, delete the line` }];
+    }
+    return [];
   },
 
   /** A BOM anywhere makes Desktop reject the whole definition, not just that file. */
@@ -286,6 +446,137 @@ const checkers = {
         const varWithoutReturn = /^VAR\s/i.test(expr) && !/\bRETURN[ \t]+\S/i.test(code);
         if (depth <= 0 && !varWithoutReturn) continue;
         out.push({ location: `${rel}:${i + 1}:${m[2] || m[3]}` });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * A multi-line expression in a TMDL partition starts BELOW `source =`, indented deeper, with the
+   * `=` line bare. `source = DATATABLE ( ... {` with the rows underneath makes the first row a line
+   * type TMDL has no name for ("InvalidLineType ... Line - '{"Revenue",1},'"), so the whole model
+   * is refused. Same fault as the measure rule above, in the property that rule does not read.
+   *
+   * Two forms: (a) an expression still open at the end of the `source =` line (an unbalanced `(` or
+   * `{` outside string literals and comments); (b) a bare `source =` whose next line is not
+   * indented deeper, so there is no body at all. A balanced one-line expression and a fenced ```
+   * body are normal forms and stay silent, as does every M partition that opens with a bare
+   * `source =`.
+   */
+  "partition-source-must-start-below-the-equals-line"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      const lines = src.text.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const m = /^([\t ]*)source\s*=\s*(.*)$/.exec(lines[i]);
+        if (!m) continue;
+        const indent = m[1].replace(/\t/g, "    ").length;
+        const expr = m[2].trim();
+        if (expr.startsWith("```")) continue;
+        let n = i + 1;
+        while (n < lines.length && !lines[n].trim()) n++;
+        const next = lines[n];
+        if (next === undefined) continue;
+        const nextIndent = (/^[\t ]*/.exec(next)[0]).replace(/\t/g, "    ").length;
+        if (expr === "") {
+          if (nextIndent <= indent) out.push({ location: `${src.rel}:${i + 1}`,
+            detail: "`source =` has no expression indented below it" });
+          continue;
+        }
+        let depth = 0, inString = false;
+        for (let k = 0; k < expr.length; k++) {
+          const ch = expr[k];
+          if (ch === '"') { inString = !inString; continue; }
+          if (inString) continue;
+          if (ch === "'") { const e = expr.indexOf("'", k + 1); if (e < 0) break; k = e; continue; }
+          if ((ch === "-" && expr[k + 1] === "-") || (ch === "/" && expr[k + 1] === "/")) break;
+          if (ch === "(" || ch === "{") depth++;
+          else if (ch === ")" || ch === "}") depth--;
+        }
+        if (depth > 0) {
+          out.push({ location: `${src.rel}:${i + 1}`,
+            detail: "the expression opens on the `source =` line and continues below it; leave the `=` line bare "
+              + "and indent the whole expression underneath" });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * In model.tmdl the `ref table X` / `ref cultureInfo X` / `ref role X` lines are top-level
+   * declarations: the model object's own properties are indented, the refs are NOT. A ref indented
+   * under `model` is read as a child line the model does not have, and Desktop refuses the whole
+   * model: "Unexpected line type: ReferenceObject! Document - './model'. Line Number - 4.
+   * Line - '\tref table Financials'" (17 Nov cold open, FinancePnL). Only a `ref` line with leading
+   * whitespace in a file named model.tmdl is a fault; every Desktop-saved model.tmdl in the corpus
+   * writes them at column 0.
+   */
+  "tmdl-ref-lines-must-start-at-column-0"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      if (!/(^|\/)model\.tmdl$/i.test(src.rel)) continue;
+      src.text.split(/\r?\n/).forEach((l, i) => {
+        if (/^[\t ]+ref\s+\S/.test(l)) out.push({ location: `${src.rel}:${i + 1}`,
+          detail: `${JSON.stringify(l.trim())} is indented; a ref line starts at column 0` });
+      });
+    }
+    return out;
+  },
+
+  /**
+   * A DATATABLE row holds constants. `DATE(2025,1,1)` in a row looks legal (Microsoft's page lists
+   * DATE among the allowed functions) but measured otherwise on 17 Nov 2026: with the columns bound
+   * correctly, the model opens, the calculated table errors (red triangle) and the page is blank;
+   * the same table with "2025-01-01" strings renders. Severity `blank` for that reason: nothing
+   * stops the project opening. Fires once per DATATABLE, at the first line with a call, and looks only
+   * inside the row braces, so a DATE( applied OUTSIDE the DATATABLE (ADDCOLUMNS over it, the form the
+   * skill teaches) is silent. `BLANK()` is documented as a constant and was not measured; it is
+   * not flagged.
+   */
+  "datatable-rows-must-be-constants"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      const lines = src.text.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const m = /^([\t ]*)source\s*=\s*(.*)$/.exec(lines[i]);
+        if (!m) continue;
+        const indent = m[1].replace(/\t/g, "    ").length;
+        let text = m[2], j = i + 1;
+        for (; j < lines.length; j++) {
+          if (lines[j].trim() === "") { text += "\n"; continue; }
+          if ((/^[\t ]*/.exec(lines[j])[0]).replace(/\t/g, "    ").length <= indent) break;
+          text += "\n" + lines[j];
+        }
+        const lineOf = (off) => i + 1 + (text.slice(0, off).match(/\n/g) || []).length;
+        const re = /\bDATATABLE\s*\(/gi;
+        let dm;
+        while ((dm = re.exec(text))) {
+          let k = dm.index + dm[0].length, depth = 1, inStr = false, rowsAt = -1;
+          for (; k < text.length && depth > 0; k++) {
+            const ch = text[k];
+            if (ch === '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (ch === "{" && rowsAt < 0) { rowsAt = k; }
+            if (ch === "(") depth++; else if (ch === ")") depth--;
+          }
+          if (rowsAt < 0) continue;
+          let q = false, hit = -1, name = "";
+          for (let r = rowsAt; r < k; r++) {
+            const ch = text[r];
+            if (ch === '"') { q = !q; continue; }
+            if (q) continue;
+            const cm = /^([A-Za-z_][A-Za-z0-9_.]*)\s*\(/.exec(text.slice(r));
+            if (cm && (r === 0 || !/[A-Za-z0-9_]/.test(text[r - 1])) && cm[1].toUpperCase() !== "BLANK") {
+              hit = r; name = cm[1]; break;
+            }
+          }
+          if (hit >= 0) out.push({ location: `${src.rel}:${lineOf(hit)}`,
+            detail: `a DATATABLE row calls ${name}(...); rows take constants only. Write dates as strings such as "2025-01-31" in a DATETIME column, or build them outside the DATATABLE with ADDCOLUMNS ( ..., "Date", DATE ( [Year], [MonthNo], 1 ) )` });
+        }
       }
     }
     return out;
