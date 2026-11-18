@@ -64,7 +64,7 @@ def plugin_endpoint():
 
 
 ENDPOINT = os.environ.get("ZEBRA_BI_MCP_URL") or plugin_endpoint()
-RENDERER_URI = "ui://zebra-bi/visual-v1.html"  # used only when tools/list names no renderer
+RENDERER_URI = "ui://zebra-bi/visual-v2.html"  # used only when tools/list names no renderer
 CACHE = os.path.join(os.environ.get("CLAUDE_PLUGIN_DATA") or os.path.expanduser("~/.cache/zebra-bi"), "renderer")
 AUTH = os.path.join(os.path.dirname(CACHE), "auth.json")
 SIGN_IN_WAIT = 300  # seconds the browser sign-in may take
@@ -786,6 +786,7 @@ def render_visuals(story_dir, story):
 
 
 MAX_CELLS = 3  # cells side by side in one row, as in the report builder
+GRID_COLUMNS = 12  # the dashboard grid a section's `width` counts in
 LAYOUTS = ("one-pager", "variance-walk", "board-pack")  # a report's layouts (report.py), as the PDF prints them
 
 
@@ -823,6 +824,23 @@ def rows(story):
             if not isinstance(c, dict) or not (c.get("visual") or isinstance(c.get("text"), str)) \
                     or not isinstance(c.get("note", ""), str) or not isinstance(c.get("message", ""), str):
                 sys.exit("row %d: each cell is {\"visual\": id} or {\"text\": ...}" % i)
+    return out
+
+
+def section_rows(story):
+    """The sections as the page lays them out, a list of rows of sections. A section whose chart took less than the
+    whole row of the dashboard (its `width` in GRID_COLUMNS) shares a row with the next such sections that fit, up to
+    MAX_CELLS; every other section is a row of its own, as a story without widths always is."""
+    out, used = [], None  # used: the columns the last row has taken, when it is a row of narrow sections
+    for s in story.get("sections", []):
+        w = s.get("width") if s.get("visual") else None
+        narrow = type(w) is int and 0 < w < GRID_COLUMNS
+        if narrow and used is not None and used + w <= GRID_COLUMNS and len(out[-1]) < MAX_CELLS:
+            out[-1].append(s)
+            used += w
+        else:
+            out.append([s])
+            used = w if narrow else None
     return out
 
 
@@ -901,14 +919,21 @@ def assemble(story, results, meta, renderer_path, brand):
     """The story page as one HTML string, renderer and chart results embedded."""
     e = html.escape
     kpis = "\n".join('<div class="kpi"><b>%s</b><span>%s</span></div>' % (e(k["value"]), e(k["label"])) for k in story.get("kpis", []))
-    sections = []
-    for s in story["sections"]:
+    def section(s):
         frame = ""
         if s.get("visual"):
             if s["visual"] not in results:
                 sys.exit("section %r names visual %r, which is not in visuals" % (s.get("heading"), s["visual"]))
             frame = '<iframe data-v="%s" title="%s"></iframe>' % (e(s["visual"]), e(s.get("heading", s["visual"])))
-        sections.append("<section>\n<h2>%s</h2>\n%s\n%s\n</section>" % (e(s.get("heading", "")), para(s.get("body", "")), frame))
+        return "<h2>%s</h2>\n%s\n%s" % (e(s.get("heading", "")), para(s.get("body", "")), frame)
+
+    sections = []
+    for group in section_rows(story):
+        if len(group) == 1:
+            sections.append("<section>\n%s\n</section>" % section(group[0]))
+        else:
+            sections.append('<section class="row cols-%d">%s</section>'
+                            % (len(group), "".join('<div class="cell">%s</div>' % section(s) for s in group)))
     shape = layout(story)
     for row in rows(story):
         cells = []

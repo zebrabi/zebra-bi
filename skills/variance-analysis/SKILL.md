@@ -36,7 +36,7 @@ If the data holds more than one comparison and the question does not settle it, 
 
 ## 4. Show it
 
-Call `render_visual` with `chart_type` `variance`, the category from step 3 and the comparison mapped in `measure`. To rank the drivers, sort by the matching absolute variance, such as `variance_abs_pl`. The sort keeps the sign, so use `descending` when the total is above the comparison and `ascending` when it is below, which puts the biggest drivers of the gap first. For a trend, use the time period as the category with `time_axis` set instead. The `chart-from-data` skill covers how to shape the request.
+Call `render_visual` with `chart_type` `variance`, the category from step 3 and the comparison mapped in `measure`. To rank the drivers, sort by the matching absolute variance, such as `variance_abs_pl`. The sort keeps the sign, so use `descending` when the total is above the comparison and `ascending` when it is below, which puts the biggest drivers of the gap first. For a trend, use the time period as the category with `time_axis` set instead. To show the trend and the drivers together, draw both as one `render_dashboard`: the trend over time across the whole row, the drivers table under it. The `chart-from-data` skill covers how to shape the request.
 
 Then write the explanation:
 
@@ -46,6 +46,6 @@ Then write the explanation:
 
 Keep the numbers in your text the same as the ones you sent to the visual.
 
-## A page or dashboard to share
+## A page to share
 
-When the user wants these charts as an artifact, a dashboard or a page to share, use the `story-artifact` skill: it builds a plain artifact page with the Zebra BI charts. Do not start from the Dashboard Artifact type and do not write the page by hand: neither carries Zebra BI charts.
+When the user wants these charts as an artifact, a page or a link to share, use the `story-artifact` skill: it builds a plain artifact page with the Zebra BI charts. Do not start from the Dashboard Artifact type and do not write the page by hand: neither carries Zebra BI charts.

@@ -48,7 +48,7 @@ The Power BI part moved here from `zebrabi/zebra-bi-agentic` at its 0.3.2. It is
 | Path | What it is |
 | --- | --- |
 | `skills/data-source/` | Resolve and remember a dataset; adapters in `references/` (file, sharepoint, fabric) and the manifest format |
-| `skills/data-story/` | Analyse, build the IBCS pyramid, tell it in the conversation with `render_visual`, save `story.json`; `references/ibcs-narrative.md`, `chart-rules.md`, `story-json.md` |
+| `skills/data-story/` | Analyse, build the IBCS pyramid, tell it in the conversation with one `render_dashboard` (`render_visual` per chart on an MCP without it), save `story.json`; `references/ibcs-narrative.md`, `chart-rules.md`, `story-json.md` |
 | `skills/story-pdf/` | Build `story.json` into one A4 PDF; `references/surfaces.md` |
 | `skills/story-artifact/` | Build `story.json` into one plain Claude artifact page with the Zebra BI charts as pictures, or live with `--live`; publish and record its URL |
 | `skills/story-office/` | Build `story.json` into a PowerPoint deck and an Excel workbook with live Zebra BI for Office visuals; `references/office-format.md` |
