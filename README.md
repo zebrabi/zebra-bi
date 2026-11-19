@@ -108,8 +108,11 @@ The MCP URL is `https://mcp.zebrabi.com/mcp`.
 | `scripts/`, `assets/` | The story skills in Claude Code: profiling, PDF and Office builds, the brand default and the page template |
 | `mcp/` | The Power BI checker, started by `.mcp.json` as `zebra-bi-reports`: plain Node.js, no dependencies |
 | `perf/`, `.github/scripts/` | The gates on the Power BI skills: context budget, stated rule count, public surface, tenant identifiers |
+| `microsoft-365/` | The build of the Microsoft 365 Copilot app package from `skills/`, `mcp/` and the manifests |
 
 `skills/report-authoring/` is generated from a private source and is never edited here.
+
+`node microsoft-365/build.js` builds the Microsoft 365 Copilot app package: the Zebra BI connector, the chart, data story and Power BI skills, and the checker as scripts inside report-authoring. The Copilot-specific text lives in `microsoft-365/overlay/` and is applied at build time, so the skills here stay the only copy. [`microsoft-365/README.md`](microsoft-365/README.md) covers what the build changes and why.
 
 `CONTRIBUTING.md` covers the internals and how to run the checks; `AGENTS.md` is the contributor contract for the Power BI part.
 
