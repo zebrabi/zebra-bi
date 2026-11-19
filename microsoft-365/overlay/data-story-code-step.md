@@ -1,0 +1,1 @@
+Finish the analysis first. End the code step with the aggregated rows each chart needs printed as JSON, then leave the code interpreter. The Zebra BI tools are called directly from the conversation: never try to call them from code, and don't judge whether they are available from inside the code step.

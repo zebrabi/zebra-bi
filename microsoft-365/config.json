@@ -30,6 +30,7 @@
       "reason": "Needs only the Zebra BI connector.",
       "overlay": [
         { "op": "drop-text", "text": " A page or link to share is story-artifact, never the Dashboard artifact type." },
+        { "op": "insert-before", "line": "## Shape the data", "file": "overlay/copilot-tools.md" },
         { "op": "drop-section", "heading": "## A page to share" }
       ]
     },
@@ -37,6 +38,7 @@
       "include": true,
       "reason": "Needs only the Zebra BI connector.",
       "overlay": [
+        { "op": "insert-before", "line": "## 1. Pick the comparison", "file": "overlay/copilot-tools.md" },
         { "op": "drop-section", "heading": "## A page to share" }
       ]
     },
@@ -46,14 +48,21 @@
       "mayName": { "data-source": "Step 1 follows data-source only when it is available and says what to do without it." },
       "overlay": [
         { "op": "drop-text", "text": ", story-pdf for a PDF, story-artifact for a page, story-office for PowerPoint or Excel" },
+        { "op": "insert-before", "line": "## 1. Resolve the source", "file": "overlay/copilot-tools.md" },
+        { "op": "insert-before", "line": "1. Say in one line that each chart's labels and aggregated values go to Zebra BI to be drawn.", "file": "overlay/data-story-code-step.md" },
+        { "op": "drop-paragraph", "startsWith": "Claude Code hands you the charts' data" },
         { "op": "drop-line", "startsWith": "- **Claude Code** (a Bash tool exists)" },
         { "op": "drop-line", "startsWith": "- **Chat** (no file system)" },
-        { "op": "drop-line", "startsWith": "- **Report builder**" }
+        { "op": "drop-line", "startsWith": "- **Report builder**" },
+        { "op": "replace-section", "heading": "## When Zebra BI is not available", "file": "overlay/data-story-no-charts.md" }
       ]
     },
     "report-authoring": {
       "include": true,
       "reason": "Writes and checks the project files in the sandbox. The checker travels as skill scripts run with Node, because connectors are remote HTTPS MCP servers only.",
+      "overlay": [
+        { "op": "insert-after", "line": "# Authoring Zebra BI reports", "file": "overlay/authoring-tools.md" }
+      ],
       "moveSections": {
         "file": "references/sections-moved-for-microsoft-365.md",
         "headings": [
@@ -76,7 +85,10 @@
     },
     "setup-doctor": {
       "include": true,
-      "reason": "Checks a project in the sandbox. Its validator check runs the checker script that ships with report-authoring."
+      "reason": "Checks a project in the sandbox. Its validator check runs the checker script that ships with report-authoring.",
+      "overlay": [
+        { "op": "insert-before", "line": "## The three states, and why the third exists", "file": "overlay/setup-doctor-checker.md" }
+      ]
     },
     "data-source": {
       "include": false,
