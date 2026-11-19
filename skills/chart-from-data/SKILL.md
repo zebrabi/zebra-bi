@@ -19,6 +19,7 @@ Before the first chart in a conversation, say in one line that its labels and ag
 3. Map the scenario columns in `measure`. `Val` is actuals and is required. Add `PY` for previous year or `PM` for previous month (one of them, not both), `PL` for plan or budget, and `FC` for forecast. What each one means: [references/scenarios.md](references/scenarios.md).
 4. When the category is a time period, set `time_axis` and send the rows in time order. Its description in the tool lists each period and the format to send. Months read best when the question allows it.
 5. Set `negative_impact` to `true` for costs and expenses, so an increase shows as bad.
+6. To show further measures next to the measure, list their columns in `additional_measures`. Parent rows of a hierarchy and group totals add them up, so send only measures that add up, such as amounts, units or counts. Give a rate such as margin % in your reply instead.
 
 ## Pick the chart
 
