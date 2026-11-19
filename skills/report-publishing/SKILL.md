@@ -24,14 +24,13 @@ Three things Microsoft's skill cannot know about. That is the whole of this skil
 
 ## 1. Before: pick the visual track, because publishing is when it stops being free
 
-The authoring default is **Tables+ and Charts+**. They are Beta and **not Microsoft-certified**.
-Tables, Charts and Cards on the certified track are.
+The authoring default is **Tables+ and Charts+**. They are **not Power BI certified**;
+Tables, Charts and Cards are.
 
-**Both tracks publish and render in the service** — checked as a pair, same report and data, only
-the two GUIDs different. Do not talk anyone off the default on a worry that Plus will not survive
-the upload.
+**Both tracks publish and render in the service.** Do not talk anyone off the default on a worry
+that Tables+ or Charts+ will not survive the upload.
 
-What Plus costs is everything *downstream*: **`exportToFile`, PDF export, PowerPoint export and
+What Tables+ and Charts+ cost is everything *downstream*: **`exportToFile`, PDF export, PowerPoint export and
 e-mail subscriptions** all refuse uncertified visuals and draw an error symbol. So if any of those
 matter, swap `ZebraBITablesPlus…` → `ZebraBITables…` and `ZebraBIChartsPlus…` → `waterfall…` before
 you publish. One-line change, query untouched, Cards unchanged.
@@ -84,7 +83,7 @@ POST .../datasets/{id}/executeQueries
 | `getDefinition` round-trip matches | The service kept the files, Zebra GUIDs included |
 | DAX against the published model matches source | The data is right |
 | A human opened the report | It renders |
-| `exportToFile` came back clean | It renders — **only on the certified track**; on Plus this check reports a failure that is not real |
+| `exportToFile` came back clean | It renders — **only on the certified track**; on Tables+ and Charts+ this check reports a failure that is not real |
 
 Hand over the URL and say which line you reached:
 `https://app.powerbi.com/groups/{workspaceId}/reports/{reportId}`

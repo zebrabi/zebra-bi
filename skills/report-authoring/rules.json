@@ -245,7 +245,7 @@
       "id": "view-mode-storage-on-certified-visual",
       "severity": "looks-fine",
       "check": "view-mode-storage-config-requires-plus-visual",
-      "message": "A view-mode comments link (`annotationLayerSettings.annotationsStorageConfig`) belongs on Tables+ or\nCharts+, the visuals that carry the viewer comment panel. On the certified Tables and Charts the\nproperty has no effect, so a link written there looks configured while viewers get no comment panel\nand can add nothing. Switch the visual to its Plus twin, or drop the link and carry the commentary in\nthe authored comment layer.",
+      "message": "A view-mode comments link (`annotationLayerSettings.annotationsStorageConfig`) belongs on Tables+ or\nCharts+, the visuals that carry the viewer comment panel. On the certified Tables and Charts the\nproperty has no effect, so a link written there looks configured while viewers get no comment panel\nand can add nothing. Switch the visual to Tables+ or Charts+, or drop the link and carry the commentary in\nthe authored comment layer.",
       "source": "visuals.md",
       "held": false
     },

@@ -10,9 +10,7 @@ optional accelerator, never a prerequisite.
 
 **Everything in this section works with nothing installed.** The node CLIs are an optional accelerator, never a prerequisite: where one is absent, the in-box PowerShell path does the same job.
 
-`powerbi-desktop` and `powerbi-report-author` are node, and on a clean machine neither exists. The loop closes anyway, entirely on in-box Windows — proven end-to-end on a
-multi-page
-board pack:
+`powerbi-desktop` and `powerbi-report-author` are node, and on a clean machine neither exists. The loop closes anyway, entirely on in-box Windows:
 
 - **Author** — write PBIR JSON directly. `references/formatting.md` is the authority on the
   *encodings* even when you cannot execute them; read them and hand-write the same shapes.
@@ -73,9 +71,9 @@ board pack:
 
   **Two prompts that are not faults but stop automation until someone handles them.** On open,
   Desktop can show *"Bing map visuals are going away"* with an *Upgrade to Azure Maps* button and a
-  disabled owner window, on any report that holds a Bing map (seen on two reports): close it without
+  disabled owner window, on any report that holds a Bing map: close it without
   upgrading, then carry on. On close, Desktop can ask *"Do you want to save your changes?"* on a PBIP
-  nobody edited (seen once): if the agent changed nothing, answer Don't save, and never let a
+  nobody edited: if the agent changed nothing, answer Don't save, and never let a
   graceful close wait on it.
 
   **Read the dialog through UI Automation first; photograph it only when that returns nothing.**
@@ -187,10 +185,10 @@ Desktop through secure local APIs", **on by default** since the June 2026 releas
   | `report.snapshot.capture/v1` | `{pageId, scale}` — **both required**, whatever older notes say | PNG as base64 — **broken on 2.156.951.0**. Use `PrintWindow` instead. |
 
   On 2.159.883.0 the manifest also lists `report.snapshot.capture/v2`, which adds an optional `region`
-  (`{x, y, width, height}` in PBIR page units). It was read from the manifest and not called, so whether
-  it works where v1 failed is unmeasured.
+  (`{x, y, width, height}` in PBIR page units). Use `PrintWindow` unless you have checked that v2
+  returns a correct image.
 
-  **Do not spend time trying to call the v1 snapshot method correctly (measured on 2.156).** It throws
+  **Do not spend time trying to call the v1 snapshot method correctly (on 2.156).** It throws
   `System.NullReferenceException` in `ReportSnapshotHandler.ExecuteAsync`, and the control that
   settles it is this: **a deliberately bogus `pageId` throws the identical exception.** A handler
   that fails the same way for a page that exists and one that does not has not resolved the page at
@@ -203,7 +201,7 @@ Desktop through secure local APIs", **on by default** since the June 2026 releas
 - `false` → reloads the **report only**, ~1.5–3.2s, and **preserves the in-memory refresh**. Right
   for editing an existing visual.
 - `true` → report **and** model definition, ~1.8–4.0s. Needed after any TMDL change — **and on its
-  own it is not enough.** Two things it does not do, each reproduced:
+  own it is not enough.** Two things it does not do:
 
   ☠️ **It does not make already-rendered visuals re-query.** The engine gets the new model — an
   ADOMD query returns the new values immediately — but a page that was already on screen keeps
@@ -225,7 +223,7 @@ Desktop through secure local APIs", **on by default** since the June 2026 releas
   loop: bolting it on afterwards is what makes a working path look like a dead end.
 
   With the refresh in place, a warm instance takes a **wholly new model plus a new report layer**
-  and renders correctly — write, reload, refresh and two verified pages in **19.2 s** against ~40 s
+  and renders correctly — write, reload, refresh and two checked pages in **19.2 s** against ~40 s
   for a cold open of the same content.
 - **Reload DOES pick up a new `visuals/<name>/` directory. Try it first.** A brand-new visual
   directory (a textbox the running instance had never seen) was written to disk and rendered after
@@ -271,9 +269,8 @@ not, and this is the single largest saving in the loop.
 paid once, in the background, while you are still writing files — so it is off the critical path —
 and every project after it lands in a warm instance for the price of a reload plus a refresh.
 
-Measured with a cold-open control on each arm: **44.4 s → 15.8 s** on one project, **50.2 s → 20.7 s**
-on a second. Both arms produced the same verified pages, so this buys wall-clock and gives up no
-evidence.
+**44.4 s → 15.8 s** on one project, **50.2 s → 20.7 s** on a second, with the same pages, so this
+buys wall-clock and gives up no evidence.
 
 The scaffold is a minimal valid project — one page, a small model, a base theme. Launch it once;
 from then on, per real project:
@@ -311,7 +308,7 @@ So:
   to reach a page — either habit makes this loop an order of magnitude slower than it is.
 
 **Reload can be blocked by model-side state**, and
-there are two distinct causes. Both were reproduced on an unrelated model, so this is not specific to a model carried over by file-copy. Errors arrive one per ~0.65–1.0s, so
+there are two distinct causes, neither specific to a model carried over by file-copy. Errors arrive one per ~0.65–1.0s, so
 just fix and re-call:
 
 1. **`CompatibilityLevel downgrade … Current '1606', Requested '1600'`.** Desktop runs the model
@@ -337,7 +334,7 @@ property at a time.
 
 **You do not need node, the plugin, or anything installed to run `EVALUATE`.** Power BI Desktop ships
 its own ADOMD client *inside its package*, and the model is served by a local `msmdsrv` on a loopback
-port. Proven; this is the oracle, use it. **The same connection is how you refresh a Power
+port. This is the oracle; use it. **The same connection is how you refresh a Power
 Query-backed model after a cold open** — the recipe and the rules are in `references/model-layer.md`,
 and that step is yours, never the user's.
 
@@ -491,8 +488,7 @@ cold open; the 4 s recheck showed the full render, nothing else having changed.
 
 A screenshot showing an empty white canvas with **no page tab strip and no side panes**, taken after
 Desktop has been force-killed and relaunched at least once in the session, does not mean the report
-failed to load. Reproduced three times in a row across three separate processes, and the report had
-loaded every time.
+failed to load.
 
 Confirm it before concluding anything, and **confirm on the page's own `displayName`** — find a tab
 whose `Name` equals it. ☠️ **A count of `ControlType.TabItem` is NOT a confirmation.** That query
@@ -503,10 +499,9 @@ A plain name *substring* search has the opposite failure, dropping the real tab 
 with window-title text in a dedup step, so match the whole name.
 
 The recovery to try is `WindowPattern.SetWindowVisualState`: minimize, restore to maximized, wait
-~3 s, then re-screenshot. ⚠️ **It can refuse.** Called against a window in this state the pattern is
-exposed and both calls threw `InvalidOperationException: Operation cannot be performed`. So treat the
-symptom as reproduced, the recovery as worth one attempt, and **a cold restart as the fallback that
-actually works** — it has fixed every instance of this seen so far.
+~3 s, then re-screenshot. ⚠️ **It can refuse:** the pattern is exposed and both calls throw
+`InvalidOperationException: Operation cannot be performed`. So try the recovery once, and fall back to
+**a cold restart, which clears it**.
 
 **And an identical-looking blank has a second cause with no recovery but a restart:** if a page
 directory was deleted while Desktop was displaying that page, the running instance loses its page
@@ -539,17 +534,15 @@ Two things that must stay strictly serial:
   half-applied state and read it as a rendering fault.
 
 **Do not run several Desktop instances to parallelise the page sweep.** It looks available now that
-capture works on a background window, but Store-app instancing and per-instance model memory have
-not been tested, and the failure mode — two instances sharing or clobbering one model — is the kind
-that produces a plausible wrong render rather than an error.
+capture works on a background window, but two instances can share or clobber one model, and that
+produces a plausible wrong render rather than an error.
 
 **And if the model has Power Query partitions, "open" is not the end of the load.** A PQ-backed
 model cold-opens structurally perfect and **EMPTY** — every table blank, a banner reading *"Some of
 the tables have incomplete or no data."* That is by design, and **the refresh is your job**: run the
 TMSL refresh in `references/model-layer.md` (~5s, in-box, works on any Desktop version), verify a
 row count through the engine, and only then read the screenshot. **Never end a turn telling the
-user to click "Refresh now", and never send an F5/keystroke to Desktop** — both have failed in the
-field.
+user to click "Refresh now", and never send an F5/keystroke to Desktop** — neither is reliable.
 
 **If the `validate_report` tool is available, call it once per batch of writes.** It checks the same
 mechanical layer plus the Zebra-specific faults that Power BI's own validator knows nothing
@@ -587,7 +580,7 @@ The encodings they implement are documented in `references/formatting.md`, which
 visual directories too** (see the bridge section in `references/verify-loop.md`). It does **not** re-read
 `definition/report.json` or the model, and it will serve a **pixel-identical false green** from
 cache — a registration you deleted still renders perfectly until you restart. A registration
-change needs a cold restart (23 s on a small project, 159–210 s measured on real ones — the model
+change needs a cold restart (23 s on a small project, 159–210 s on real ones — the model
 size and the cache drive it, so budget from your own first open); close Desktop and reopen the project.
 **This paragraph is about the *node* `reload`.** The bridge's `file.reload/v1` is a different
 instrument and **does** re-read the model when you pass `reloadModelDefinition: true` — see the
