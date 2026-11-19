@@ -15,8 +15,8 @@ them.
 | You use | Route | State |
 |---|---|---|
 | Claude Code — terminal, desktop app, VS Code or JetBrains | **[1. Marketplace](#1-claude-code-marketplace)** | Works. This is the supported route |
-| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands. Install verified; **no report authored on it yet** |
-| Codex, Cursor, Gemini CLI, OpenCode, Kiro, or anything else that reads agent skills | **[2. Skills folder](#2-the-skills-folder-any-other-agent)** | The skills are plain Markdown and the checker is a plain stdio MCP server, so they load. **We have not run a report end to end on any of these hosts** |
+| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands, and one more to add the checker |
+| Codex, Cursor, Gemini CLI, OpenCode, Kiro, or anything else that reads agent skills | **[2. Skills folder](#2-the-skills-folder-any-other-agent)** | The skills are plain Markdown and the checker is a plain stdio MCP server, so they load |
 | A machine with no git, or a locked-down build | **[3. Release zip](#3-release-zip-no-git)** | Same bytes, downloaded instead of cloned |
 
 There is one bundle. Every route installs the same Power BI files; none of them is a cut-down version. The marketplace routes install the whole Zebra BI plugin, charts and data stories included. The skills folder and release zip routes cover the three Power BI skills and the checker.
@@ -53,15 +53,11 @@ copilot plugin marketplace add zebrabi/zebra-bi
 copilot plugin install zebra-bi@zebrabi
 ```
 
-Then start Copilot and ask for the skill by name: *"use the setup-doctor skill"*. Copilot lists
-the three skills under `copilot skill list`. The MCP checker is not registered by this route;
-add it with `copilot mcp add` using the `node … mcp/server.js` command from route 2.
-We recommend it, but you can skip it.
+Then start GitHub Copilot CLI and ask for the skill by name: *"use the setup-doctor skill"*.
 
-**What is verified:** both commands complete and all three skills load (Copilot CLI 1.0.83,
-2026-09-06). **What is not:** a report authored end to end on Copilot — the account we tested with
-sits in an organisation whose Copilot policy blocks the CLI, so the install is as far as we got.
-If your organisation allows it, you are further than we are; tell us what happened.
+The plugin install registers the hosted `zebra-bi` server and not the checker. Add the checker with
+`copilot mcp add` using the `node … mcp/server.js` command from route 2. We recommend it, but you
+can skip it.
 
 ## 2. The skills folder (any other agent)
 
@@ -126,17 +122,13 @@ host happened to start in.
 Check your host's own MCP documentation for the file location; those change more often than the
 server does.
 
-### What we have and have not run
+### On other hosts
 
-**Verified:** the server starts under Node 24 with no dependencies, answers MCP protocol
-`2025-06-18`, and lists its 18 tools. That is the interface every host in this row talks to, and it
-is host-independent.
-
-**Not verified:** a full report authored end to end on Codex, Cursor, Gemini CLI, Copilot CLI or
-any other host. The skills are Markdown with no Claude-specific syntax in the bodies, so we expect
-them to work, and *expect* is the right word until somebody runs one. If you do, please
-[open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose) telling us which host
-and what broke — that is a more useful report than almost anything else you could send.
+The server starts under Node 24 with no dependencies, answers MCP protocol `2025-06-18`, and lists
+its 18 tools. That is the interface every host in this row talks to. The skills are Markdown with no
+Claude-specific syntax in the bodies. If your host does not load them or the checker,
+[open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose) telling us which host and
+what broke.
 
 Two Claude Code conveniences do **not** travel: the `/zebra-bi:` slash commands (ask for the skill
 by name instead — *"use the setup-doctor skill"*) and automatic MCP registration.

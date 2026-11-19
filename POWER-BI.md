@@ -10,11 +10,6 @@ formatting. Then it checks its own work before you open it.
 
 It is not a chatbot that tells you how to build a report. It builds the report.
 
-> **This is an early release.** It works, it is used daily inside Zebra BI, and it is new enough
-> that the most useful thing you can do is tell us when it does not. There is a
-> [feedback section](#when-something-goes-wrong) at the end, and
-> [issues](https://github.com/zebrabi/zebra-bi/issues) are open.
-
 ## What it actually produces
 
 Give it a model with actuals, plan and prior year, and ask for a monthly P&L. You get a real
@@ -55,10 +50,10 @@ disappointment, and there is a check that catches it before you waste time.
 
 If your model is not there yet, it can write the measures and the date table for you. Ask.
 
-**4. Claude Code.** This is the tool that runs everything here, and it runs in a terminal window.
-If that is unfamiliar territory, it is genuinely worth twenty minutes: install it once and you
-type requests in plain English from then on. Instructions at
-**https://claude.com/claude-code**.
+**4. A coding agent, such as Claude Code.** It runs in a terminal window. If that is unfamiliar
+territory, it is genuinely worth twenty minutes: install it once and you type requests in plain
+English from then on. Instructions at **https://claude.com/claude-code**. The steps below use
+Claude Code; [`INSTALL.md`](INSTALL.md) covers GitHub Copilot CLI and other agents.
 
 **Recommended: Node.js.** A free download from **https://nodejs.org**. It runs the checker, which
 reads your report files for faults Power BI does not warn you about. If your IT team does not allow
