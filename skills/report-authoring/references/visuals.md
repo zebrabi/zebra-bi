@@ -6,8 +6,8 @@ Five to author with: **Tables+ and Charts+**, their **certified** twins, and **C
 
 | product | `visualType` — AUTHOR WITH THESE | installed |
 |---|---|---|
-| Zebra BI **Tables+** — **default** | `ZebraBITablesPlus3E6085701D7B426980C3859B16327993` | 8.3.0.16 (Beta); a Desktop 2.159 save migrated it to 8.4.0 |
-| Zebra BI **Charts+** — **default** | `ZebraBIChartsPlusC3F2FD9F79054F76BD1B722E7666AC33` | 8.2.1 (Beta) |
+| Zebra BI **Tables+** — **default** | `ZebraBITablesPlus3E6085701D7B426980C3859B16327993` | 8.3.0.16; a Desktop 2.159 save migrated it to 8.4.0 |
+| Zebra BI **Charts+** — **default** | `ZebraBIChartsPlusC3F2FD9F79054F76BD1B722E7666AC33` | 8.2.1 |
 | Zebra BI **Cards** | `zebraBiCards2C860CFAA9944091B75F0DBD117F20FA` | 7.4.2.115 |
 | Zebra BI **Tables** (certified) | `ZebraBITablesBAE31B370F254F808553548EFB35BFA5` | 8.3.0.37 |
 | Zebra BI **Charts** (certified) | `waterfall6C9ED82ABD1F44C4A0D590CE01EB5EE7` | 8.1.0.36 |
@@ -31,7 +31,7 @@ skill changes when you swap the GUID. There is **no** Cards+, so a Cards visual 
 certified GUID; a page mixing Cards with Tables+/Charts+ is normal and correct.
 
 **Say once, in the plan, that you are using them** — one line, not a lecture: *"Tables+ and Charts+,
-so viewers can comment on the report in view mode. They are not Power BI certified and are in Beta;
+so viewers can comment on the report in view mode. They are not Power BI certified;
 say the word and I'll use the certified visuals instead."*
 
 **Switch to the certified track** — `ZebraBITables…`, `waterfall…` — whenever any of these is true,
