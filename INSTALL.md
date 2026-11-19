@@ -14,9 +14,9 @@ them.
 
 | You use | Route | State |
 |---|---|---|
-| Claude Code — terminal, desktop app, VS Code or JetBrains | **[1. Marketplace](#1-claude-code-marketplace)** | Works. This is the supported route |
-| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands, and one more to add the checker |
-| Codex, Cursor, Gemini CLI, OpenCode, Kiro, or anything else that reads agent skills | **[2. Skills folder](#2-the-skills-folder-any-other-agent)** | The skills are plain Markdown and the checker is a plain stdio MCP server, so they load |
+| Claude Code (terminal, desktop app, VS Code or JetBrains) | **[1. Marketplace](#1-claude-code-marketplace)** | Works. This is the supported route |
+| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands, plus an optional one for the checker |
+| Codex, Cursor, Gemini CLI, OpenCode, Kiro, or anything else that reads agent skills | **[2. Skills folder](#2-the-skills-folder-any-other-agent)** | The skills are plain Markdown and the checker is a plain stdio MCP server |
 | A machine with no git, or a locked-down build | **[3. Release zip](#3-release-zip-no-git)** | Same bytes, downloaded instead of cloned |
 
 There is one bundle. Every route installs the same Power BI files; none of them is a cut-down version. The marketplace routes install the whole Zebra BI plugin, charts and data stories included. The skills folder and release zip routes cover the three Power BI skills and the checker.
@@ -30,7 +30,7 @@ There is one bundle. Every route installs the same Power BI files; none of them 
 
 Restart Claude Code. Then run `/zebra-bi:setup-doctor`.
 
-This is the only route where the checker configures itself — installing the plugin registers the
+This is the only route where the checker configures itself: installing the plugin registers the
 MCP server as `zebra-bi-reports`, so there is no config file to edit. It sits beside `zebra-bi`,
 the hosted server that draws charts.
 
@@ -55,15 +55,15 @@ copilot plugin install zebra-bi@zebrabi
 
 Then start GitHub Copilot CLI and ask for the skill by name: *"use the setup-doctor skill"*.
 
-The plugin install registers the hosted `zebra-bi` server and not the checker. Add the checker with
-`copilot mcp add` using the `node … mcp/server.js` command from route 2. We recommend it, but you
-can skip it.
+The plugin install registers the hosted `zebra-bi` server and not the checker. Add the checker as
+`zebra-bi-reports` with `copilot mcp add`, using the `node …\mcp\server.js` command from route 2.
+We recommend it, but you can skip it.
 
 ## 2. The skills folder (any other agent)
 
 Two halves. The first one is enough to be useful, and we recommend the second.
 
-**Half one — the skills.** Copy the three skill folders into the open-standard location your agent
+**Half one: the skills.** Copy the three skill folders into the open-standard location your agent
 reads. Codex and GitHub Copilot CLI both read `~/.agents/skills`; other hosts vary, and your host's
 documentation names its own path.
 
@@ -71,7 +71,7 @@ documentation names its own path.
 .\install.ps1
 ```
 
-The script is in this repository, needs nothing but in-box PowerShell — no git, no Node — and by
+The script is in this repository, needs nothing but in-box PowerShell (no git, no Node), and by
 default copies to `~\.agents\skills`. `-Destination <path>` puts them somewhere else,
 `-WhatIf` shows you what it would do and writes nothing. It refuses to run if the source folders
 are missing rather than creating an empty install.
@@ -85,8 +85,8 @@ Copy-Item -Recurse -Force .\skills\report-authoring, .\skills\report-publishing,
 That gives you `report-authoring`, `report-publishing` and `setup-doctor`. The agent reads them the
 way Claude Code does.
 
-**Half two — the checker.** Recommended, and it needs [Node.js](https://nodejs.org). The MCP server is
-a single stdio process with **no dependencies and nothing to install** — there is no `package.json`
+**Half two: the checker.** Recommended, and it needs [Node.js](https://nodejs.org). The MCP server is
+a single stdio process with **no dependencies and nothing to install**: there is no `package.json`
 in this repository and no `npm install` step:
 
 ```
@@ -116,22 +116,22 @@ args = ["C:\\path\\to\\zebra-bi\\mcp\\server.js"]
 ```
 
 `install.ps1` prints both blocks with the absolute path already filled in, so you can paste rather
-than retype. **Use the absolute path** — a relative one resolves against whatever directory the
+than retype. **Use the absolute path**: a relative one resolves against whatever directory the
 host happened to start in.
 
 Check your host's own MCP documentation for the file location; those change more often than the
 server does.
 
-### On other hosts
+### Other hosts
 
 The server starts under Node 24 with no dependencies, answers MCP protocol `2025-06-18`, and lists
-its 18 tools. That is the interface every host in this row talks to. The skills are Markdown with no
-Claude-specific syntax in the bodies. If your host does not load them or the checker,
+its 18 tools. That is the interface every host on this route talks to. The skills are Markdown with no
+Claude-specific syntax in the bodies. If your host does not load the skills or the checker,
 [open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose) telling us which host and
 what broke.
 
 Two Claude Code conveniences do **not** travel: the `/zebra-bi:` slash commands (ask for the skill
-by name instead — *"use the setup-doctor skill"*) and automatic MCP registration.
+by name instead, for example *"use the setup-doctor skill"*) and automatic MCP registration.
 
 ## 3. Release zip (no git)
 
@@ -173,7 +173,7 @@ which needs a key you may not have:
 ```
 
 **Check you can reach it at all.** Run `git clone https://github.com/zebrabi/zebra-bi` by
-hand. That gives you the real error rather than the plugin system's summary of it — usually a
+hand. That gives you the real error rather than the plugin system's summary of it, usually a
 proxy, a certificate, or credentials.
 
 **If you were given access as a named account**, make sure you accepted the GitHub invitation
@@ -193,7 +193,7 @@ manual `git clone` once will cache the credentials.
 or, on any other host, *"run the setup-doctor skill"*.
 
 The doctor is the install test. It reports Power BI Desktop, your project, the visuals, your
-licence, your model and what it can verify — and it tells you **which product you are running**,
+licence, your model and what it can verify, and it tells you **which product you are running**,
 with the checker or without. If it names the checker as absent and you configured it, the MCP
 registration did not take; that is the thing to fix, and everything else still works meanwhile.
 
@@ -205,7 +205,7 @@ them and that you restarted the agent.
 | Route | How |
 |---|---|
 | Marketplace | `/plugin update zebra-bi@zebrabi` |
-| Skills folder | Pull or download the new version and run `install.ps1` again — it overwrites |
+| Skills folder | Pull or download the new version and run `install.ps1` again; it overwrites |
 | Release zip | Download the new zip, re-extract, re-run `install.ps1` |
 
 The skills folder route has **no auto-update**. Nothing tells you a version shipped, so check the
@@ -232,7 +232,7 @@ no files in your Power BI installation. Removing the folders removes the product
 
 ## When the install is the problem
 
-[Open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose) — there is a template
+[Open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose). There is a template
 for install and setup problems. Tell us the host, the route you took, and the exact error. If the
 doctor ran at all, its output is the single most useful thing to paste.
 

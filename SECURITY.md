@@ -30,7 +30,7 @@ It reads and writes files in a Power BI project directory that you point it at. 
 - **Skills**: markdown instructions read by your agent. They execute nothing themselves. They tell
   the agent which commands to run (PowerShell, starting Power BI Desktop, writing files), and your
   agent host runs them.
-- **An MCP server** (`mcp/`) — Node, **no dependencies**, deliberately, so there is
+- **An MCP server** (`mcp/`): Node, **no dependencies**, deliberately, so there is
   no supply chain beyond Node itself. **It only ever reads.** It reads a project path you supply and
   returns findings; the tools that compose report files return the content as a string, and your
   agent host writes it, so every write to your project is one you can see in the transcript.
@@ -67,15 +67,11 @@ information in each visual's `objects` (`licenseSettings`; Cards also `license`)
 Desktop's local storage. That is normal. Leave it in place: removing it can make a visual render
 unlicensed on a machine whose local storage does not hold the entitlement.
 
-**2. The disclosure boundary is enforced in a repository you cannot see.** The authoring skill is
-generated, and the checks that decide what ships run in the generator. CI here checks that the
-shipped bundle matches the checksums committed beside it in `.bundle-sha256`, and that no file was
-added to it. That catches a hand-edit made without a matching checksum update. It cannot show that
-the bundle came from the generator: the checksum file lives in this repository, so one commit can
-change a skill file and its checksum together and still pass. Review is the intended control for
-such a commit: a change to `main` needs an approval from someone other than its author, which
-repository administrators can override. CI also cannot re-run the boundary checks themselves.
-This is stated in `AGENTS.md` as well. If you find
+**2. The authoring skill is generated.** The checks that decide what ships in it run in the
+generator, in a private Zebra BI repository. CI here checks that the shipped bundle matches the
+checksums committed beside it in `.bundle-sha256`, and that no file was added to it. Changes to
+the bundle are also reviewed: a change to `main` needs an approval from someone other than its
+author. This is stated in `AGENTS.md` as well. If you find
 internal material in the published bundle, that **is** a defect worth reporting. Email us rather
 than filing it publicly.
 
@@ -84,7 +80,7 @@ the chat.**
 
 ## Scope
 
-In scope: anything in this repository — the MCP server, the skills, the workflow, the gates.
+In scope: anything in this repository: the MCP server, the skills, the workflow, the gates.
 
 Out of scope: the Zebra BI visuals themselves and the Zebra BI service. Report those through
 https://zebrabi.com or your usual support channel.

@@ -50,10 +50,10 @@ disappointment, and there is a check that catches it before you waste time.
 
 If your model is not there yet, it can write the measures and the date table for you. Ask.
 
-**4. A coding agent, such as Claude Code.** It runs in a terminal window. If that is unfamiliar
-territory, it is genuinely worth twenty minutes: install it once and you type requests in plain
-English from then on. Instructions at **https://claude.com/claude-code**. The steps below use
-Claude Code; [`INSTALL.md`](INSTALL.md) covers GitHub Copilot CLI and other agents.
+**4. A coding agent.** The steps below use Claude Code, which runs in a terminal window. If that
+is unfamiliar territory, it is worth twenty minutes: install it once and you type requests in
+plain English from then on. [Claude Code setup instructions](https://claude.com/claude-code).
+[`INSTALL.md`](INSTALL.md) covers GitHub Copilot CLI and other agents.
 
 **Recommended: Node.js.** A free download from **https://nodejs.org**. It runs the checker, which
 reads your report files for faults Power BI does not warn you about. If your IT team does not allow
@@ -74,7 +74,7 @@ afterwards.
 
 No account, no login, no key: the repository is public and the marketplace step reads it
 anonymously. If the first command fails, it is almost always network or proxy rather than
-permissions — try `git clone https://github.com/zebrabi/zebra-bi` by hand and you will get the
+permissions. Try `git clone https://github.com/zebrabi/zebra-bi` by hand and you will get the
 real error.
 
 To get updates later:
@@ -180,7 +180,7 @@ If it does not, the most useful things to send us are:
 
 A screenshot of the page tells us more than any log file.
 
-**[Open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose)** — there are templates
+**[Open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose)**. There are templates
 for a wrong report, a false warning, and a documentation gap, and each one asks for the few details
 that make a report actionable. Public, so other people can see whether their problem is already
 known.

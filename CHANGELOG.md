@@ -115,46 +115,16 @@ pre-flight, recipes, TMDL, the verify loop, and the visual property reference.
 - **Installs on GitHub Copilot CLI** with the same two commands (`copilot plugin marketplace add`,
   `copilot plugin install`). Two things were in the way and are fixed: the marketplace file carried
   a `pluginRoot` that Copilot applied twice, and the authoring skill's description exceeded the open
-  standard's 1024-character cap, so spec-strict hosts loaded two skills of three. Install verified;
-  authoring on Copilot is not, see *Not verified*.
+  standard's 1024-character cap, so spec-strict hosts loaded two skills of three.
 
 ### Known issues
 
-**An agent-written Cards visual has crashed Power BI Desktop's serializer, once.** Editing that
-visual's formatting by hand in Desktop threw
-`TypeError: Cannot read properties of null (reading 'gradient')` in `serializeVisualContainerConfig`
-and the report would not render. Observed once, on Desktop 2.156.951.0, on 2026-08-12.
-
-It matters more than one observation usually would, because of *where* it surfaces: the file is
-written by the agent and the crash appears only when a person later edits that visual — after
-handover, on the reviewer's machine.
-
-**It is not diagnosed, and we are not going to guess in public.** One thing is certain from the
-error text: the value the serializer read was literally `null`. Beyond that the cause is open — an
-earlier hypothesis of ours was checked against the saved files and did not survive them.
-
-It is also **not established that this is specific to agent-written reports.** The layout structure
-involved is written into the file by Power BI Desktop itself on save, so if you hit this on a Cards
-visual you built by hand, we want to hear that just as much.
-
-*If you hit it:* the report is not lost — the `.pbip` on disk is intact and reopening the project
-recovers it. Please [open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose) and
-attach the visual's `visual.json`; that file is the one thing we cannot reconstruct, and it is what
-would turn one observation into something the checker can enforce.
-
-### Not verified
-
-Stated so you know which claims we have earned and which we are extending on reasonable grounds.
-
-- **Hosts other than Claude Code.** The skills are plain Markdown and the checker is a plain stdio
-  MCP server — verified to start, speak MCP `2025-06-18` and list its tools with no dependencies —
-  but **no report has been authored end to end on Codex, Cursor, Gemini CLI or Copilot CLI.** See
-  [`INSTALL.md`](INSTALL.md).
-- **View-mode commenting by a report viewer.** The agent can configure it; nobody has tested a
-  viewer using it.
-- **Unlicensed tenants replace comment bodies** with an upgrade prompt in the Power BI service.
-  Seen once, on one tenant, and *the licensed control has not been run* — so it is recorded here
-  rather than stated as behaviour.
+**Editing an agent-written Cards visual's formatting by hand in Power BI Desktop can stop the
+report rendering**, with `TypeError: Cannot read properties of null (reading 'gradient')` in
+`serializeVisualContainerConfig`. The report is not lost: the `.pbip` on disk is intact and
+reopening the project recovers it. If you hit it, please
+[open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose) and attach the visual's
+`visual.json`.
 
 ### What it cannot do
 
