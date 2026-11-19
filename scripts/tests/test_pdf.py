@@ -52,6 +52,37 @@ def rows_story():
     return dict(json.loads(json.dumps(STORY)), sections=[], rows=json.loads(json.dumps(ROWS)))
 
 
+def widths_story(*widths):
+    """STORY with each section's dashboard width; None leaves the section without one."""
+    story = json.loads(json.dumps(STORY))
+    for section, width in zip(story["sections"], widths):
+        if width is not None:
+            section["width"] = width
+    return story
+
+
+class SectionRows(unittest.TestCase):
+    def ids(self, *widths):
+        return [[s["visual"] for s in row] for row in S.section_rows(widths_story(*widths))]
+
+    def test_sections_without_widths_are_a_row_each(self):
+        self.assertEqual(self.ids(None, None, None), [["v1"], ["v2"], ["v3"]])
+
+    def test_narrow_sections_fill_a_row_of_the_dashboard(self):
+        self.assertEqual(self.ids(12, 6, 6), [["v1"], ["v2", "v3"]])
+        self.assertEqual(self.ids(4, 4, 4), [["v1", "v2", "v3"]])
+        self.assertEqual(self.ids(6, 8, 4), [["v1"], ["v2", "v3"]])
+
+    def test_a_narrow_section_alone_keeps_the_whole_row(self):
+        self.assertEqual(self.ids(6, 12, 6), [["v1"], ["v2"], ["v3"]])
+
+    def test_a_section_without_a_chart_or_with_a_bad_width_is_a_row_of_its_own(self):
+        story = widths_story(6, 6, 6)
+        del story["sections"][1]["visual"]
+        story["sections"][2]["width"] = "6"
+        self.assertEqual([len(row) for row in S.section_rows(story)], [1, 1, 1])
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -116,6 +147,16 @@ class Page(Base):
         self.assertIn('<section class="row cols-3"><div class="cell"><iframe data-v="v2"', page)
         self.assertIn("section.row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}", page)
         self.assertEqual(S.story_visuals(story), ["v1", "v2", "v3"])
+
+    def test_sections_narrower_than_the_dashboard_share_a_row(self):
+        story = widths_story(12, 6, 6)
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = S.render_visuals(self.story_dir, story)
+        path, meta = S.renderer()
+        page = S.assemble(story, results, meta, path, B.load(start=self.tmp))
+        self.assertIn('<section>\n<h2>Finding 1</h2>\n<p>Body 1.</p>\n<iframe data-v="v1"', page)
+        self.assertIn('<section class="row cols-2"><div class="cell"><h2>Finding 2</h2>\n<p>Body 2.</p>\n'
+                      '<iframe data-v="v2" title="Finding 2"></iframe></div><div class="cell"><h2>Finding 3</h2>', page)
 
     def test_a_chart_message_sits_above_its_chart(self):
         story = rows_story()
@@ -227,6 +268,18 @@ class Build(Base):
         line = lambda label: next(i for i, l in enumerate(text.splitlines()) if label in l)
         self.assertEqual(line("Chart 2"), line("Chart 3"))  # same row, so the same printed line
         self.assertNotEqual(line("Chart 1"), line("Chart 2"))
+
+    @unittest.skipUnless(shutil.which("pdftotext"), "needs pdftotext")
+    def test_sections_narrower_than_the_dashboard_print_side_by_side(self):
+        import subprocess
+        self.renderer(300)
+        with open(os.path.join(self.story_dir, "story.json"), "w") as f:
+            json.dump(widths_story(12, 6, 6), f)
+        self.build()
+        text = subprocess.run(["pdftotext", "-layout", self.pdf_path(), "-"], capture_output=True, text=True).stdout
+        line = lambda label: next(i for i, l in enumerate(text.splitlines()) if label in l)
+        self.assertEqual(line("Finding 2"), line("Finding 3"))  # same row, so the same printed line
+        self.assertNotEqual(line("Finding 1"), line("Finding 2"))
 
     def write_story(self, layout, rows=None):
         story = rows_story()

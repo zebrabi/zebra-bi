@@ -13,7 +13,7 @@ One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it
   "sections": [
     {"heading": "The West drove half of the growth",
      "body": "West added $66k (+36%). **Washington** alone went from $20k to $66k.",
-     "visual": "sales-by-region"}
+     "visual": "sales-by-region", "width": 6}
   ],
   "next_heading": "Where to look next",
   "next": ["**Machines:** the one sizeable sub-category in decline."],
@@ -31,10 +31,11 @@ One file per story at `.zebra/stories/<slug>/story.json`. `data-story` writes it
 | `kpis` | 0-4 tiles, `value` short, `label` one line |
 | `sections[].body` | plain text; a blank line starts a new paragraph; `**bold**` is the only markup |
 | `sections[].visual` | a key of `visuals`, or omitted for a text-only section |
+| `sections[].width` | optional: the chart's `width` on the dashboard, in columns of 12. `story-pdf` and `story-artifact` put sections narrower than 12 side by side, up to three a row, as the dashboard did; a section without it takes the whole row. `story-office` keeps a slide or sheet per section |
 | `rows` | optional, after the sections: the report builder's layout. Each row is `{"cells": [...]}` with 1 to 3 cells side by side, each `{"visual": id}` or `{"text": "..."}` (`**bold**` allowed). `story-pdf` and `story-artifact` keep the cells side by side, each chart drawn at its cell's width; `story-office` lays out sections only |
 | `layout` | optional, with `rows`: the report builder's layout as the PDF prints it. `one-pager` prints on one A4 landscape page, scaled down to fit (to no less than 55%; a longer one runs on) and laid out as wide as fills the page at that scale, so its charts are drawn wider; `board-pack` starts a page at every row that holds a chart, after a cover with the title and KPI tiles; `variance-walk`, or none, flows on A4 portrait |
 | `visuals` keys | lowercase letters, digits, dashes |
-| `visuals.<id>.args` | exactly what `render_visual` takes; see `chart-rules.md` |
+| `visuals.<id>.args` | exactly what `render_visual` takes: a visual's arguments in the dashboard without its `width`, which goes on its section; see `chart-rules.md` |
 
 A report builder folder (`report.zbreport`, no `story.json`) builds as a story: its title as `title`, its rows as `rows`, its layout as `layout`, no sections and no source.
 

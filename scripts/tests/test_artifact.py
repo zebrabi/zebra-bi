@@ -14,7 +14,7 @@ import artifact as A  # noqa: E402
 import brand as B  # noqa: E402
 import story as S  # noqa: E402
 from zoffice import snapshot as SN  # noqa: E402
-from test_pdf import ARGS, STORY, Base as PdfBase, rows_story  # noqa: E402
+from test_pdf import ARGS, STORY, Base as PdfBase, rows_story, widths_story  # noqa: E402
 
 URL = "https://claude.ai/artifact/AbC123xyz"
 
@@ -77,6 +77,14 @@ class Page(unittest.TestCase):
         self.assertIn('<section class="zs-section zs-row zs-cols-3"><figure class="zs-plate" data-v="v2"', page)
         self.assertIn('alt="Zebra BI chart: Chart 2."', page)
         self.assertIn(".zs-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }", page)
+
+    def test_sections_narrower_than_the_dashboard_share_a_row(self):
+        story = widths_story(12, 6, 6)
+        self.assertEqual(A.picture_widths(story), {"v1": 760, "v2": 370, "v3": 370})
+        page = self.page(story=story)
+        self.assertIn('<section class="zs-section"><div class="zs-text"><h2>Finding 1</h2>', page)
+        self.assertIn('<section class="zs-section zs-row zs-cols-2"><div class="zs-cell"><div class="zs-text"><h2>Finding 2</h2>', page)
+        self.assertIn('</figure></div><div class="zs-cell"><div class="zs-text"><h2>Finding 3</h2>', page)
 
     def test_a_chart_message_sits_above_its_picture(self):
         story = rows_story()

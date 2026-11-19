@@ -148,7 +148,11 @@ def font_link(brand):
 
 def picture_widths(story):
     """{visual id: the CSS width its picture is drawn at}: the column, or its cell when it sits in a row."""
-    widths = {s["visual"]: WIDTH for s in story.get("sections", []) if s.get("visual")}
+    widths = {}
+    for group in S.section_rows(story):
+        for s in group:
+            if s.get("visual"):
+                widths[s["visual"]] = (WIDTH - GAP * (len(group) - 1)) // len(group)
     for row in S.rows(story):
         n = len(row["cells"])
         for c in row["cells"]:
@@ -172,11 +176,17 @@ def assemble_page(story, results, brand, sizes, live=False, renderer_sha=None):
         return ('<figure class="zs-plate" data-v="%s" data-w="%d" data-h="%d"><img src="charts/%s.png" width="%d" height="%d" alt="%s">%s</figure>'
                 % (e(vid), w, h, e(vid), w, h, e(alt), frame))
 
-    sections = []
-    for s in story["sections"]:
+    def section(s):
         fig = figure(s["visual"], s.get("heading", "") + ". ") if s.get("visual") else ""
-        sections.append('<section class="zs-section"><div class="zs-text"><h2>%s</h2>\n%s</div>%s</section>'
-                        % (e(s.get("heading", "")), S.para(s.get("body", "")), fig))
+        return '<div class="zs-text"><h2>%s</h2>\n%s</div>%s' % (e(s.get("heading", "")), S.para(s.get("body", "")), fig)
+
+    sections = []
+    for group in S.section_rows(story):
+        if len(group) == 1:
+            sections.append('<section class="zs-section">%s</section>' % section(group[0]))
+        else:
+            sections.append('<section class="zs-section zs-row zs-cols-%d">%s</section>'
+                            % (len(group), "".join('<div class="zs-cell">%s</div>' % section(s) for s in group)))
     for row in S.rows(story):
         def chart_cell(c):
             if not (c.get("message") or c.get("note")):

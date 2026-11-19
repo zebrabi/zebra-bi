@@ -4,8 +4,8 @@ Ask your AI assistant about your business numbers and get the answer as a Zebra 
 
 What you can do with it:
 
-1. **Charts and variances.** Ask how a figure compares with last year, last month, plan or forecast, and see it as a chart or table in the conversation.
-2. **Data stories.** Point your assistant at a spreadsheet or a Power BI model and get the story a controller would tell: one key message, the three to five findings that prove it, and a chart for each one. Every number is computed from your data, and the story never adds a cause the data does not show.
+1. **Charts, dashboards and variances.** Ask how a figure compares with last year, last month, plan or forecast, and see it as a chart or table in the conversation, or several of them side by side as one dashboard.
+2. **Data stories.** Point your assistant at a spreadsheet or a Power BI model and get the story a controller would tell: one key message, the three to five findings that prove it, and one dashboard with a chart for each. Every number is computed from your data, and the story never adds a cause the data does not show.
 3. **Files to share.** A story as a PDF, a web page, or a PowerPoint deck and an Excel workbook, in your company's brand. Made only when you ask for a file.
 4. **Power BI reports.** For report developers: a coding agent writes a Zebra BI report into a Power BI project and checks it before Power BI Desktop opens it. This part needs Windows with Power BI Desktop and has its own guide, [`POWER-BI.md`](POWER-BI.md).
 
@@ -24,16 +24,16 @@ The table covers what the plugin adds. Your assistant itself reads the data you 
 
 ## How it works
 
-The plugin bundles the Zebra BI MCP connector with the skills that put it to work. The connector has one tool, `render_visual`: your assistant sends it aggregated figures and Zebra BI draws the variances. Hosts that support MCP Apps show the interactive visual; the others show a text summary of what was drawn. The skills tell your assistant when to use the tool and how. The plugin comes in Claude's format and in Agent Plugins, the format VS Code, Copilot CLI, ChatGPT and Codex read. Any other MCP client can connect to the Zebra BI MCP on its own.
+The plugin bundles the Zebra BI MCP connector with the skills that put it to work. The connector has two tools: `render_visual` draws one chart or table, and `render_dashboard` draws up to six of them side by side. Your assistant sends them aggregated figures and Zebra BI draws the variances. Hosts that support MCP Apps show the interactive visual or dashboard; the others show a text summary of what was drawn. The skills tell your assistant when to use the tool and how. The plugin comes in Claude's format and in Agent Plugins, the format VS Code, Copilot CLI, ChatGPT and Codex read. Any other MCP client can connect to the Zebra BI MCP on its own.
 
 ## Skills
 
 | Skill | What it does |
 |---|---|
-| `chart-from-data` | When to show findings as a visual, and how to shape the data for `render_visual`. |
+| `chart-from-data` | When to show findings as a visual, how to shape the data for `render_visual`, and when to draw several charts as one dashboard with `render_dashboard`. |
 | `variance-analysis` | How to explain actuals against previous year, previous month, plan or forecast, and show the variances. |
 | `data-source` | Finds a dataset (local CSV or Excel, Excel in SharePoint or OneDrive, a Power BI semantic model) and remembers it in `.zebra/sources/`, so the file, sheet, date format or query is never asked twice. |
-| `data-story` | Analyses the data and tells an IBCS story in the conversation, with a Zebra BI chart for every supporting message. In Claude Code it also saves the story in `.zebra/stories/`. |
+| `data-story` | Analyses the data and tells an IBCS story in the conversation, with one Zebra BI dashboard holding a chart for every supporting message. In Claude Code it also saves the story in `.zebra/stories/`. |
 | `story-pdf` | Turns a saved story into one A4 PDF: the key message and KPIs, each supporting message with its chart, page numbers. Chart labels and values stay text. Claude Code only. |
 | `story-artifact` | Publishes a saved story as one shareable Claude artifact page: the key message and KPIs, each supporting message with its Zebra BI chart. Charts are pictures of the Zebra BI charts, or live charts with hover on request. A plain artifact page, since the Dashboard artifact type cannot carry Zebra BI charts. Claude Code only. |
 | `story-office` | Writes a saved story as a PowerPoint deck and an Excel workbook. Each chart is a live Zebra BI for Office visual where the Charts or Tables add-in is installed, and a picture of the chart for everyone else. Claude Code only. |
@@ -80,7 +80,7 @@ The MCP URL is `https://mcp.zebrabi.com/mcp`.
 
 ## What this plugin sends and runs
 
-- **The MCP.** The skills call `render_visual` once per chart. Each call sends the chart's arguments: the category and period labels, the aggregated values per scenario and the titles. The labels are your data's own values, so a chart by customer or employee sends those names; leave out anything that should not leave your machine. Each skill says so in one line before its first chart. The source file is never sent. A chart that fails to render is reported to Zebra's error monitoring together with the arguments that were sent.
+- **The MCP.** The skills call `render_visual` once per chart, or `render_dashboard` once for several charts. Each call sends every chart's arguments: the category and period labels, the aggregated values per scenario and the titles. The labels are your data's own values, so a chart by customer or employee sends those names; leave out anything that should not leave your machine. Each skill says so in one line before its first chart. The source file is never sent. A chart that fails to render is reported to Zebra's error monitoring together with the arguments that were sent.
 - **`story-pdf`, `story-artifact` and `story-office`.** Their Python scripts send the same chart arguments to the same MCP over HTTPS and print `Sending <n> chart(s) to <endpoint>` first. A chart whose arguments did not change is reused from `.zebra/stories/<story>/visuals/`. Once a day they download the chart renderer (the `ui://` page `render_visual` names in `tools/list`) and cache it in `$CLAUDE_PLUGIN_DATA`, or in `~/.cache/zebra-bi` when that is not set. A renderer or chart fetched from another MCP address is never reused. The plugin sends no telemetry.
 - **The artifact page.** `story-artifact` publishes the page and a picture of each chart to claude.ai as a private artifact, which its owner shares from the page's Share menu. It holds the story's aggregated numbers, not the source data. With `--live` it also carries the Zebra BI renderer, which draws the charts in each reader's browser.
 - **A local browser.** `story-pdf`, `story-artifact`, `story-office` and the `story-brand` preview start Chrome, Edge or Chromium headless, with a throwaway profile and its background traffic (updates, sync, metrics, safe-browsing lists) turned off. The scripts drive it over a private pipe that no other program can reach; on Windows over a remote-debugging port bound to 127.0.0.1. The browser closes when the file is done.

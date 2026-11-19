@@ -1,6 +1,6 @@
 ---
 name: chart-from-data
-description: "Show business figures as an interactive IBCS-style Zebra BI chart or table with the render_visual tool. Use when presenting findings from business data such as sales, costs, budgets or KPIs, even if the user did not ask for a chart, and when the user asks to chart, plot or visualize numbers or to compare actuals with previous year, plan or forecast. Also when the user asks for a dashboard of business data: the charts are Zebra BI charts, and story-artifact builds the page, never the Dashboard artifact type."
+description: "Show business figures as an interactive IBCS-style Zebra BI chart or table with the render_visual tool. Use when presenting findings from business data such as sales, costs, budgets or KPIs, even if the user did not ask for a chart, and when the user asks to chart, plot or visualize numbers or to compare actuals with previous year, plan or forecast. Also when the user asks for a dashboard of business data: render_dashboard draws it in the conversation. A page or link to share is story-artifact, never the Dashboard artifact type."
 license: Apache-2.0
 ---
 
@@ -58,6 +58,15 @@ Monthly sales against last year and plan:
 }
 ```
 
-## A page or dashboard to share
+## Several charts: one dashboard
 
-When the user wants these charts as an artifact, a dashboard or a page to share, use the `story-artifact` skill: it builds a plain artifact page with the Zebra BI charts. Do not start from the Dashboard Artifact type and do not write the page by hand: neither carries Zebra BI charts.
+When an answer needs two or more charts, such as revenue by month next to revenue by region, or the user asks for a dashboard, draw them together with one `render_dashboard` call instead of one `render_visual` call per chart. Charts called separately land together, and some apps then show only one of them.
+
+- `title`: the reporting unit and period ("Sales · Q1 2026").
+- `visuals`: 2 to 6, in reading order, the overview first. Each takes the `render_visual` arguments above plus `width`, columns of a 12-column grid. Two visuals a row (6 each) read best. Give the whole row (12) to a chart with many periods, small multiples, and a table with `additional_measures` or `group_columns`.
+- The dashboard is drawn whole or not at all. When the result says it was not drawn, fix the visuals it names and send all of them again.
+- Without a `render_dashboard` tool (an older Zebra BI MCP), call `render_visual` once per chart, one at a time, waiting for each before the next.
+
+## A page to share
+
+When the user wants these charts as an artifact, a page or a link to share, use the `story-artifact` skill: it builds a plain artifact page with the Zebra BI charts. Do not start from the Dashboard Artifact type and do not write the page by hand: neither carries Zebra BI charts.

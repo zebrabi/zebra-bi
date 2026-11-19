@@ -11,7 +11,7 @@ Run this only when someone asks for a file to share. `data-story` tells the stor
 
 ## In Claude chat or Cowork
 
-The file is built by a script in Claude Code, so do not run anything here. Say in one line that the PDF is made in Claude Code, and offer the story as one JSON block in the `story.json` format of the `data-story` skill (`references/story-json.md` there; without it, include `title`, `subtitle`, `kpis`, `sections` with `heading`, `body` and `visual`, `visuals` with each chart's `args`, and `next`) to carry over: saved as `.zebra/stories/<slug>/story.json` in a Claude Code folder, `/zebra-bi:story-pdf <slug>` builds it. Stop there.
+The file is built by a script in Claude Code, so do not run anything here. Say in one line that the PDF is made in Claude Code, and offer the story as one JSON block in the `story.json` format of the `data-story` skill (`references/story-json.md` there; without it, include `title`, `subtitle`, `kpis`, `sections` with `heading`, `body`, `visual` and the chart's dashboard `width`, `visuals` with each chart's `args`, and `next`) to carry over: saved as `.zebra/stories/<slug>/story.json` in a Claude Code folder, `/zebra-bi:story-pdf <slug>` builds it. Stop there.
 
 ## 1. Find the story
 
