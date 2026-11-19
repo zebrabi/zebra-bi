@@ -47,11 +47,9 @@ const need = (cond, msg) => { if (!cond) throw new EncodeError(msg); };
  */
 function noApostrophe(json, property) {
   need(!json.includes("'"),
-    `${property} contains an apostrophe (in a category, a comment or a label), and how a PBIR `
-    + `literal escapes one is not established: no file in the reference corpus carries a literal `
-    + `with one, raw or doubled, and one of the two forms corrupts the visual in silence. Use the `
-    + `typographic apostrophe U+2019 (’) in the text instead, which reads better in a report `
-    + `anyway, or verify the escaping against a render and pass the literal yourself.`);
+    `${property} contains an apostrophe (in a category, a comment or a label). An apostrophe `
+    + `inside a PBIR literal can corrupt the visual in silence. Use the typographic apostrophe `
+    + `U+2019 (’) in the text instead, or pass the literal yourself after checking it in a render.`);
   return json;
 }
 

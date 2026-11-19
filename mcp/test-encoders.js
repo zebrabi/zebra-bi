@@ -343,8 +343,8 @@ check("the same blobs written by hand ARE caught, so the round trip means someth
   }
 });
 
-// Apostrophes: refused, as the writer refuses them, because the escaping is not established and
-// one of the two forms corrupts the visual silently. Until 2026-09-01 the encoders emitted the raw
+// Apostrophes: refused, as the writer refuses them, because one of the two escape forms
+// corrupts the visual silently. Until 2026-09-01 the encoders emitted the raw
 // form without a word, on the path the skill documents ("splice the literal in unchanged").
 const ANNOT_APOS = (text, category) => ({
   target: "tables", valuesOrder: ["AC"],
