@@ -1,7 +1,7 @@
 {
   "name": "zebra-bi",
   "displayName": "Zebra BI",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "The Zebra BI MCP connector bundled with the skills that put it to work: interactive IBCS-style charts and tables of your business data, variance explanations, and data stories you can export as a PDF, a shareable artifact page, or PowerPoint and Excel files with live Zebra BI visuals. It also authors Zebra BI reports in a Power BI project (PBIP) and checks them before Power BI Desktop opens them.",
   "author": { "name": "Zebra BI", "url": "https://zebrabi.com" },
   "homepage": "https://zebrabi.com/",
