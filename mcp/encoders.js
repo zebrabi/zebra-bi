@@ -616,7 +616,7 @@ function encodeCategoryScenarios({ scenarios, floating, results, highlighted } =
   });
 }
 
-// --- Plus visuals: where viewer comments live --------------------------------------------------
+// --- Tables+ and Charts+: where viewer comments live ---------------------------------------------
 
 /**
  * `annotationLayerSettings.annotationsStorageConfig` — the link from a Tables+ or Charts+ visual

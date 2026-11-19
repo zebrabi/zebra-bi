@@ -30,7 +30,7 @@ const ZEBRA = {
 const isZebra = (t = "") => Object.values(ZEBRA).some((p) => t.startsWith(p));
 const isTable = (t = "") => t.startsWith(ZEBRA.tables);
 const isCards = (t = "") => t.startsWith(ZEBRA.cards);
-// The Plus visuals are the two whose GUID carries "Plus" after the product name. View-mode
+// Tables+ and Charts+ are the two visuals whose GUID carries "Plus" after the product name. View-mode
 // comments exist only on them; the certified twins declare the same property and ignore it.
 const isPlus = (t = "") => /^ZebraBI(?:Tables|Charts)Plus/.test(t);
 

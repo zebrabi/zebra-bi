@@ -366,7 +366,7 @@ check("a data value with an apostrophe is refused on the list encoders as well",
   refuses(e.encodeDataValueList, { target: "chartResults", values: ["Q1", "Women's"] }, "apostrophe");
 });
 
-// --- Plus visuals: the link to the view-mode comments workbook ------------------------------------
+// --- Tables+ and Charts+: the link to the view-mode comments workbook -------------------------------
 
 // A team-site library is the supported location. The ids below are synthetic placeholders, not a
 // real tenant's. The asymmetric site GUID below exercises little-endian byte ordering.
@@ -404,7 +404,7 @@ check("a non-xlsx file is refused", () => {
   refuses(e.encodeStorageConfig, { ...STORE, fileName: "comments.csv" }, "xlsx");
 });
 
-check("the companion names the show flag and the Plus-only constraint", () => {
+check("the companion names the show flag and the Tables+ or Charts+ constraint", () => {
   const r = e.encodeStorageConfig(STORE);
   assert.ok(/commentBoxSettings\.show/.test(r.companion));
   assert.ok(/Tables\+ or Charts\+/.test(r.companion));

@@ -53,7 +53,7 @@ function measureRef(ref) {
 
 function proposePages(profile, opts = {}) {
   const maxPages = Number.isFinite(opts.maxPages) ? opts.maxPages : 4;
-  const usePlus = opts.usePlus !== false;         // Plus is the authoring default since 2026-08-14
+  const usePlus = opts.usePlus !== false;         // Tables+ and Charts+ are the authoring default
   const visualType = usePlus ? ZEBRA_TABLE_PLUS : ZEBRA_TABLE;
 
   if (!profile || profile.ok === false) {

@@ -20,7 +20,7 @@ const GUID = {
   tables: "ZebraBITablesBAE31B370F254F808553548EFB35BFA5",
   cards: "zebraBiCards2C860CFAA9944091B75F0DBD117F20FA",
   charts: "waterfall6C9ED82ABD1F44C4A0D590CE01EB5EE7",
-  // The Plus visuals. Tables+ extends the Tables prefix, so it was already covered; Charts+
+  // Tables+ and Charts+. Tables+ extends the Tables prefix, so it was already covered; Charts+
   // does not extend the `waterfall` one, so every rule skipped it and the report passed
   // unchecked. These two fixtures are what make that coverage provable rather than assumed.
   tablesPlus: "ZebraBITablesPlus3E6085701D7B426980C3859B16327993",
@@ -318,7 +318,7 @@ rule("native-anti-pattern-visual", "a native pie chart where a bar table belongs
 });
 
 // View-mode comments. The storage link on a CERTIFIED visual is declared and ignored; the clean
-// project is a certified Table with no link, and the Plus silence fixtures at the end prove the
+// project is a certified Table with no link, and the Tables+ and Charts+ silence fixtures at the end prove the
 // same link on Tables+ stays quiet (the rule reads the GUID, not the property).
 const STORAGE_LINK = W(JSON.stringify({ storageBackend: "sharePointExcel", storageOptions: {
   siteId: "11111111-1111-1111-1111-111111111111", folderPath: "/drive/root:", fullFileName: "c.xlsx" } }));
@@ -344,7 +344,7 @@ try {
       [{ properties: { annotationsStorageConfig: STORAGE_LINK } }];
   }) });
   const hit = out.findings.filter((f) => /view-mode-storage/.test(f.code)).map((f) => f.code);
-  assert.deepStrictEqual(hit, [], `a Plus storage link with no comment box fired: ${hit}`);
+  assert.deepStrictEqual(hit, [], `a Tables+ storage link with no comment box fired: ${hit}`);
   results.push(["PASS", "a Tables+ storage link with commentBoxSettings absent stays silent", ""]);
 } catch (e) {
   results.push(["FAIL", "a Tables+ storage link with commentBoxSettings absent stays silent",
@@ -410,7 +410,7 @@ check("lit() still strips the type suffix from a NUMERIC literal", () => {
   assert.strictEqual(of("42L"), "42");
 });
 
-// The Plus visuals must be checked like their certified twins. Before Charts+ got its own
+// Tables+ and Charts+ must be checked like their certified twins. Before Charts+ got its own
 // prefix this fixture passed silently -- not because the report was good, but because the
 // checker did not recognise the visual as Zebra at all.
 rule("data-role-exceeds-declared-maximum", "three Charts+ Values projections", (s, G) => {
@@ -767,10 +767,10 @@ try {
   results.push(["FAIL", "a clean project produces ZERO findings", String(e.message).slice(0, 110)]);
 }
 
-// The silence bar again, for the Plus visuals specifically. Giving Charts+ its own prefix turned
+// The silence bar again, for Tables+ and Charts+ specifically. Giving Charts+ its own prefix turned
 // every isZebra()-guarded rule ON for a visual they had all been skipping, so the fixture above --
 // which uses the certified Tables GUID -- proves nothing about them. A rule that starts firing on a
-// correct Plus page is a false positive we introduced, and 19 of those shipped once already.
+// correct Tables+ or Charts+ page is a false positive we introduced, and 19 of those shipped once already.
 for (const [label, guid] of [["Tables+", GUID.tablesPlus], ["Charts+", GUID.chartsPlus]]) {
   try {
     const out = srv.validateReport({ projectPath: project((s, G) => {
