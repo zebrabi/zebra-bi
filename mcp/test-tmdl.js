@@ -858,6 +858,95 @@ check("a table named Goals is NOT caught", () => {
     .has("tmdl-reserved-table-name-goal"), "fired on Goals, which is a legal name");
 });
 
+// --- partition `source =` must start below the equals line (17 Nov 2026) -----------------------------
+//
+// Desktop: "TMDL Format Error: Parsing error type - InvalidLineType ... Line - '{"Revenue",1},'".
+// The table below is the shape an agent-built project had: the DATATABLE
+// opens on the `source =` line and its rows follow underneath. The controls are the corrected form
+// Desktop accepted, a one-line expression, an M partition and a fenced body, because a rule that also
+// fired on those would flag most partitions in every shipped template.
+const PART_HEAD = "table KPI\n\tcolumn KPI\n\t\tdataType: string\n\t\tsourceColumn: [KPI]\n\n\tpartition KPI = calculated\n\t\tmode: import\n";
+const partitionCodes = (source) => codes(project({ extraTmdl: PART_HEAD + source }));
+
+check("a DATATABLE that opens on the source = line and continues below is caught", () => {
+  const bad = "\t\tsource = DATATABLE ( \"KPI\", STRING, \"Sort\", INTEGER, {\n\t\t\t{\"Revenue\",1},\n\t\t\t{\"Gross profit\",2}\n\t\t} )\n";
+  assert.ok(partitionCodes(bad).has("tmdl-partition-source-on-equals-line"), "did not fire on the shape Desktop refused");
+  const unindented = "\t\tsource = DATATABLE ( \"KPI\", STRING, {\n{\"Revenue\",1}\n} )\n";
+  assert.ok(partitionCodes(unindented).has("tmdl-partition-source-on-equals-line"), "missed rows with no indentation at all");
+});
+
+check("a bare source = with no indented body is caught", () => {
+  assert.ok(partitionCodes("\t\tsource =\n\t\tDATATABLE (\"KPI\", STRING, {{\"Revenue\"}})\n")
+    .has("tmdl-partition-source-on-equals-line"), "missed a body at the same indent as source");
+});
+
+check("the corrected multi-line form, a one-line expression, an M partition and a fenced body are NOT flagged", () => {
+  const forms = [
+    "\t\tsource =\n\t\t\tDATATABLE (\n\t\t\t\t\"KPI\", STRING,\n\t\t\t\t{\n\t\t\t\t\t{\"Revenue\"}\n\t\t\t\t}\n\t\t\t)\n",
+    "\t\tsource = DATATABLE ( \"KPI\", STRING, { {\"Revenue\"}, {\"Gross profit\"} } )\n",
+    "\t\tsource =\n\t\t\t\tlet\n\t\t\t\t    Source = Csv.Document(File.Contents(\"C:\\d.csv\"), [Delimiter=\",\"])\n\t\t\t\tin\n\t\t\t\t    Source\n",
+    "\t\tsource = ```\n\t\t\tDATATABLE ( \"KPI\", STRING, { {\"Revenue\"} } )\n\t\t```\n",
+    "\t\tsource = SELECTCOLUMNS ( \"a (b\", 1 ) -- note (\n\t\tannotation PBI_Id = x\n",
+  ];
+  forms.forEach((f, i) => assert.ok(!partitionCodes(f).has("tmdl-partition-source-on-equals-line"),
+    `fired on normal form #${i + 1}`));
+});
+
+// A lowercase `source = ...` M step inside a `let` body is expression text, not the partition's
+// `source` property, whether the body belongs to a partition or to an `expression`.
+check("a multi-line `source = ...` step inside an M body (partition or expression) is NOT flagged", () => {
+  const inPartition = "table T\n\tpartition T = m\n\t\tmode: import\n\t\tsource =\n\t\t\t\tlet\n"
+    + "\t\t\t\t\tsource = Table.TransformColumnTypes(raw,{\n\t\t\t\t\t\t{\"A\", type text}})\n\t\t\t\tin\n\t\t\t\t\tsource\n";
+  assert.ok(!codes(project({ extraTmdl: inPartition })).has("tmdl-partition-source-on-equals-line"),
+    "fired on an M step inside a partition's let body");
+  const inExpression = "expression src =\n\t\tlet\n\t\t\tsource = Json.Document(Web.Contents(\"https://x\",[\n"
+    + "\t\t\t\tHeaders=[]]))\n\t\tin\n\t\t\tsource\n";
+  assert.ok(!codes(project({ extraTmdl: inExpression })).has("tmdl-partition-source-on-equals-line"),
+    "fired on an M step inside an expression body");
+});
+
+// --- model.tmdl ref lines start at column 0 (17 Nov 2026) --------------------------------------
+// Desktop: "Unexpected line type: ReferenceObject! Document - './model'. Line - '\tref table Financials'".
+// Controls are the shape a project that Desktop opened writes: properties indented, refs at column 0.
+const modelTmdl = (refIndent) => [
+  "model Model", "\tculture: en-US", "\tdefaultPowerBIDataSourceVersion: powerBI_V3", "",
+  `${refIndent}ref table Financials`, `${refIndent}ref table Calendar`, `${refIndent}ref table 'Time View'`, "",
+].join("\n");
+const withModel = (refIndent) => {
+  const root = project();
+  fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), modelTmdl(refIndent));
+  return root;
+};
+
+check("an indented ref table line in model.tmdl is caught, with its line", () => {
+  for (const ind of ["\t", "    "]) {
+    const r = srv.validateReport({ projectPath: withModel(ind) });
+    const f = r.findings.find((x) => x.code === "tmdl-ref-line-indented");
+    assert.ok(f, `did not fire on a ref indented with ${JSON.stringify(ind)}`);
+    assert.strictEqual(f.severity, "wont-open");
+    assert.ok(/model\.tmdl:5$/.test(f.location), f.location);
+  }
+});
+
+check("ref lines at column 0 (the form Desktop writes) are NOT flagged; an indented ref outside model.tmdl is not judged", () => {
+  assert.ok(!codes(withModel("")).has("tmdl-ref-line-indented"), "fired on the correct form");
+  assert.ok(!codes(project({ extraTmdl: "table T\n\tref table X\n" })).has("tmdl-ref-line-indented"),
+    "judged a file that is not model.tmdl");
+});
+
+// A table named Model lives in definition/tables/Model.tmdl. Its M body may carry a step called `ref`,
+// indented like every step. That file is a table, not the model, so the ref-line rule does not read it.
+check("a step named ref inside tables/Model.tmdl (a table named Model) is NOT flagged", () => {
+  const root = withModel("");
+  fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "tables", "Model.tmdl"), [
+    "table Model", "\tcolumn A", "\t\tdataType: string", "\t\tsourceColumn: A", "",
+    "\tpartition Model = m", "\t\tmode: import", "\t\tsource =", "\t\t\t\tlet",
+    "\t\t\t\t    ref = Csv.Document(File.Contents(\"C:\\d.csv\"), [Delimiter=\",\"]),",
+    "\t\t\t\t    Source = ref", "\t\t\t\tin", "\t\t\t\t    Source", "",
+  ].join("\n"));
+  assert.ok(!codes(root).has("tmdl-ref-line-indented"), "judged a table file named Model.tmdl as the model");
+});
+
 // --- cultures/ is a FACT, like compatibilityLevel -----------------------------------------
 //
 // It kills `file.reload/v1` while the project cold-opens perfectly, so the caller needs to know
