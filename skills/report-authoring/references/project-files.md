@@ -80,4 +80,6 @@ ref table <OtherTable>
 ## TMDL notes for the table files
 
 - Put a partition's `source =` on its own line and indent the whole expression on the lines after it, one level deeper than `source`. Starting the expression on the `source =` line fails with "TMDL Format Error: Parsing error type - InvalidLineType" at the first row.
+- Every value in a DATATABLE row is a constant (a number, text or an ISO date string), never a function call. `DATE(2025,1,1)` in a row makes the calculated table fail on load, and every visual on it is blank.
+- Carry a date as an ISO string constant (`"yyyy-mm-dd"`) in a `DATETIME` column, or build it outside the rows with `ADDCOLUMNS ( DATATABLE ( ... ), "Date", DATE ( [Year], [MonthNo], 1 ) )`.
 - Run `validate_report` after writing them: the checks for every fault named here live in the tool.

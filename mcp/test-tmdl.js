@@ -947,6 +947,44 @@ check("a step named ref inside tables/Model.tmdl (a table named Model) is NOT fl
   assert.ok(!codes(root).has("tmdl-ref-line-indented"), "judged a table file named Model.tmdl as the model");
 });
 
+// --- DATATABLE rows are constants ----------------------------------------------------------------
+// DATE(2025,1,1) in a row makes the calculated table fail on load; an ISO string constant in a DATETIME
+// column loads. Must stay silent on: strings, a DATE applied OUTSIDE the DATATABLE by ADDCOLUMNS,
+// negative numbers, BLANK(), and a function-looking word in a string.
+const dtCodes = (source) => codes(project({ extraTmdl: "table F\n\tpartition F = calculated\n\t\tmode: import\n" + source }));
+const DT_HEAD = "\t\tsource =\n\t\t\tDATATABLE ( \"Date\", DATETIME, \"Account\", STRING, \"Amount\", INTEGER, {\n";
+
+check("a DATE() call in a DATATABLE row is caught once, as a blank-severity finding at the row", () => {
+  const root = project({ extraTmdl: "table F\n\tpartition F = calculated\n\t\tmode: import\n" + DT_HEAD
+    + "\t\t\t\t{ DATE(2025,1,1), \"Revenue\", 473363 },\n\t\t\t\t{ DATE(2025,2,1), \"Revenue\", 492779 }\n\t\t\t} )\n" });
+  const hits = srv.validateReport({ projectPath: root }).findings.filter((f) => f.code === "tmdl-datatable-row-calls-a-function");
+  assert.strictEqual(hits.length, 1, "expected one finding per DATATABLE, got " + hits.length);
+  assert.strictEqual(hits[0].severity, "blank");
+  assert.ok(/extra\.tmdl:\d+$/.test(hits[0].location), hits[0].location);
+  assert.ok(/DATE\(/.test(hits[0].detail));
+});
+
+check("constants, strings, negatives, BLANK(), a DATE outside the DATATABLE and a quoted DATE( are NOT flagged", () => {
+  const rowsOk = [
+    "\t\t\t\t{ \"2025-01-01\", \"Revenue\", 473363 },\n\t\t\t\t{ \"2025-02-01\", \"Cost\", -257436 }\n\t\t\t} )\n",
+    "\t\t\t\t{ \"2025-01-01\", \"Revenue\", BLANK() }\n\t\t\t} )\n",
+    "\t\t\t\t{ \"2025-01-01\", \"DATE(2025,1,1) in text\", 1 }\n\t\t\t} )\n",
+  ];
+  rowsOk.forEach((r, n) => assert.ok(!dtCodes(DT_HEAD + r).has("tmdl-datatable-row-calls-a-function"), "fired on control #" + (n + 1)));
+  const outside = "\t\tsource =\n\t\t\tADDCOLUMNS (\n\t\t\t\tDATATABLE ( \"Year\", INTEGER, \"MonthNo\", INTEGER, {\n\t\t\t\t\t{2025,1},\n\t\t\t\t\t{2025,2}\n\t\t\t\t} ),\n\t\t\t\t\"Date\", DATE ( [Year], [MonthNo], 1 )\n\t\t\t)\n";
+  assert.ok(!dtCodes(outside).has("tmdl-datatable-row-calls-a-function"), "fired on a DATE applied outside the DATATABLE");
+});
+
+// Only DATE is flagged; other calls in a row are not judged. Comments are not code.
+check("TRUE()/FALSE() rows, a commented-out DATATABLE and a `//` note after a row are NOT flagged", () => {
+  const cases = [
+    "\t\tsource =\n\t\t\tDATATABLE(\"B\", BOOLEAN, {\n\t\t\t\t{TRUE()},\n\t\t\t\t{FALSE()}\n\t\t\t})\n",
+    "\t\tsource =\n\t\t\t// DATATABLE(\"x\", STRING, {{FORMAT(1)}})\n\t\t\tROW(\"a\",1)\n",
+    "\t\tsource =\n\t\t\tDATATABLE(\"N\", STRING, {\n\t\t\t\t{\"a\"} // see note(1)\n\t\t\t})\n",
+  ];
+  cases.forEach((c, n) => assert.ok(!dtCodes(c).has("tmdl-datatable-row-calls-a-function"), "fired on case #" + (n + 1)));
+});
+
 // --- cultures/ is a FACT, like compatibilityLevel -----------------------------------------
 //
 // It kills `file.reload/v1` while the project cold-opens perfectly, so the caller needs to know

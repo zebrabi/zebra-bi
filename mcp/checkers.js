@@ -557,17 +557,67 @@ const checkers = {
   },
 
   /**
+   * Every value in a DATATABLE row is a constant. `DATE(2025,1,1)` in a row makes the calculated
+   * table fail on load ("does not have a constant expression in the column"), and every visual on
+   * it is blank; an ISO string constant such as "2025-01-01" in a DATETIME column loads. Severity
+   * `blank`: the project itself still opens. Fires once per DATATABLE, at the first row line with a DATE call, and
+   * looks only inside the row braces, so a DATE( applied OUTSIDE the DATATABLE (ADDCOLUMNS over it,
+   * one of the two forms the skill teaches) is silent.
+   *
+   * Only DATE is flagged. Other calls in a row (TRUE(), FALSE(), BLANK(), TIME(), ...) are not
+   * flagged. Reads the partition's `source` only, through `daxOnly`, so a
+   * commented-out DATATABLE or a `// note(1)` after a row is not code.
+   */
+  "datatable-rows-must-be-constants"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      const lines = daxOnly(src.text);
+      for (const { i, indent, expr } of partitionSources(src, lines)) {
+        let text = expr;
+        for (let j = i + 1; j < lines.length; j++) {
+          if (lines[j].trim() === "") { text += "\n"; continue; }
+          if (T.indentOf(lines[j]) <= indent) break;
+          text += "\n" + lines[j];
+        }
+        const lineOf = (off) => i + 1 + (text.slice(0, off).match(/\n/g) || []).length;
+        const re = /\bDATATABLE\s*\(/gi;
+        let dm;
+        while ((dm = re.exec(text))) {
+          // daxOnly has blanked string contents, so every bracket left is code.
+          let k = dm.index + dm[0].length, depth = 1, rowsAt = -1;
+          for (; k < text.length && depth > 0; k++) {
+            const ch = text[k];
+            if (ch === "{" && rowsAt < 0) rowsAt = k;
+            if (ch === "(") depth++; else if (ch === ")") depth--;
+          }
+          if (rowsAt < 0) continue;
+          const call = /(?<![\w.])DATE\s*\(/gi;
+          call.lastIndex = rowsAt;
+          const cm = call.exec(text);
+          if (cm && cm.index < k) out.push({ location: `${src.rel}:${lineOf(cm.index)}`,
+            detail: `a DATATABLE row calls DATE(...); every value in a DATATABLE row is a constant. Carry a date as an ISO string constant ("yyyy-mm-dd") in a DATETIME column, or build it outside the rows with ADDCOLUMNS ( DATATABLE ( ... ), "Date", DATE ( [Year], [MonthNo], 1 ) )` });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
    * ---------------------------------------------------------------------------------------------
-   * THE THREE DAX RULES. Read this before adding a fourth.
+   * THE FOUR DAX RULES. Read this before adding a fifth.
    *
    * Everything from the first `=` onward is DAX, and this file has always treated it as opaque on
    * purpose: judging an expression needs the model's names and types, which no file check has.
-   * These three are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
+   * These four are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
    * visible in the text alone. That matters for false positives: an expression that trips one of
    * these cannot work, so the rule cannot fire on a correct report -- which is the bar AGENTS.md
    * sets and the reason the wider "is this DAX sensible" rules were not written.
    *
-   * All three were measured on Desktop 2.157 against a live model, with controls.
+   * The fourth is `datatable-rows-must-be-constants`, above: it reads a partition's `source`
+   * through `daxOnly()` and flags only DATE in a row.
+   *
+   * The three below are hard errors on Desktop 2.157 against a live model.
    * See feedback/2026-09-05-dax-layer-measured.md.
    */
 

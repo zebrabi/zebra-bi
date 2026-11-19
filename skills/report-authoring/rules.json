@@ -528,6 +528,14 @@
       "message": "In `model.tmdl`, write every `ref table X` (and `ref cultureInfo`, `ref role`, `ref expression`)\nline at column 0, with no leading tab or spaces; only the properties under `model` (`culture:`,\n`defaultPowerBIDataSourceVersion:`) are indented. An indented `ref` line is a line type the model\ndoes not have, and Desktop refuses the whole model: \"TMDL Format Error ... Unexpected line type:\nReferenceObject! Document - './model'\".",
       "source": "validator",
       "held": true
+    },
+    {
+      "id": "tmdl-datatable-row-calls-a-function",
+      "severity": "blank",
+      "check": "datatable-rows-must-be-constants",
+      "message": "Every value in a DATATABLE row is a constant: a number, text or an ISO date string, never a function\ncall. `DATE(2025,1,1)` in a row makes the calculated table fail on load with \"The tuple at index '1'\nfrom the table definition of the DATATABLE function does not have a constant expression in the column\nat index '1'\", and every visual on it is blank. Carry a date as an ISO string constant\n(`\"yyyy-mm-dd\"`) in a `DATETIME` column, or build it outside the rows with `ADDCOLUMNS ( DATATABLE (\n... ), \"Date\", DATE ( [Year], [MonthNo], 1 ) )`.",
+      "source": "validator",
+      "held": true
     }
   ]
 }
