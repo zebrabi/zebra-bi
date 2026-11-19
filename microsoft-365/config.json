@@ -1,0 +1,102 @@
+{
+  "atk": "@microsoft/m365agentstoolkit-cli@1.1.19",
+  "output": "zebra-bi-microsoft-365-copilot.zip",
+  "app": {
+    "name": "Zebra BI",
+    "shortDescription": "IBCS charts, variance analysis and Power BI reports with Zebra BI",
+    "fullDescriptionAddition": "For Power BI report developers, it also writes a Zebra BI report into a Power BI project and checks the project for faults that stop Power BI Desktop from opening it. The project comes back as a zip to open in Power BI Desktop.",
+    "accentColor": "#FFFFFF",
+    "privacyUrl": "https://zebrabi.com/legal/?doc=privacy-policy",
+    "termsUrl": "https://zebrabi.com/legal/",
+    "connector": {
+      "id": "zebra-bi",
+      "displayName": "Zebra BI",
+      "description": "Draws business figures as interactive IBCS-style Zebra BI charts and tables, with the variances marked."
+    }
+  },
+  "limits": {
+    "skillMdCharacters": 64000,
+    "descriptionCharacters": 1000,
+    "companionFilesPerSkill": 20
+  },
+  "checker": {
+    "skill": "report-authoring",
+    "frontEnd": "scripts/zbi.js",
+    "bundle": "zbi-server.js"
+  },
+  "skills": {
+    "chart-from-data": {
+      "include": true,
+      "reason": "Needs only the Zebra BI connector.",
+      "overlay": [
+        { "op": "drop-text", "text": " A page or link to share is story-artifact, never the Dashboard artifact type." },
+        { "op": "drop-section", "heading": "## A page to share" }
+      ]
+    },
+    "variance-analysis": {
+      "include": true,
+      "reason": "Needs only the Zebra BI connector.",
+      "overlay": [
+        { "op": "drop-section", "heading": "## A page to share" }
+      ]
+    },
+    "data-story": {
+      "include": true,
+      "reason": "Needs the Zebra BI connector and a code interpreter to analyse the attached file. Without data-source it profiles the file itself, as its step 1 says.",
+      "mayName": { "data-source": "Step 1 follows data-source only when it is available and says what to do without it." },
+      "overlay": [
+        { "op": "drop-text", "text": ", story-pdf for a PDF, story-artifact for a page, story-office for PowerPoint or Excel" },
+        { "op": "drop-line", "startsWith": "- **Claude Code** (a Bash tool exists)" },
+        { "op": "drop-line", "startsWith": "- **Chat** (no file system)" },
+        { "op": "drop-line", "startsWith": "- **Report builder**" }
+      ]
+    },
+    "report-authoring": {
+      "include": true,
+      "reason": "Writes and checks the project files in the sandbox. The checker travels as skill scripts run with Node, because connectors are remote HTTPS MCP servers only.",
+      "moveSections": {
+        "file": "references/sections-moved-for-microsoft-365.md",
+        "headings": [
+          "### Highlights and ellipses",
+          "### View-mode comments",
+          "### CAGR arrows on Charts",
+          "## The loop",
+          "### Know what each step costs",
+          "### The render states that lie",
+          "### Launching, reloading and capturing",
+          "## Registration",
+          "### The other two registration mechanisms",
+          "## The knowledge base"
+        ]
+      }
+    },
+    "report-publishing": {
+      "include": true,
+      "reason": "Text guidance around publishing a finished report; it needs no local file outside its own folder."
+    },
+    "setup-doctor": {
+      "include": true,
+      "reason": "Checks a project in the sandbox. Its validator check runs the checker script that ships with report-authoring."
+    },
+    "data-source": {
+      "include": false,
+      "reason": "Profiles with scripts/profile.py at the plugin root, outside the skill folder, and keeps manifests in .zebra/sources/ in the user's folder to reuse in later sessions. Its SharePoint and Power BI adapters call other hosts' connectors. data-story profiles an attached file itself when this skill is absent."
+    },
+    "story-pdf": {
+      "include": false,
+      "reason": "Runs scripts/pdf.py and scripts/story.py at the plugin root, signs in to Zebra BI through a browser redirect to a loopback address, and prints with headless Chrome, Edge or Chromium."
+    },
+    "story-office": {
+      "include": false,
+      "reason": "Runs scripts/office.py and scripts/story.py at the plugin root, signs in to Zebra BI through a browser redirect to a loopback address, and draws the chart pictures with headless Chrome, Edge or Chromium."
+    },
+    "story-artifact": {
+      "include": false,
+      "reason": "Publishes with Claude's Artifact tool, runs scripts/artifact.py and scripts/story.py at the plugin root, and draws the chart pictures with headless Chrome, Edge or Chromium."
+    },
+    "story-brand": {
+      "include": false,
+      "reason": "Saves the brand in .zebra/brand/ for the PDF, deck and workbook builds, which this package leaves out, and runs scripts/brand.py at the plugin root."
+    }
+  }
+}
