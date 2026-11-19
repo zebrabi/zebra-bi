@@ -994,6 +994,7 @@ Power BI instinct expects.
 | I want | It lives in |
 |---|---|
 | **Check it before you launch — BOM, mojibake, bad JSON, missing theme, dead title tokens, TMDL killers** | **`references/preflight.md`** — run after every write, whole project |
+| A new project from nothing: the five files the writers don't write | `references/project-files.md` |
 | **Write the model — measures, calendar, relationships, TMSL refresh** | **`references/model-layer.md`** — the write gate is open |
 | **TMDL itself — grammar, every object and property, exact load errors, proven constructs** | **`references/tmdl.md`** |
 | **Writing or debugging DAX — engine messages, blank/zero, variance sign, house style** | **`references/dax.md`** — check measures with `EVALUATE` before you launch |
