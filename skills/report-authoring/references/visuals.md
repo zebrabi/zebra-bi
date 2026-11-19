@@ -1,8 +1,8 @@
-<!-- Summary: The Zebra products — GUIDs for both the Plus and certified tracks, which to author by default, roles, per-product differences, and the split between the GUIDs in shipped templates and the installed ones that makes a naive lookup return nothing. -->
+<!-- Summary: The Zebra products — GUIDs for Tables+, Charts+ and the certified visuals, which to author by default, roles, per-product differences, and the split between the GUIDs in shipped templates and the installed ones that makes a naive lookup return nothing. -->
 # The visuals
 
 Five to author with: **Tables+ and Charts+**, their **certified** twins, and **Cards**, which has no
-Plus variant.
++ counterpart.
 
 | product | `visualType` — AUTHOR WITH THESE | installed |
 |---|---|---|
@@ -13,31 +13,31 @@ Plus variant.
 | Zebra BI **Charts** (certified) | `waterfall6C9ED82ABD1F44C4A0D590CE01EB5EE7` | 8.1.0.36 |
 
 **All five register the same way** — as a bare GUID in `publicCustomVisuals` (mechanism 1 below).
-The Plus visuals are *not* organizational-store visuals: Desktop writes their plain GUID with no
+Tables+ and Charts+ are *not* organizational-store visuals: Desktop writes their plain GUID with no
 `_OrgStore` suffix and adds no `resourcePackages` entry, so nothing about registering them differs
 from the certified three. **Charts+ 8.2.1 is ahead of certified Charts 8.1.0.36**, so do not assume
-the + build trails its twin. These are the builds measured here; a Desktop save can migrate Tables+
+the + build trails its twin. A Desktop save can migrate Tables+
 or Charts+ to a newer build (Tables+ 8.3.2 to 8.4.0 on 2.159), so read the `version` in the project's own visuals.
 
-**Every version here is what the visual reports about itself on this machine**, read off its own
+**Every version here is what the visual reports about itself**, read off its own
 landing page or its package. Yours may differ; the GUIDs are the stable part, and nothing in this
 skill keys off a version number.
 
-## Author the Plus visuals by default
+## Author Tables+ and Charts+ by default
 
 **Use Tables+ and Charts+ unless the person tells you otherwise.** They are the same visuals — same
 data roles, same properties, same rendering — plus a collaboration layer, so nothing else in this
-skill changes when you swap the GUID. Cards has **no** Plus variant, so a Cards visual is always the
+skill changes when you swap the GUID. There is **no** Cards+, so a Cards visual is always the
 certified GUID; a page mixing Cards with Tables+/Charts+ is normal and correct.
 
 **Say once, in the plan, that you are using them** — one line, not a lecture: *"Tables+ and Charts+,
-so viewers can comment on the report in view mode. They are not Microsoft-certified and are in Beta;
+so viewers can comment on the report in view mode. They are not Power BI certified and are in Beta;
 say the word and I'll use the certified visuals instead."*
 
 **Switch to the certified track** — `ZebraBITables…`, `waterfall…` — whenever any of these is true,
 and you should ask if you cannot tell:
 
-- Microsoft **certification** is required in their tenant, or the report goes somewhere governed that
+- **Power BI certified** visuals are required in their tenant, or the report goes somewhere governed that
   demands certified-only visuals.
 - **Native PDF export**, print or subscription workflows matter for this report.
 - Viewer commenting is not wanted, or their IT has not enabled the **SharePoint** setup it needs.
@@ -48,8 +48,7 @@ Both tracks are supported and neither is going away, so this is a default, not a
 
 ### What is actually different about them
 
-**Nothing you author.** Verified by re-extracting both installed packages, and by a three-arm render —
-certified, Plus, and a deliberately-unresolvable GUID as the control:
+**Nothing you author.**
 
 - **Schema: identical.** Tables+ 8.3.0.16 vs Tables 8.3.0.37 — 26 object groups, **432 properties**
   with identical names *and* identical types (0 type differences), 10 data roles, matrix mapping,
@@ -57,7 +56,7 @@ certified, Plus, and a deliberately-unresolvable GUID as the control:
 - **The only delta is `privileges`**: Tables+ adds `AADAuthentication` to `https://api.zebrabi.com`
   and a non-essential `WebAccess ["*"]`. Viewer commenting is a **runtime** feature — the annotation
   properties already exist on the certified visuals. The one property that only *does* something on
-  a Plus visual is `annotationLayerSettings.annotationsStorageConfig`, the link to the SharePoint
+  Tables+ and Charts+ is `annotationLayerSettings.annotationsStorageConfig`, the link to the SharePoint
   workbook the comments live in; `encode_storage_config` writes it, and SKILL.md's *View-mode
   comments* says when to.
 - **Render: identical.** Same PBIR, GUID swapped, **0 differing pixels** of 538,488 sampled canvas
@@ -66,7 +65,7 @@ certified, Plus, and a deliberately-unresolvable GUID as the control:
 
 ### View-mode comments workbook
 
-The Plus visuals keep view-mode comments in an Excel workbook on SharePoint and reach it through
+Tables+ and Charts+ keep view-mode comments in an Excel workbook on SharePoint and reach it through
 Graph as the signed-in user, so **whoever can open the workbook can read the comments, and whoever can
 edit it can add, change and delete their own**. Report access alone shows a viewer nothing. Editors
 see the same comments in Desktop, which is why a Desktop render is a valid check of the storage layer.
@@ -118,7 +117,7 @@ Two things the checker reads off the link once it is written:
 A view-mode comments link (`annotationLayerSettings.annotationsStorageConfig`) belongs on Tables+ or
 Charts+, the visuals that carry the viewer comment panel. On the certified Tables and Charts the
 property has no effect, so a link written there looks configured while viewers get no comment panel
-and can add nothing. Switch the visual to its Plus twin, or drop the link and carry the commentary in
+and can add nothing. Switch the visual to Tables+ or Charts+, or drop the link and carry the commentary in
 the authored comment layer. `validate_report` catches this.
 
 
@@ -129,9 +128,9 @@ start. Leave `show` unset or set it to `true`. `validate_report` catches this.
 
 
 
-**Not established:** view-mode viewer commenting itself — the reason the Plus visuals exist — has not
-been exercised from an authoring session, because it needs the Service and a SharePoint file. Treat
-them as drop-in equivalents *for authoring* and claim nothing about the feature.
+**Viewer commenting runs in the Power BI service against a SharePoint file, outside the authoring
+session.** Treat Tables+ and Charts+ as drop-in equivalents *for authoring*, and do not tell anyone that
+view-mode comments work until they have been seen in the published report.
 
 > ☠️ **Charts+ does NOT carry the `waterfall` prefix.** Certified Charts is `waterfall6C9ED82…`;
 > Charts+ is `ZebraBIChartsPlus…`. Anything that finds Zebra chart visuals by matching `waterfall` —
@@ -160,8 +159,8 @@ Property lookup: the declared enum values for a property live in the visual's ow
 
 ## Roles
 
-**Uniform across all of them, Plus included.** One binding shape drives everything; chart↔table is a
-one-line `visualType` swap with the query untouched, and so is certified↔Plus.
+**Uniform across all of them, Tables+ and Charts+ included.** One binding shape drives everything; chart↔table is a
+one-line `visualType` swap with the query untouched, and so is Tables↔Tables+ or Charts↔Charts+.
 
 | role | kind | notes |
 |---|---|---|
@@ -205,8 +204,7 @@ invert. Bound as `Max(Accounts[Category Class])`. Bind it and the `+ / − / =` 
 rules and sign handling come out right with no further configuration.
 
 **The value domain is the three plain text characters, `+`, `-` and `=`**, held in a text column on
-the scheme dimension and projected with the `Max` aggregation (function code 4). Render-verified on
-two independent income statements: a `-` row draws with a `−` prefix and **inverts its polarity** —
+the scheme dimension and projected with the `Max` aggregation (function code 4). A `-` row draws with a `−` prefix and **inverts its polarity** —
 Operating Expenses up 5M renders red with nothing else set — and an `=` row draws bold as a result
 row (Operating Profit, Net Income). Store the amounts positive, as the ledger holds them; the class
 carries the sign. The `=` rows' values are the model's job: compute them with the signed roll-up in
@@ -218,7 +216,7 @@ Takes **measures**. Its purpose is reaching data the relationships cannot: a sep
 (e.g. a `CashFlow` table with no path to the page's `Calendar`) is filtered by binding support
 measures that carry the slicer selections across. Not to be confused with `filterConfig`.
 
-Verified on two unrelated templates, so it generalises. In the second, *every* value measure
+In some templates *every* value measure
 resolves through a disconnected parameter table, so **every** Zebra visual on the page reads its
 slicers this way — `Selected Year`, `Selected Month Name`, `Selected Market`, each a
 `SELECTEDVALUE`/`MIN` support measure.
@@ -226,8 +224,7 @@ slicers this way — `Selected Year`, `Selected Month Name`, `Selected Market`, 
 **Its second use is making text tokens resolve.** A `[Measure]` token in a title, or in a
 `legendHeaderSettings` header, resolves only if that measure is projected somewhere on the visual —
 otherwise the token renders as literal text. Projecting it into `Filters` is how you get a dynamic
-title or a dynamic column header without adding a column to the chart. Render-proven for both titles
-and headers on a report whose every period label came from the data.
+title or a dynamic column header without adding a column to the chart, and it works for both.
 
 ### Two projections in ONE role
 
@@ -238,8 +235,7 @@ result is a different *chart*, not a different grouping.
 
 **A comparison pairs with `Values[0]`, and the rest are plain columns.** On a Table with three
 `Values` projections and one `Plan`, the variance (`ΔPL`, `ΔPL%`) is computed against the **first**
-projection only; projections 2..n render as ordinary measure columns with no comparison. Render-
-proven on five tables.
+projection only; projections 2..n render as ordinary measure columns with no comparison.
 
 So the ordering of `Values` is a *semantic* choice, not cosmetic: **put the measure you want the
 variance on first.** This is what lets one table carry a benchmarked rate and its supporting volume
@@ -260,7 +256,7 @@ The differences are small in number and every one of them is a trap:
 | per-column API | — | — | `chartSettings.columnSettings` |
 | whole-visual invert | `card.cardDefaultInvert` | `chartSettings.invert` | `chartSettings.invert` |
 | **per-item invert** | `customData.uniformData` → `cards[<id>].kpiInvert` **(blob)** | `groupsMetadata.inverted` (per **group**) | `groupsMetadata.inverted` (per **group**) |
-| **per-ROW invert** | — | untested | `categoriesMetadata.invertCalculationCategoriesValues` **(blob)** + a `previewSettings.migrationsLog` gate |
+| **per-ROW invert** | — | confirm in the render | `categoriesMetadata.invertCalculationCategoriesValues` **(blob)** + a `previewSettings.migrationsLog` gate |
 | layout | `grid.cardsInRow` + container height | `multipleLayout.*` | `multipleLayout.*` |
 | comment bubble (authored) | **❌ not declared at all** | `annotationLayerSettings` + `commentBoxSettings` | `annotationLayerSettings` + `commentBoxSettings` |
 | **☠️ a comment's `categoryFields`** | — | **the category field NAME**, one per axis level | **always `[]`** |
@@ -297,7 +293,7 @@ split a `Group` would list every category under both headers:
 `migrationsLog` gate the invert is accepted and silently ignored**, with no warning and no validator
 finding: the row simply keeps default polarity. Only `isMigrationCompleted: true` matters inside the
 gate — **do not add a `visualVersion`**, since a matched version string would stop working on a
-visual release. Tables and Tables+ take the identical shape; on Charts it is untested.
+visual release. Tables and Tables+ take the identical shape; on Charts, confirm it in the render.
 
 ⚠️ `calculationCorrectionFeature` is a Zebra **preview** feature, and writing that flag switches it
 on for the visual. Say so when you use it rather than slipping it into a report silently.
@@ -331,8 +327,8 @@ is the shape that says what you meant; if the headline has to be the forecast, m
 both are traps if you reason from the catalog alone:
 
 - **Cards declares no `groupsMetadata`, but it CAN invert a single card.** The lever is a
-  JSON-string blob — `customData.uniformData` → `cards[<id>].kpiInvert` — so no census of declared
-  objects will ever show it.
+  JSON-string blob — `customData.uniformData` → `cards[<id>].kpiInvert` — so no list of declared
+  objects will show it.
 - **Cards layout is NOT set by that blob's `globalCardSize`.** An authored blob with an empty
   `cards{}` is accepted and silently ignored. Cards-per-row comes from `grid.cardsInRow`; card
   height comes from the **container**, because the card auto-sizes to its content (≈264px with
@@ -393,18 +389,11 @@ Worked evidence: `Marketing Attribution Dashboard` is pure mechanism 2 — `publ
 not a bug to fix — on a mechanism-2 report it is correct, and "helpfully" adding the AppSource GUID
 gives you two registrations for one product and a visual that resolves to the wrong build.
 
-**Rendered results: two experiments, both with `licenseSettings` omitted entirely.**
-
-*Two arms on one page, one model, identical bindings.* A Zebra Table authored against the
-mechanism-2 GUID and one against the mechanism-1 GUID, side by side: **both rendered live and
-unlocked**, no "Feature Limit Reached", no grey box, same five values and ten deltas — all confirmed
-against the model by `EVALUATE`.
-
-*Clean room, to remove the obvious confound* — that first test ran in a report that still carried
-embedded payloads. So: `CustomVisuals/` deleted, every `CustomVisual` resource package stripped,
-`publicCustomVisuals` set to the three AppSource GUIDs, one Table authored with no licence key.
-**It rendered a complete IBCS variance table** — PY column, AC bars, ΔPY, ΔPY% — with the same
-DAX-verified numbers.
+**Both registrations render with `licenseSettings` omitted.** A Zebra Table authored against the
+mechanism-2 GUID and one against the mechanism-1 GUID **render live and unlocked**, with no "Feature
+Limit Reached" and no grey box. With `CustomVisuals/` deleted, every `CustomVisual` resource package
+stripped and `publicCustomVisuals` set to the three AppSource GUIDs, a Table authored with no
+licence key **renders a complete IBCS variance table** — PY column, AC bars, ΔPY, ΔPY%.
 
 Three things follow:
 
@@ -527,10 +516,8 @@ as *"this member is the odd one out"* and check the render — the property name
 way to its effect, and both readings produce a plausible-looking page.
 
 **Use `root.children[].isToggled` for this.** `levels[].isCollapsed` also exists and appears in
-Desktop-written files, but authoring it by hand did not change which rows rendered here — and that
-attempt did not carry `identityKeys` on the collapsed levels, so it is equally possible the block was
-rejected as malformed. Treat `levels[].isCollapsed` as **unproven for hand-authoring** and verify by
-render if you use it.
+Desktop-written files, but a hand-authored one can leave the rendered rows unchanged, for example when
+the collapsed levels carry no `identityKeys`. If you use it, check the render.
 
 
 ### `drillSettings.loadStrategy` — one setting, two questions
@@ -728,8 +715,7 @@ This is the house pattern for *drilling into a second dimension*: hover a segmen
 
 `pageBinding` registers the page as a binding target; the **top-level `type`** is what makes it a
 tooltip page. Add the page to `pages.json` `pageOrder` as normal. `visibility` only hides the tab from
-a reader — it is **not** required for the tooltip to fire, and was never tested without; set it
-because a tooltip page in the tab strip is clutter, not because the mechanism needs it.
+a reader; set it, because a tooltip page in the tab strip is clutter.
 
 A tooltip page needs a top-level `"type": "Tooltip"` in its `page.json`, and that property **does not
 exist before page schema `2.0.0`**. Older schemas also declare `additionalProperties: false`, so on

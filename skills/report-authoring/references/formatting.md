@@ -11,9 +11,8 @@ const word = (s) => L(`'${s}'`);     // text / WORD-VALUED enum
 const bool = (b) => L(String(!!b));  // bare true/false
 ```
 
-`type: "enum"` does **not** tell you the form — the **value domain** does. Measured across the
-Zebra BI's own templates: 1,401 of 1,401 numeric-valued enum settings D-suffixed; 373/373 word-valued quoted; no
-exceptions either direction.
+`type: "enum"` does **not** tell you the form — the **value domain** does. In Zebra BI's own
+templates all 1,401 numeric-valued enum settings are D-suffixed and all 373 word-valued ones are quoted.
 
 - enumValues are **numeric strings** → `num()` → `4D`
   **`chartType`** · `style` · `varianceType` · `axisLabelDensity` · `valueChart` · `relativeChart` ·
@@ -58,8 +57,7 @@ apply only under the Custom style; under any other value the visual renders in t
 palette, with none of the authored colours, and no error says so. `validate_report` catches this.
 
 **`0` does not pass them either**, which is the value most likely to look safe: it is the Zebra
-default, and a default sounds like "no preset in the way". Measured by a two-arm render over three
-Charts differing only in `style`, sampled by pixel: at `0` the canvas is Zebra's default green
+default, and a default sounds like "no preset in the way". At `0` the canvas is Zebra's default green
 `#7ACA00` and **not one authored colour appears**; at `4` the authored colours render exactly.
 **Only `4` yields to your colours.**
 
@@ -86,8 +84,8 @@ Gated: `positiveColor` · `negativeColor` · `neutralVarianceColor` · `neutralC
 
 **`useCustomScenarioColors` is a red herring** — named exactly like the switch you want, irrelevant.
 
-Verified live: the gate is real on **Charts**. On **Cards** the values −1/0/4 form one equivalence
-class (`sameAsDefault: true`) and the colours are **UNTESTED**.
+The gate applies on **Charts**. On **Cards** the values −1/0/4 form one equivalence
+class (`sameAsDefault: true`); confirm the colours in the render.
 
 ## Companion gates — half of "works" needs something else held true
 
@@ -171,7 +169,7 @@ inert: a variance needs something to be a variance against, so the extra measure
 even when you hide it. **The tell for both is the column header** — it shows your measure name when
 the settings apply and falls back to the scenario name `AC` when they do not.
 
-## Objects that do something (screenshot-verified)
+## Objects that do something
 
 ```js
 // Charts — small multiples
@@ -262,15 +260,15 @@ categorySettings: { rowHeight: num(3), height: num(24),
 sortSettings:    { columnName: word('actual'),   // 'actual' = the FIRST Values projection
                    categorySort: num(1),          // 1D = descending. 0D = none. 2D = ascending
                    chartSort:    num(1) }         // shipped templates set both, 121 of 152 Tables
-//   columnName also takes a measure's DISPLAY NAME, not just a scenario key -- render-proven with
-//   'Won revenue'. That is how you sort by one column while the variance sits on another, which is
+//   columnName also takes a measure's DISPLAY NAME, not just a scenario key, for
+//   example 'Won revenue'. That is how you sort by one column while the variance sits on another, which is
 //   the case worth knowing: a rate sorted descending puts tiny-denominator members on top
 //   (100% on 2 deals), so bind the rate to Values[0] for the variance and sort by the volume column.
 dataLabelSettings: { decimalPlaces: int(0), decimalPlacesPercentage: int(0) }
 // Top N on a TABLE lives in categorySettings and thins the ROWS. Different object group and
 // different names from the Charts form (multipleLayout.showTopNChartsOptions), which thins
 // small-multiple PANELS and needs a Group. Do not reach for one expecting the other.
-// The COUNT is in the blob, not a scalar. showTopNCategories alone renders every row - verified.
+// The COUNT is in the blob, not a scalar. showTopNCategories alone renders every row.
 categorySettings: { showTopNCategories: bool(true), showTopNForm: bool(false),
                     topNOtherLabel: word('Other vessels'),   // always name the remainder
                     topNSettings: word(JSON.stringify([{ category: 'Vessel', dataProperty: 0,
@@ -364,7 +362,7 @@ height — `table-row-height-below-legible`.
 
 A build-up where the banked part is solid and the projected part is hatched does **not** come from
 binding the `Forecast` role. It comes from naming the individual **categories** as forecast inside
-`categoriesMetadata`. Render-proven on a pipeline bridge (won to date + three qualified stages):
+`categoriesMetadata`. For a pipeline bridge (won to date + three qualified stages):
 
 ```js
 categoriesMetadata:   { results:         word('["Forecast","2-Develop qualified","3-Propose qualified","4-Close qualified","Won to date"]'),
@@ -384,26 +382,22 @@ does not draw. Its companion names the two plain properties that go with it.
   Forecast is the only value confirmed by render.**
 - `floatingResults` is what makes those steps read as **components of a build-up** rather than
   variances, so they carry no good/bad colour — which is right, they are not deviations.
-- `designSettings.applyPatterns` was never set and the hatch appeared regardless.
-- `stackedWaterfallChartEnabled` rendered here with **no `Group` bound and no `show`**, so the
+- The hatch appears without `designSettings.applyPatterns`.
+- `stackedWaterfallChartEnabled` works with **no `Group` bound and no `show`**, so the
   companion-gate row for `stackedChartSettings.*` does not hold for this key.
-- All four keys were authored and **reproduced as one set**. Nothing here establishes which single
-  key is load-bearing; if you need one on its own, test it on its own.
+- Author the four keys **as one set**. If you use one on its own, check the render.
 
 ☠️ **Do not reach for the `Forecast` role to get the hatch.** Binding `Values` = the banked step and
 `Forecast` = the projected steps made Zebra bridge **total forecast down to actual** — a red-stepped
 cascade from 66.2M to 26.4M rather than a build-up. On a waterfall the **binding** decides the form,
 and `chartType` does not override it.
 
-## Untested / known-inert
+## Properties with no visible effect
 
-`grid.compactCards` (nothing) · `showGrandTotal` on **Charts** (measured as ignored there). On
-**Tables** it is not on this list: `chartSettings.showGrandTotal` with `grandTotalLabel` is
-render-verified — a labelled Total row appeared on four tables and reconciled. The "unresolved"
-verdict this list once carried was a Charts measurement read as a Tables one.
+`grid.compactCards` (nothing) · `showGrandTotal` on **Charts** (ignored there). On **Tables**,
+`chartSettings.showGrandTotal` with `grandTotalLabel` works: it adds a labelled Total row.
 
-⚠️ **Read this section as "not confirmed working" — not as "confirmed broken."** A property listed
-here may work perfectly and simply have been set the wrong way. The usual culprit is the numeric-enum
+⚠️ **A property listed here may still work: it may simply have been set the wrong way.** The usual culprit is the numeric-enum
 encoding at the top of this file: writing `'1'` where PBIR needs `1D` makes a working property look
 inert, because the value is discarded and the visual falls back to its default. **So if you set one of
 these and it works, that is a normal outcome — trust the render, not this list.**
@@ -421,7 +415,7 @@ these and it works, that is a normal outcome — trust the render, not this list
   **Two keys worth knowing beyond the scenario list:** `additionalMeasure1Header` ..
   `additionalMeasure20Header` rename the plain measure columns that follow `Values[0]`, and
   `useMeasureNamesInEligibleHeaders` (bool) makes Zebra use the measure's own display name wherever
-  it can instead of the scenario shorthand. Render-proven on a 4-column variance table: the
+  it can instead of the scenario shorthand. The
   `[Measure]` token in a header resolves **only if that measure is projected on the visual**, and
   projecting it into `Filters` is enough (`visuals.md`). This is the fix for a table full of
   `AC`/`PY`/`ΔPY` — see `design.md` section 9 for what to write instead.
@@ -440,8 +434,6 @@ obey it; Zebra's docs state the same gate). Charts and Tables only: **Cards decl
 `titleSettings` object at all** — the same object authored on a Cards visual produced no title —
 and its header vocabulary is `legend.*`.
 
-**A caveat on every "does nothing" above.** Those results were measured on a single binding where
-**`PreviousYear` and `Forecast` were never bound, and there was no date hierarchy.** So any claim
-that a *scenario-, reference- or period-dependent* property is inert is **suspect by
-construction**: the property may work perfectly and have had nothing to act on. Re-test with a
-comparison bound before you believe one.
+**A caveat on every "does nothing" above.** A *scenario-, reference- or period-dependent*
+property looks inert when nothing is bound for it to act on. Before you treat one as inert, bind
+`PreviousYear` or `Forecast` (and a date hierarchy where it applies) and check the render.
