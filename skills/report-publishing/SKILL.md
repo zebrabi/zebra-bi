@@ -24,7 +24,7 @@ Three things Microsoft's skill cannot know about. That is the whole of this skil
 
 ## 1. Before: pick the visual track, because publishing is when it stops being free
 
-The authoring default is **Tables+ and Charts+**. They are Beta and **not Microsoft-certified**.
+The authoring default is **Tables+ and Charts+**. They are Beta and **not Power BI certified**.
 Tables, Charts and Cards on the certified track are.
 
 **Both tracks publish and render in the service** — checked as a pair, same report and data, only
