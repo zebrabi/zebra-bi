@@ -663,11 +663,11 @@ check("reserved, dotted, spaced, duplicate and colliding names are made safe and
     "KPI.csv": csv([["Date", "Unit.Name", "Unit  Name", "unit name", "Scenario", "Amount", "Amount AC"],
       ["2025-01-01", "a", "b", "c", "Actual", 1, 7], ["2025-02-01", "a", "b", "c", "Budget", 2, 8]]),
     "Measures.csv": csv([["Code", "Label"], ["x1", "One"], ["x2", "Two"]]),
-    "sub/kpi.csv": csv([["Code", "Label"], ["y1", "One"], ["y2", "Two"]]),
+    "sub/KPI Data.csv": csv([["Code", "Label"], ["y1", "One"], ["y2", "Two"]]),
   }) }, metrics: [{ name: "Amount", column: "Amount" }],
-    tables: [{ source: "Measures" }, { source: "kpi" }] });
+    tables: [{ source: "Measures" }, { source: "sub/KPI Data.csv" }] });
   const names = r.model.tables.map((t) => t.name);
-  assert.ok(names.includes("KPI Data") && names.includes("kpi Data 2") && names.includes("Measures Data"), names.join(", "));
+  assert.ok(names.includes("KPI Data") && names.includes("KPI Data 2") && names.includes("Measures Data"), names.join(", "));
   assert.ok(!r.model.tables.filter((t) => t.source).some((t) => /^(kpi|measures|calendar)$/i.test(t.name)));
   const m = tmdl.readModel(out);
   const t = m.tables.find((x) => x.name === "KPI Data");
@@ -764,6 +764,57 @@ check("a one side with keys that differ only in case is refused", () => {
     "Fact.csv": csv([["Date", "RegionKey", "Amount"], ["2025-01-01", "north", 1], ["2025-01-02", "North", 2], ["2025-01-03", "south", 3]]),
     "Region.csv": csv([["RegionKey", "Label"], ["north", "N1"], ["North", "N2"], ["south", "S"]]),
   }) }, scenarios: { form: "none" } }, /Region\[RegionKey\] would be the one side.*holds 'north' 2 times.*without case/);
+});
+check("an exact duplicate key on a dimension is refused with the true reason, named or not", () => {
+  const files = {
+    "sales.csv": csv([["Date", "ProductKey", "Amount"], ["2025-01-01", 1, 5], ["2025-01-02", 2, 6], ["2025-01-03", 2, 7]]),
+    "product.csv": csv([["ProductKey", "Product"], [1, "A"], [2, "B"], [2, "B2"]]),
+  };
+  refuses({ name: "D", outPath: target(), source: { path: bed(files) }, scenarios: { form: "none" } },
+    /product\.csv: ProductKey is the key sales\.csv relates to, and it holds '2' 2 times/);
+  refuses({ name: "D", outPath: target(), source: { path: bed(files) }, scenarios: { form: "none" }, tables: [{ source: "product" }] },
+    /holds '2' 2 times/);
+});
+check("a small fact whose keys happen to be unique is never the one side of a relationship", () => {
+  const r = write({ name: "B", outPath: target(), source: { path: bed({
+    "sales.csv": csv([["Date", "ProductKey", "Amount"], ["2025-01-01", 1, 5], ["2025-01-02", 2, 6]]),
+    "product.csv": csv([["ProductKey", "Product"], [1, "A"], [2, "B"]]),
+  }) }, scenarios: { form: "none" } });
+  assert.ok(r.model.relationships.some((x) => x === "sales[ProductKey] -> product[ProductKey]"), r.model.relationships.join("; "));
+  assert.ok(!r.model.relationships.some((x) => /^product\[/.test(x)), r.model.relationships.join("; "));
+});
+check("scenario values that differ only in case are one member, counted and said as the measure counts them", () => {
+  const rows = [["Date", "Region", "Scenario", "Amount"],
+    ["2025-01-01", "N", "Actual", 1], ["2025-01-02", "N", "actual", 10], ["2025-01-03", "N", "Budget", 100], ["2025-01-04", "N", "BUDGET", 1000]];
+  const r = write({ name: "S", outPath: target(), source: { path: bed({ "f.csv": csv(rows) }) } });
+  assert.ok(r.assumptions.some((a) => a === "Scenarios: Actual, actual are one value to Power BI, which compares text without case, so the AC measure counts all 2 of their rows."), r.assumptions.join(" | "));
+  assert.ok(r.assumptions.some((a) => /Budget, BUDGET are one value .* the PL measure counts all 2/.test(a)), r.assumptions.join(" | "));
+  assert.ok(!r.assumptions.some((a) => /are in no measure/.test(a)), "rows the measure counts are said to be in no measure");
+  refuses({ name: "S", outPath: target(), source: { path: bed({ "f.csv": csv(rows) }) }, scenarios: { form: "long", column: "Scenario", members: { Actual: "AC", actual: "PL" } } },
+    /'Actual' and 'actual' to different codes, but they differ only in case/);
+});
+check("an impossible date is refused with its row, in a slash form and in ISO", () => {
+  const slash = [["Date", "Region", "Amount"], ...Array.from({ length: 60 }, (_, i) => [i === 7 ? "31/02/2024" : `${String((i % 28) + 1).padStart(2, "0")}/03/2024`, "N", i])];
+  refuses({ name: "I", outPath: target(), source: { path: bed({ "d.csv": csv(slash) }) }, scenarios: { form: "none" } },
+    /d\[Date\] is a date column, but '31\/02\/2024' \(data row 8\)/);
+  const iso = [["Date", "Region", "Amount"], ...Array.from({ length: 60 }, (_, i) => [i === 40 ? "2023-02-29" : `2023-01-${String((i % 28) + 1).padStart(2, "0")}`, "N", i])];
+  refuses({ name: "I", outPath: target(), source: { path: bed({ "d.csv": csv(iso) }) }, scenarios: { form: "none" } }, /'2023-02-29' \(data row 41\)/);
+});
+check("two source files with the same name are refused, and a path in tables tells them apart", () => {
+  const files = { "sales.csv": LONG, "archive/sales.csv": LONG };
+  refuses({ name: "Two", outPath: target(), source: { path: bed(files) } }, /archive\/sales\.csv and sales\.csv have the same name|sales\.csv and archive\/sales\.csv have the same name/);
+  refuses({ name: "Two", outPath: target(), source: { path: bed(files) }, tables: [{ source: "sales.csv", role: "skip" }] }, /'sales\.csv' matches 2 files/);
+  const r = write({ name: "Two", outPath: target(), source: { path: bed(files) }, tables: [{ source: "archive/sales.csv", role: "skip" }] });
+  assert.deepStrictEqual(r.skipped, [{ file: "archive/sales.csv", reason: "skipped as asked (role: skip)" }]);
+  assert.ok(r.model.tables.some((t) => t.name === "sales" && t.source === "sales.csv"));
+  refuses({ name: "Two", outPath: target(), source: { path: bed({ "sales.csv": LONG, "sales.json": "[{\"a\":1}]" }) } }, /have the same name/);
+});
+check("a JSON integer beyond 2^53 is refused, not rounded", () => {
+  const body = `[{"Date":"2025-01-01","Amount":9007199254740993},{"Date":"2025-01-02","Amount":5}]`;
+  refuses({ name: "J", outPath: target(), source: { path: path.join(bed({ "big.json": body }), "big.json") }, scenarios: { form: "none" } },
+    /big\.json holds the integer 9007199254740993, beyond 2\^53/);
+  const ok = write({ name: "J", outPath: target(), source: { path: path.join(bed({ "ok.json": `[{"Date":"2025-01-01","Amount":9007199254740991,"Id":"12345678901234567890"}]` }), "ok.json") }, scenarios: { form: "none" } });
+  assert.strictEqual(ok.ok, true);
 });
 check("a second path between two tables is written inactive", () => {
   const out = target();

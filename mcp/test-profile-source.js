@@ -166,6 +166,14 @@ check("a JSON array of records is read like a table", () => {
   assert.strictEqual(r.files[0].columns.find((c) => c.name === "Series").distinct, 2);
 });
 
+check("a day past the end of its month is not a date", () => {
+  for (const bad of ["2024-02-30", "2023-02-29", "2024-04-31", "2024/06/31"]) assert.strictEqual(ps.toIsoDate(bad, false), null, bad);
+  assert.strictEqual(ps.toIsoDate("31/02/2024", true), null);
+  assert.strictEqual(ps.toIsoDate("2024-02-29", false), "2024-02-29");
+  assert.strictEqual(ps.toIsoDate("29/02/2024", true), "2024-02-29");
+  assert.strictEqual(ps.toIsoDate("2025-12-31", false), "2025-12-31");
+});
+
 check("column types: date, dateKey, integer, number, text", () => {
   const f = full.files.find((x) => x.table === "FactFinance");
   const t = Object.fromEntries(f.columns.map((c) => [c.name, c.type]));
