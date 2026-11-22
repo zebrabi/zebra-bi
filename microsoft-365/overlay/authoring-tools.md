@@ -12,7 +12,7 @@ Write the tool arguments to a JSON file and pass it with `@`. Use the writer and
 
 ## In Microsoft 365 Copilot: create the project with `write_project`
 
-Create the project and model with `write_project`; never write the `.pbip`, `definition.pbir`, `report.json`, `definition.pbism` or any `.tmdl` file yourself. It reads the CSV or JSON, embeds the rows, adds a marked calendar and the AC/PL/FC/PY measures, writes everything into a new folder and returns the files, its assumptions and the checker's findings: `{"name": "Sales", "outPath": "/tmp/out/Sales", "source": {"path": "/tmp/data/sales.csv"}, "pages": "propose"}`. A refusal says what to pass. Put every `assumptions` line in your hand-over.
+Create the project and model with `write_project` and add any other measure with `write_measures`; never write the `.pbip`, `definition.pbir`, `report.json`, `definition.pbism` or a `.tmdl` file by hand. `write_project` reads the CSV or JSON, embeds the rows, adds a calendar and AC/PL/FC/PY measures, writes a new folder and returns the files, assumptions and findings: `{"name": "Sales", "outPath": "/tmp/out/Sales", "source": {"path": "/tmp/data/sales.csv"}, "pages": "propose"}`. A refusal says what to pass. Put every `assumptions` line in your hand-over.
 
 ## In Microsoft 365 Copilot: before you hand anything back
 

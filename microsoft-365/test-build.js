@@ -137,7 +137,7 @@ try {
     const r = spawnSync(process.execPath, [path.join(scripts, "zbi.js"), "list"], { encoding: "utf8", timeout: 30000 });
     assert.strictEqual(r.status, 0, r.stderr);
     const tools = r.stdout.trim().split("\n").map((l) => l.split(" - ")[0]);
-    for (const t of ["validate_report", "write_report", "profile_source", "write_project"]) assert.ok(tools.includes(t), `${t} missing`);
+    for (const t of ["validate_report", "write_report", "profile_source", "write_project", "write_measures"]) assert.ok(tools.includes(t), `${t} missing`);
   });
 
   check("the bundled checker writes a project with write_project, called from another folder", () => {
