@@ -56,9 +56,10 @@ plain English from then on. [Claude Code setup instructions](https://claude.com/
 [`INSTALL.md`](INSTALL.md) covers GitHub Copilot CLI and other agents.
 
 **Recommended: Node.js.** A free download from **https://nodejs.org**. It runs the checker, which
-reads your report files for faults Power BI does not warn you about. If your IT team does not allow
-Node, skip it: the agent still builds the report and checks the rendered page, and you lose only
-the checker.
+reads your report files for faults Power BI does not warn you about, and the tools that write
+report files, create a project from flat files and add measures. If your IT team does not allow
+Node, skip it: the agent still builds the report by writing the files itself and checks the
+rendered page, and you lose the checker and those tools.
 
 ## Installing
 
