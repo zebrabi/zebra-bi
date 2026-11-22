@@ -420,16 +420,21 @@ function layout(mt, assumptions) {
 const DT_TYPE = { text: "STRING", integer: "INTEGER", number: "DOUBLE" };
 const TMDL_TYPE = { text: "string", integer: "int64", number: "double", date: "dateTime" };
 
+/**
+ * The partition expression. It starts four tabs in, one level deeper than `source =`, and every
+ * nested line adds one more tab, so each row sits at the expression's base indent or deeper and no
+ * line is indented with spaces.
+ */
 function datatableText(mt, lay, stats) {
   const B = "\t\t\t\t";
   const decls = lay.dt.map((d) => `${daxString(d.name || d.col.name)}, ${DT_TYPE[d.type]}`).join(", ");
   const lines = [];
   const wrapped = lay.added.length > 0;
-  const pad = wrapped ? "    " : "";
+  const pad = wrapped ? "\t" : "";
   if (wrapped) lines.push(`${B}ADDCOLUMNS (`);
   lines.push(`${B}${pad}DATATABLE (`);
-  lines.push(`${B}${pad}    ${decls},`);
-  lines.push(`${B}${pad}    {`);
+  lines.push(`${B}${pad}\t${decls},`);
+  lines.push(`${B}${pad}\t{`);
   const rowLines = [];
   for (const r of mt.rows) {
     const cells = [];
@@ -446,18 +451,18 @@ function datatableText(mt, lay, stats) {
         cells.push(blank ? "0" : plainNumber(raw));
       }
     }
-    rowLines.push(`${B}${pad}        {${cells.join(", ")}}`);
+    rowLines.push(`${B}${pad}\t\t{${cells.join(", ")}}`);
   }
   lines.push(rowLines.join(",\n"));
-  lines.push(`${B}${pad}    }`);
+  lines.push(`${B}${pad}\t}`);
   if (wrapped) {
-    lines.push(`${B}    ),`);
+    lines.push(`${B}\t),`);
     lay.added.forEach((c, i) => {
       const [y, m, d] = c.parts.map(daxBracket);
       const build = c.blanks
         ? `IF ( ${y} = 0, BLANK (), DATE ( ${y}, ${m}, ${d} ) )`
         : `DATE ( ${y}, ${m}, ${d} )`;
-      lines.push(`${B}    ${daxString(c.name)}, ${build}${i < lay.added.length - 1 ? "," : ""}`);
+      lines.push(`${B}\t${daxString(c.name)}, ${build}${i < lay.added.length - 1 ? "," : ""}`);
     });
     lines.push(`${B})`);
   } else {
@@ -534,8 +539,8 @@ function calendarText(cal) {
   const [y2, m2, d2] = cal.last.split("-").map(Number);
   const src = [
     `${B}ADDCOLUMNS (`,
-    `${B}    CALENDAR ( DATE ( ${y1}, 1, 1 ), DATE ( ${y2}, ${m2}, ${d2} ) ),`,
-    ...add.map((a, i) => `${B}    ${a}${i < add.length - 1 ? "," : ""}`),
+    `${B}\tCALENDAR ( DATE ( ${y1}, 1, 1 ), DATE ( ${y2}, ${m2}, ${d2} ) ),`,
+    ...add.map((a, i) => `${B}\t${a}${i < add.length - 1 ? "," : ""}`),
     `${B})`,
   ].join("\n");
   const parts = [`table ${CALENDAR}`, "\tdataCategory: Time"];

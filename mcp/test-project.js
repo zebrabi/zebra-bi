@@ -166,23 +166,15 @@ check("every file is UTF-8 with no BOM and no carriage return; JSON parses", () 
   }
 });
 
-/** Every structural line indented by tabs only; expression bodies at four tabs or deeper. */
+/** Every line indented by tabs only; every line of a partition expression at four tabs or deeper. */
 function assertTabs(rel, text) {
-  let depthOfBody = null;
+  let inSource = false;
   text.split("\n").forEach((line, i) => {
-    if (!line.trim()) return;
+    if (!line.trim()) { inSource = false; return; }
     const lead = /^[\t ]*/.exec(line)[0];
-    assert.ok(/^\t* *$/.test(lead), `${rel}:${i + 1} indents with spaces before tabs`);
-    const tabs = lead.replace(/ /g, "").length;
-    if (/^\t\tsource =$/.test(line)) { depthOfBody = 4; return; }
-    if (depthOfBody !== null) {
-      if (tabs >= depthOfBody) return;
-      depthOfBody = null;
-    }
-    if (lead.includes(" ")) {
-      // Spaces are allowed only inside a measure body (three tabs, then DAX).
-      assert.ok(tabs >= 3, `${rel}:${i + 1} has spaces in a structural indent`);
-    }
+    assert.ok(/^\t*$/.test(lead), `${rel}:${i + 1} indents with a space`);
+    if (/^\t\tsource =$/.test(line)) { inSource = true; return; }
+    if (inSource) assert.ok(lead.length >= 4, `${rel}:${i + 1} sits above the expression's base indent`);
   });
 }
 
@@ -198,7 +190,7 @@ check("every TMDL file is tab-indented, rows sit at four tabs, and ref lines sta
   const fact = files["Sales.SemanticModel/definition/tables/sales.tmdl"].toString("utf8");
   const rows = fact.split("\n").filter((l) => /^\t*\s*\{\d{4}, /.test(l));
   assert.strictEqual(rows.length, longRows().length - 1);
-  for (const l of rows) assert.ok(/^\t\t\t\t {12}\{/.test(l), `row not at 4 tabs: ${JSON.stringify(l.slice(0, 20))}`);
+  for (const l of rows) assert.ok(/^\t{7}\{/.test(l), `row not at 7 tabs: ${JSON.stringify(l.slice(0, 20))}`);
   assert.ok(/\t\tsource =\n\t\t\t\tADDCOLUMNS \(/.test(fact), "source = is not alone on its line");
   assert.ok(!/\{[^{}\n]*DATE\s*\(/.test(fact), "a row calls DATE");
   const model = files["Sales.SemanticModel/definition/model.tmdl"].toString("utf8");
