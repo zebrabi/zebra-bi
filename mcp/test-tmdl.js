@@ -1113,6 +1113,47 @@ check("relationship endpoints keep their own rule: Table.Column with quoted part
   assert.ok(!nameCodes(rel).has(NAMEID), "judged a relationship endpoint");
 });
 
+// --- review fixes (22 Nov 2026) ----------------------------------------------------------------------
+// A body between ``` fences is read verbatim, so its indentation is not judged.
+check("a fenced calculated-table body with space-indented rows is NOT flagged; the same rows unfenced are", () => {
+  const rows = "\t\t\tDATATABLE (\n\t\t\t\t\"a\", STRING,\n        {{\"x\"}}\n\t\t\t)\n";
+  const fenced = "table F\n\tpartition F = calculated\n\t\tmode: import\n\t\tsource = ```\n" + rows + "\t\t\t```\n";
+  assert.ok(!spaceCodes(fenced).has("tmdl-calculated-source-space-indented"), "judged a fenced body");
+  assert.ok(spaceCodes(CALC_HEAD + rows).has("tmdl-calculated-source-space-indented"), "missed the same rows unfenced");
+});
+
+check("a table-level property in spaces after a tab-indented body is NOT read as a row", () => {
+  const body = CALC_HEAD + "\t\t\tDATATABLE ( \"a\", STRING, { { \"x\" } } )\n    annotation PBI_Id = abc\n";
+  assert.ok(!spaceCodes(body).has("tmdl-calculated-source-space-indented"), "read an annotation as a row");
+  // rows at the width of `source` are still rows (the shape that Desktop refused)
+  assert.ok(spaceCodes(CALC_HEAD + "\t\t\tDATATABLE (\n        { \"x\" }\n\t\t\t)\n").has("tmdl-calculated-source-space-indented"),
+    "missed rows at the width of source");
+});
+
+// A block comment is not code: daxOnly blanks it, across lines, so KPI[...] inside one is not a reference.
+check("an unquoted KPI[Name] inside a block comment is NOT flagged; the live code beside it still is", () => {
+  const measure = (dax) => KPI_TABLE + "\ntable UsesIt\n\n\tmeasure U =\n\t\t\t" + dax.split("\n").join("\n\t\t\t") + "\n\t\tformatString: #,##0\n";
+  assert.ok(!kpiCodes(measure("SELECTEDVALUE ( 'KPI'[Name] ) /* was KPI[Name] */")).has("dax-unquoted-kpi-table"), "fired inside a one-line block comment");
+  assert.ok(!kpiCodes(measure("/* old:\n   SELECTEDVALUE ( KPI[Name] )\n*/\nSELECTEDVALUE ( 'KPI'[Name] )")).has("dax-unquoted-kpi-table"),
+    "fired inside a multi-line block comment");
+  assert.ok(kpiCodes(measure("/* note */ SELECTEDVALUE ( KPI[Name] )")).has("dax-unquoted-kpi-table"), "a closed comment hid live code");
+  assert.ok(kpiCodes(measure("/* a */\nSELECTEDVALUE ( KPI[Name] )")).has("dax-unquoted-kpi-table"), "missed code after a block comment on the next line");
+  assert.ok(!kpiCodes(measure("\"/*\" & SUM ( 'KPI'[V] ) & \"*/\"")).has("dax-unquoted-kpi-table"), "read a string as a comment start");
+});
+
+check("the other rules that read DAX still see code after a block comment and ignore code inside one", () => {
+  const f = (dax) => codes(project({ fact: CLEAN_MODEL, extraTmdl: "table V\n\n\tmeasure M =\n\t\t\t" + dax + "\n" }));
+  assert.ok(f("VAR LastDate = 1 RETURN LastDate").has("dax-var-named-after-a-function"), "lost a plain VAR finding");
+  assert.ok(!f("/* VAR LastDate = 1 */ 1").has("dax-var-named-after-a-function"), "read a VAR inside a block comment");
+  assert.ok(!f("/* FILTER ( REMOVEFILTERS ( T ) ) */ 1").has("dax-removefilters-as-table-expression"), "read REMOVEFILTERS inside a block comment");
+});
+
+check("sortByColumn written as a bare bracket reference says so, without a table part", () => {
+  const root = project({ extraTmdl: sortTable("[MonthNo]") });
+  const hit = srv.validateReport({ projectPath: root }).findings.find((x) => x.code === NAMEID);
+  assert.ok(hit && /bracketed reference, \[Column\]/.test(hit.detail), hit && hit.detail);
+});
+
 // --- cultures/ is a FACT, like compatibilityLevel -----------------------------------------
 //
 // It kills `file.reload/v1` while the project cold-opens perfectly, so the caller needs to know

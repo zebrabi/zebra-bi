@@ -557,7 +557,7 @@
       "id": "zebra-visual-type-not-registered",
       "severity": "blank",
       "check": "zebra-visual-type-must-be-registered",
-      "message": "Every Zebra BI visual a page uses must be registered in `report.json`. List its exact `visualType` in\n`publicCustomVisuals` (a bare GUID such as `ZebraBITablesPlus3E6085701D7B426980C3859B16327993`), or\nregister it through `resourcePackages` when the visual is embedded in the report. A visual whose type is\nregistered nowhere is an unresolved placeholder and the page draws without it. Copy the GUID from the\n`visualType` of the visual itself.",
+      "message": "Every Zebra BI visual a page uses must be registered in `report.json`. List its exact `visualType` in\n`publicCustomVisuals` (a bare GUID such as `ZebraBITablesPlus3E6085701D7B426980C3859B16327993`), or\nregister it through `resourcePackages` when the visual is embedded in the report. A visual whose type is\nregistered nowhere has no visual to resolve to when the report opens. Copy the GUID from the\n`visualType` of the visual itself.",
       "source": "validator",
       "held": true
     },

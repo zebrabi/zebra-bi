@@ -16,6 +16,7 @@
 // Version-robust prefixes rather than full GUIDs, since the GUID carries a version suffix.
 const tmdl = require("./tmdl.js");
 const T = require("./tmdl-tree.js");
+const enc = require("./encoders.js");
 
 // Tables+ shares the Tables prefix, so it is covered by ZEBRA.tables. Charts+ does NOT
 // share the Charts prefix: certified Charts is `waterfall…` for historical reasons, while
@@ -27,15 +28,15 @@ const ZEBRA = {
   chartsPlus: "ZebraBICharts",
   cards: "zebraBiCards",
 };
-const isZebra = (t = "") => Object.values(ZEBRA).some((p) => t.startsWith(p));
-const isTable = (t = "") => t.startsWith(ZEBRA.tables);
-const isCards = (t = "") => t.startsWith(ZEBRA.cards);
+const isZebra = (t) => typeof t === "string" && Object.values(ZEBRA).some((p) => t.startsWith(p));
+const isTable = (t) => typeof t === "string" && t.startsWith(ZEBRA.tables);
+const isCards = (t) => typeof t === "string" && t.startsWith(ZEBRA.cards);
 // Charts (certified, `waterfall…`) and Charts+ (`ZebraBICharts…`) are the two Zebra visuals that draw a
 // category axis and take `chartSettings`.
-const isCharts = (t = "") => t.startsWith(ZEBRA.charts) || t.startsWith(ZEBRA.chartsPlus);
+const isCharts = (t) => typeof t === "string" && (t.startsWith(ZEBRA.charts) || t.startsWith(ZEBRA.chartsPlus));
 // Tables+ and Charts+ are the two visuals whose GUID carries "Plus" after the product name. View-mode
 // comments exist only on them; the certified twins declare the same property and ignore it.
-const isPlus = (t = "") => /^ZebraBI(?:Tables|Charts)Plus/.test(t);
+const isPlus = (t) => typeof t === "string" && /^ZebraBI(?:Tables|Charts)Plus/.test(t);
 
 /** `visual.objects.<name>` is a list of one. Reach into the first entry's properties. */
 const obj = (v, name) => {
@@ -59,7 +60,11 @@ const blob = (p) => {
   if (!s) return null;
   try { return JSON.parse(s); } catch { return null; }
 };
-const projections = (v, role) => v?.visual?.query?.queryState?.[role]?.projections ?? [];
+// An array, always: a malformed file can hold anything where a list belongs, and a checker reports, never throws.
+const projections = (v, role) => {
+  const list = v?.visual?.query?.queryState?.[role]?.projections;
+  return Array.isArray(list) ? list : [];
+};
 
 /**
  * Which lines sit inside a ``` fenced body.
@@ -94,22 +99,28 @@ function fencedLines(text) {
  * Blank out everything in a TMDL file that is NOT executable DAX, line by line, returning an array
  * the same length as the input so line numbers still line up.
  *
- * Blanked: `///` descriptions (prose, and prose can quote DAX), `//` and `--` line comments, and
- * the CONTENTS of string literals. What remains is code.
+ * Blanked: `///` descriptions (prose, and prose can quote DAX), `//` and `--` line comments,
+ * `/* ... *\/` block comments (across lines), and the CONTENTS of string literals. What remains is code.
  *
  * ☠️ This is the guard the `//` rule learned the hard way -- matching DAX-shaped text anywhere in a
  * .tmdl file produced 207 false positives across 7 of the 20 shipped templates, because vendor
  * measures are full of commented-out DAX. Any new DAX rule must go through here.
  */
 function daxOnly(text) {
+  let inBlock = false;                                // inside /* ... */, which can span lines
   return text.split(/\r?\n/).map((line) => {
-    if (/^\s*\/\/\//.test(line)) return "";          // description: prose
+    if (!inBlock && /^\s*\/\/\//.test(line)) return "";   // description: prose
     let out = "";
     let inString = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
+      if (inBlock) {
+        if (ch === "*" && line[i + 1] === "/") { inBlock = false; i++; out += "  "; } else out += " ";
+        continue;
+      }
       if (ch === '"') { inString = !inString; out += '"'; continue; }
       if (inString) { out += " "; continue; }          // keep length, drop content
+      if (ch === "/" && line[i + 1] === "*") { inBlock = true; i++; out += "  "; continue; }
       if ((ch === "/" && line[i + 1] === "/") || (ch === "-" && line[i + 1] === "-")) break;
       out += ch;
     }
@@ -1011,7 +1022,7 @@ const checkers = {
     };
     const out = [];
     for (const v of p.visuals) {
-      const prefix = Object.values(ZEBRA).find((z) => (v.visualType ?? "").startsWith(z));
+      const prefix = Object.values(ZEBRA).find((z) => typeof v.visualType === "string" && v.visualType.startsWith(z));
       if (!prefix) continue;
       for (const [role, cap] of Object.entries(MAX[prefix])) {
         const n = projections(v.parsed, role).length;
@@ -2170,11 +2181,11 @@ const checkers = {
     return out;
   },
 
-  // --- rules added 22 Nov 2026, each from a field report of a project Desktop refused or drew empty ---
+  // --- rules added 22 Nov 2026, each from a field report ---
   //
   // Every one is gated on the exact shape in the report, and every one was run over the corpus of
   // projects known to open (the 20 shipped templates and the agent-built projects that render) before
-  // it was kept; see the CHANGELOG entry for the counts.
+  // it was kept.
 
   /**
    * `KPI` is a reserved word in DAX, like `Calculations`: a table named `KPI` loads, and every
@@ -2261,7 +2272,8 @@ const checkers = {
    * side, which puts months or years down the page. Read from the model: the Category is a column typed
    * `dateTime`, a column of a table marked `dataCategory: Time`, or a level of the `Date Hierarchy`.
    * An account, product or region category (a ranking, a cash-flow bridge) is silent, and so is a
-   * report with no model to read.
+   * report with no model to read. Only the first Category level is judged: in a drill hierarchy it
+   * is the level the chart opens on, so Account then Month is a ranking with a drill.
    */
   "charts-vertical-orientation-needs-a-non-time-category"(p) {
     if (!p.model || !p.model.present) return [];
@@ -2269,7 +2281,8 @@ const checkers = {
     for (const v of p.visuals) {
       if (!isCharts(v.visualType)) continue;
       if (lit(obj(v.parsed, "chartSettings")?.showVerticalCharts) !== "true") continue;
-      const hit = projections(v.parsed, "Category").find((pr) => fieldIsTime(p.model, pr.field));
+      const first = projections(v.parsed, "Category")[0];
+      const hit = first && typeof first === "object" && fieldIsTime(p.model, first.field) ? first : null;
       if (hit) {
         const f = hit.field.Column || hit.field.HierarchyLevel;
         const what = hit.field.Column ? `${entityOf(f.Expression)}[${f.Property}]` : `${entityOf(f.Expression) || "Date Hierarchy"} ${f.Level}`;
@@ -2301,6 +2314,8 @@ const checkers = {
         if (n.type !== "partition" || String(n.def || "").trim().toLowerCase() !== "calculated") continue;
         for (const pr of n.props) {
           if (pr.delim !== "=" || pr.name.toLowerCase() !== "source") continue;
+          // A body between ``` fences is read verbatim, indentation included, so it is not judged.
+          if (pr.fenced) continue;
           const i = pr.line - 1;
           if (!lead(raw[i]).includes("\t") || lead(raw[i]).includes(" ")) continue;
           const srcTabs = lead(raw[i]).length;
@@ -2316,6 +2331,7 @@ const checkers = {
               continue;
             }
             if (ws.length === 0) break;                         // column 0: an object
+            if (ws.length < srcTabs * 4) break;                 // narrower than `source`: a property, not a row
             if (!started) break;                                // the body did not start in tabs
             out.push({ location: `${src.rel}:${j + 1}`,
               detail: `a space-indented line follows tab-indented lines in the source of partition '${n.name}'; indent every line with tabs` });
@@ -2335,8 +2351,8 @@ const checkers = {
    * TMDL loader and the whole model does not load: "Parsing error type - InvalidName ...
    * single-quote character in name must be escaped!". A dot outside quotes is not judged.
    *
-   * Covered because the accepted form is stated in the reference and every one of the 357 uses in
-   * the corpus of real models (710 .tmdl files, 369 uses) is a bare or a quoted name. Relationship `fromColumn` and `toColumn`
+   * Covered because the accepted form is stated in the reference and every one of the 369 uses in
+   * the corpus of real models (710 .tmdl files) is a bare or a quoted name. Relationship `fromColumn` and `toColumn`
    * (which take `Table.Column`) are read by `tmdl-relationship-endpoints-must-resolve`, so they are
    * not repeated here. Not covered: a variation's `relationship`, `defaultHierarchy` and
    * `defaultColumn` (Desktop writes them on its own date tables and the reference says never author
@@ -2362,6 +2378,7 @@ const checkers = {
         if (rest === "") return null;
         return rest.startsWith("[") ? "it is a DAX reference, 'Table'[Column]" : "text follows the closing quote";
       }
+      if (v[0] === "[") return "it is a bracketed reference, [Column]";
       if (/[[\]]/.test(v)) return "it is a DAX reference, Table[Column]";
       if (v.includes("'")) return "it holds a single quote that is not escaped";
       return null;
@@ -2390,8 +2407,10 @@ const checkers = {
    * the plan variance in slots 1 and 2 and never the previous-year variance, with no error. Read from
    * the visual's own parser (certified Tables 8.3.0.37 and Tables+ 8.3.0.16 carry the same code).
    *
-   * The slots are simulated: slot k starts as (actual, k-th bound reference), the entries overwrite
-   * the slots they reach, and the rule fires when two DRAWN slots end up holding the same pair. That
+   * The slots are simulated by `tableComparisonSlots` in encoders.js, the one implementation the
+   * encoder, the writers and this rule share: slot k starts as (value scenario, k-th bound reference),
+   * the entries overwrite the slots they reach, and the rule fires when two DRAWN slots end up holding
+   * the same pair. That
    * is the render-verified defect; an entry that merely carries a `-percent` tail but leaves every
    * drawn slot distinct is not flagged, and neither is a `-percent` entry that lands past the drawn
    * slots (a table with two scenarios draws one variance, so
@@ -2400,40 +2419,25 @@ const checkers = {
    * The bound references come from the roles and their projection counts in the visual's own order
    * (PreviousYear, then Plan and Forecast: Plan before Forecast when PreviousYear is bound, Forecast
    * before Plan when it is not); a role with several projections adds plan2 / plan3 and
-   * forecast2 / forecast3. A `calculations` value that is not a JSON array is not judged (the visual
-   * falls back to its defaults).
+   * forecast2 / forecast3, and no more: the visual names three measures per role, and a table with no
+   * Values bound takes its value scenario from Forecast, Previous year or Plan, as the visual's own role
+   * assignment does. A `calculations` value that is not a JSON array is not judged (the visual falls
+   * back to its defaults).
    */
   "tables-calculations-must-name-distinct-drawn-pairs"(p) {
-    const NAME = { actual: "AC", previousYear: "PY", plan: "PL", forecast: "FC",
-                   plan2: "PL2", plan3: "PL3", forecast2: "FC2", forecast3: "FC3" };
-    const group = (prefix, n) => Array.from({ length: Math.min(n, 3) }, (_, i) => (i === 0 ? prefix : prefix + (i + 1)));
     const out = [];
     for (const v of p.visuals) {
       if (!isTable(v.visualType)) continue;
       const calcs = blob(obj(v.parsed, "chartSettings")?.calculations);
       if (!Array.isArray(calcs)) continue;
-      const n = (role) => projections(v.parsed, role).length;
-      if (n("Values") === 0) continue;
-      const pl = group("PL", n("Plan")), fc = group("FC", n("Forecast")), py = n("PreviousYear") > 0 ? ["PY"] : [];
-      const refs = [...py, ...(py.length ? [...pl, ...fc] : [...fc, ...pl])];
-      if (!refs.length) continue;
-      const bound = new Set(["AC", ...refs]);
-      const slots = refs.map((ref) => ["AC", ref]);
-      for (let e = 0; e < calcs.length; e++) {
-        const t = calcs[e];
-        if (!t) continue;
-        if (typeof t !== "string") break;
-        const parts = t.split("-");
-        const a = NAME[parts[0]], s = NAME[parts[1]];
-        if (!a || !s || !bound.has(a) || !bound.has(s)) break;
-        if (e < slots.length) slots[e] = [a, s];
-      }
-      const names = slots.map(([a, s]) => `${a}-${s}`);
-      if (new Set(names).size < names.length) {
-        const missing = refs.map((r) => `AC-${r}`).filter((x) => !names.includes(x));
-        out.push({ location: `${v.rel}:chartSettings.calculations`,
-          detail: `the variance slots draw ${names.join(", ")}` + (missing.length ? `; ${missing.join(", ")} is not drawn` : "") });
-      }
+      const roles = {};
+      for (const role of ["Values", "PreviousYear", "Plan", "Forecast"]) roles[role] = projections(v.parsed, role).length;
+      // One implementation of the visual's slot logic, shared with the encoder and the writers.
+      const sim = enc.tableComparisonSlots(roles, calcs);
+      if (!sim.repeats.length) continue;
+      out.push({ location: `${v.rel}:chartSettings.calculations`,
+        detail: `the variance slots draw ${sim.slots.map((s) => s.comparison).join(", ")}`
+          + (sim.missing.length ? `; ${sim.missing.join(", ")} is not drawn` : "") });
     }
     return out;
   },

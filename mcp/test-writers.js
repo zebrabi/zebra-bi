@@ -658,6 +658,35 @@ check("calculations: a -percent list that draws correctly is written as given, w
   assert.ok(r.warnings.some((x) => /Written as given.*\["actual-previousYear"\]/.test(x)), JSON.stringify(r.warnings));
 });
 
+check("calculations: one list, one outcome on every route: a pair for an unbound scenario is written with a warning when the table still draws correctly", () => {
+  const two = { ...MIN, visualType: "tables+", bindings: { Category: ["Fin.Line"], Values: ["Fin.Value AC"], PreviousYear: ["Fin.Value PY"] } };
+  const list = ["actual-previousYear", "actual-plan"];
+  const viaEncoder = w.writeVisual({ ...two, tableCalculations: { comparisons: list } });
+  const viaProperties = w.writeVisual({ ...two, properties: { "chartSettings.calculations": { __json: list } } });
+  for (const r of [viaEncoder, viaProperties]) {
+    assert.deepStrictEqual(calcOf(r), list);
+    assert.ok((r.warnings || []).some((x) => /'actual-plan'.*not bound/.test(x)), JSON.stringify(r.warnings));
+  }
+});
+
+check("calculations: the refusal for the four-entry list suggests the author's own order, pairs only", () => {
+  // The author put plan first; the suggestion keeps it rather than the default order.
+  try {
+    w.writeVisual({ ...T3, properties: { "chartSettings.calculations": { __json: FOUR } } });
+    assert.fail("not refused");
+  } catch (e) {
+    assert.ok(e.message.includes(JSON.stringify(["actual-plan", "actual-previousYear"])), e.message);
+    assert.ok(!e.message.includes('Write ["actual-previousYear","actual-plan"]'), e.message);
+  }
+});
+
+check("calculations: bindings that are not lists get the bindings error, not a calculations error", () => {
+  refuses(w.writeVisual, { ...MIN, visualType: "tables+", bindings: { Values: "Fin.Value AC", PreviousYear: "Fin.Value PY" },
+    tableCalculations: { comparisons: ["actual-previousYear"] } }, "must be a non-empty array");
+  refuses(w.writeVisual, { ...MIN, visualType: "tables+", bindings: { Values: "Fin.Value AC" },
+    properties: { "chartSettings.calculations": { __json: ["actual-plan"] } } }, "must be a non-empty array");
+});
+
 check("calculations: a list that is not an array is warned about, not refused", () => {
   const r = w.writeVisual({ ...T3, properties: { "chartSettings.calculations": { __json: "actual-plan" } } });
   assert.ok(r.warnings.some((x) => /not a JSON array/.test(x)), JSON.stringify(r.warnings));
@@ -765,6 +794,14 @@ check("no sort warning when sortSettings is set, there is no Category, or the vi
     bindings: { Values: [{ entity: "Sales", property: "AC", kind: "Measure" }] } })));
   assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "charts+", bindings: CAT })));
   assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "cards", bindings: CAT })));
+});
+
+check("no sort warning when the visual carries a sortDefinition; a Category with neither sort still warns", () => {
+  const sort = { sort: [{ field: { Column: { Expression: { SourceRef: { Entity: "Sales" } }, Property: "Region" } }, direction: "Ascending" }] };
+  for (const t of ["tables", "tables+"]) {
+    assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: t, bindings: CAT, queryExtras: { sortDefinition: sort } })), `${t} warned despite a sortDefinition`);
+    assert.ok(sortWarned(w.writeVisual({ ...MIN, visualType: t, bindings: CAT, queryExtras: { isDrillDisabled: true } })), `${t} did not warn with neither sort`);
+  }
 });
 
 // --- file hygiene -----------------------------------------------------------------------------------
