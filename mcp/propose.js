@@ -25,6 +25,32 @@
  *     shrinking denominator is how a partial enumeration passes for a complete one.
  */
 
+const { wideScenarioOf, WIDE_LABEL } = require("./profile-source.js");
+
+const NUMERIC_TYPES = new Set(["double", "int64", "decimal"]);
+
+/**
+ * Wide scenarios in the model: numeric columns named for scenarios (`Costs[Actual]`, `Costs[Plan]`),
+ * one table at a time, with at least one actual and one comparison. Reported in the output notes
+ * and in the refusal below, because `propose_pages` binds MEASURES: a model that holds the actual
+ * and the plan as two columns, with a measure over each, already proposes an AC against PL page
+ * through the measure path. A model with the columns and no measures cannot be proposed from, and
+ * this says what is missing instead of leaving "no comparison" to be read from the silence.
+ */
+function wideScenarioColumns(profile) {
+  for (const t of profile.tables || []) {
+    const cols = [];
+    for (const c of t.columns || []) {
+      if (!NUMERIC_TYPES.has(c.dataType)) continue;
+      const m = wideScenarioOf(c.name);
+      if (m) cols.push({ ref: `${t.name}[${c.name}]`, scenario: m.scenario });
+    }
+    if (cols.some((c) => c.scenario === "actual") && cols.some((c) => c.scenario !== "actual")) return cols;
+  }
+  return null;
+}
+const sayWide = (cols) => cols.map((c) => `${c.ref} is ${WIDE_LABEL[c.scenario]}`).join(", ");
+
 const ZEBRA_TABLE = "ZebraBITablesBAE31B370F254F808553548EFB35BFA5";
 const ZEBRA_TABLE_PLUS = "ZebraBITablesPlus3E6085701D7B426980C3859B16327993";
 
@@ -145,6 +171,7 @@ function proposePages(profile, opts = {}) {
     return hit ? hit.ref : null;
   };
 
+  const wide = wideScenarioColumns(profile);
   const bindable = [];
   const unbindable = [];
   for (const q of ranked) {
@@ -156,7 +183,10 @@ function proposePages(profile, opts = {}) {
       error: "every ranked question scores a COLUMN with no measure aggregating it, and Zebra's "
         + "Values well takes a measure — binding a column renders \"Something's wrong with one or "
         + "more fields\". Add a measure (e.g. AVERAGE or SUM over the column) and run again. "
-        + `Columns ranked but unbindable: ${[...new Set(unbindable.map((q) => q.measureColumn))].join(", ")}`,
+        + `Columns ranked but unbindable: ${[...new Set(unbindable.map((q) => q.measureColumn))].join(", ")}`
+        + (wide ? `. WIDE SCENARIOS: ${sayWide(wide)}. The comparison is there; it needs a measure over `
+          + "each of these columns (for example SUM), after which the pages bind AC against the "
+          + "comparison." : ""),
     };
   }
 
@@ -261,6 +291,12 @@ function proposePages(profile, opts = {}) {
 
   // Output notes: facts about what these pages will do, kept apart from the decisions above.
   const notes = [];
+  if (!hasComparison && wide) {
+    notes.push(`WIDE SCENARIOS. The model carries its scenarios as numeric columns (${sayWide(wide)}), `
+      + "so a comparison exists in the data, but no measure over these columns pairs into an actual and a "
+      + "comparison. Add a measure per column (for example SUM, named like AC and PL), run again, and the "
+      + "pages bind the variance.");
+  }
   if (usePlus && pages.length) {
     notes.push("TITLES ON Tables+. Tables+ has been seen to draw its own automatic title instead of the "
       + "authored titleSettings.text, while Charts+ draws the authored text. These pages author the "

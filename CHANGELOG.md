@@ -26,6 +26,15 @@ though they shipped would misrepresent what anyone could have installed.
   `Category` and no `sortSettings`. A table with none has been seen to sort its rows by the first
   `Values` column, descending, which separates subtotals from their components. Nothing is added to
   the file.
+- `profile_source` reads a comparison held as separate numeric columns (`Actual` and `Plan`,
+  `Sales AC` and `Sales PL`, `Revenue` and `Revenue Budget`) and reports it in a new `wideScenarios`
+  field: which column plays actual, plan, previous year or forecast, and which columns pair by a
+  shared measure name. The brief and the gaps no longer say there is no comparison for such a file.
+  A column name must be a scenario word at its start or end, so `Planet` and `Actuality` match
+  nothing, and a lone `Actual` is not a comparison. A file with a scenario column reads as before.
+  `propose_pages` already proposes an AC against PL page from a model with a measure over each of
+  those columns; when the measures are missing it now names the wide scenario columns in its notes
+  and in its refusal.
 
 ## 0.3.2 — 2026-11-04
 

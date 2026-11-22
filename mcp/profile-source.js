@@ -44,6 +44,18 @@ const FISCAL_COMPANION_HINT = /fiscal|^fy[\s_.\-]?(q|quarter|period|month|semest
 const CALENDAR_YEAR_HINT = /^(calendar[\s_.\-]*year|year|yr|cal[\s_.\-]*year)$/i;
 const SCENARIO_NAME_HINT = /^(actual|actuals|budget|plan|forecast|fc|pl|py|ac|bu|previous year|prior year|estimate|target|outlook)$/i;
 const SCENARIO_COL_HINT = /(^|[\s_.\-])(scenario|version|scenariokey|scenario_key)([\s_.\-]|$)/i;
+// Wide form: the scenarios are separate numeric columns (`Actual`, `Plan`; `Sales AC`, `Sales PL`).
+// The words come from SCENARIO_NAME_HINT. A word must be a whole token at the start or end of the
+// name, so `Planet` and `Actuality` match nothing. Zebra's own labels are AC, PL, PY and FC.
+const WIDE_SCENARIO_WORDS = {
+  actual: ["actual", "actuals", "ac", "act"],
+  plan: ["plan", "budget", "bud", "pl", "bu", "target", "targets"],
+  previousYear: ["py", "ly", "previous year", "prior year", "last year"],
+  forecast: ["forecast", "fc", "fcst", "outlook", "estimate"],
+};
+const WIDE_LABEL = { actual: "AC", plan: "PL", previousYear: "PY", forecast: "FC" };
+// A stem like these means the column measures something about a scenario, not the scenario itself.
+const WIDE_STEM_EXCLUDED = /^(variance|var|delta|diff|difference|pct|percent|percentage|growth|accuracy|rank|index|id|key|code|no|number|flag|date|year|month|period|name|holder)$/;
 const STOCK_HINT = /balance|inventory|stock|on[\s_]?hand|headcount|fte\b|receivable|payable|pipeline|backlog|open[\s_]?(orders|items)|cash\b|debt|equity|assets|liabilit/i;
 const CURRENCY_HINT = /^(currency|currencykey|currency_key|currencycode|currency_code|ccy|iso[\s_]?currency)$/i;
 const RATE_HINT = /(exchange|fx|conversion)[\s_.\-]*rate|^rate$|averagerate|endofdayrate|closingrate/i;
@@ -574,6 +586,75 @@ function scenarioSignal(tables, joins) {
   return null;
 }
 
+/** Split a column name into lower-case word tokens: separators, then camelCase (`SalesAC` is sales, ac). */
+function nameTokens(name) {
+  return String(name).replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[\s_.\-]+/).filter(Boolean).map((t) => t.toLowerCase());
+}
+
+/** `{scenario, stem}` when the name is a scenario word, or a stem plus a scenario word at either end. */
+function wideScenarioOf(name) {
+  const toks = nameTokens(name);
+  if (!toks.length) return null;
+  const phrase = (from, len) => toks.slice(from, from + len).join(" ");
+  for (const atEnd of [true, false]) {
+    for (const [scenario, words] of Object.entries(WIDE_SCENARIO_WORDS)) {
+      for (const w of words) {
+        const len = w.split(" ").length;
+        if (len > toks.length) continue;
+        const from = atEnd ? toks.length - len : 0;
+        if (phrase(from, len) !== w) continue;
+        const stemToks = atEnd ? toks.slice(0, from) : toks.slice(len);
+        if (stemToks.some((t) => WIDE_STEM_EXCLUDED.test(t))) continue;
+        return { scenario, stem: stemToks.join(" ") };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Wide scenarios: a table whose numeric columns are named for scenarios, so the comparison is
+ * column against column and there is no scenario column to find. Needs at least one actual and one
+ * comparison. A bare stem (`Revenue` beside `Revenue Budget`) counts as the actual and is marked
+ * `implied`. Reads every table that is not a date or scenario table: the reported file (`CostCentre,
+ * Sort, Actual, Plan`) is classified a dimension, because those names are not amount words.
+ */
+function wideScenarioSignal(tables) {
+  let best = null;
+  for (const t of tables) {
+    if (t.role === "date" || t.role === "scenario") continue;
+    const numeric = t.columns.filter((c) => (c.type === "number" || c.type === "integer") && !/(key|id)$/i.test(c.name));
+    const cols = [];
+    for (const c of numeric) {
+      const m = wideScenarioOf(c.name);
+      if (m) cols.push({ column: c.name, scenario: m.scenario, stem: m.stem });
+    }
+    const comparisons = cols.filter((c) => c.scenario !== "actual");
+    if (!comparisons.length) continue;
+    for (const stem of new Set(comparisons.map((c) => c.stem))) {
+      if (!stem || cols.some((c) => c.scenario === "actual" && c.stem === stem)) continue;
+      const base = numeric.find((c) => nameTokens(c.name).join(" ") === stem && !cols.some((x) => x.column === c.name));
+      if (base) cols.push({ column: base.name, scenario: "actual", stem, implied: true });
+    }
+    if (!cols.some((c) => c.scenario === "actual")) continue;
+    const pairs = [];
+    for (const stem of new Set(cols.map((c) => c.stem))) {
+      const actual = cols.find((c) => c.scenario === "actual" && c.stem === stem);
+      const against = cols.filter((c) => c.scenario !== "actual" && c.stem === stem);
+      if (actual && against.length) pairs.push({ measure: stem || null, actual: actual.column, against: against.map((c) => ({ scenario: c.scenario, column: c.column })) });
+    }
+    if (!pairs.length) continue;
+    const found = { table: t.table, columns: cols, pairs, scenarios: [...new Set(cols.map((c) => c.scenario))] };
+    if (!best || cols.length > best.columns.length) best = found;
+  }
+  if (!best) return null;
+  const say = (c) => `${c.column} is ${WIDE_LABEL[c.scenario]}${c.implied ? " (the plain measure beside its scenario columns)" : ""}`;
+  best.note = `${best.table} carries its scenarios as numeric columns (wide form): ${best.columns.map(say).join("; ")}. `
+    + `Pairs: ${best.pairs.map((p) => `${p.actual} vs ${p.against.map((a) => a.column).join(" and ")}`).join("; ")}. `
+    + "A variance is read column against column, so each column needs its own measure; there is no scenario column to filter on.";
+  return best;
+}
+
 function joinSignals(tables) {
   const joins = [];
   const dims = tables.filter((t) => t.keyColumn);
@@ -765,6 +846,7 @@ function profileSource(args = {}) {
   const joins = joinSignals(tables);
   const fiscal = fiscalSignal(tables);
   const scenarios = scenarioSignal(tables, joins);
+  const wideScenarios = wideScenarioSignal(tables);
   // Coverage is read on every dated table that is not the calendar itself: facts first, then an
   // unclassified series (a JSON export with date + count and nothing else is still the data).
   const periods = [];
@@ -803,6 +885,8 @@ function profileSource(args = {}) {
     const hasFc = names.some((n) => /forecast|outlook|estimate/i.test(n));
     brief.push(`Comparison: scenarios with rows are ${names.join(", ") || "none"}${scenarios.empty.length ? `; declared but EMPTY: ${scenarios.empty.join(", ")}` : ""}. ` +
       (hasPlan ? "Lead with plan where it reaches, previous year everywhere." : "No plan: lead with previous year.") + (hasFc ? " Forecast is present: the full-year outlook (actuals to date plus forecast) against the full-year plan is the board's line." : ""));
+  } else if (wideScenarios) {
+    brief.push(`Comparison: ${wideScenarios.note} That is a comparison, not a gap: lead with AC against ${wideScenarios.pairs[0].against.map((a) => WIDE_LABEL[a.scenario]).join(" and ")}.`);
   } else if (lead && lead.distinctMonths >= 13) brief.push("Comparison: no scenario column; at least two years of actuals, so previous year is the comparison. No plan does not mean no variance.");
   else brief.push("Comparison: no scenario column and under two years of data — a variance needs a benchmark or a target; do not invent one.");
   // The sign convention matters where one column carries revenue AND cost: a ledger with an
@@ -816,9 +900,14 @@ function profileSource(args = {}) {
   for (const s of stocks.slice(0, 3)) brief.push(`Stock: ${s.note}`);
 
   const gaps = [];
-  if (!tables.some((t) => t.columns.some((c) => c.type === "date" || c.type === "dateKey"))) gaps.push("NO DATE COLUMN in any file — there is no time axis, so PY and YTD are unavailable. A trend page cannot be built from this.");
+  if (!tables.some((t) => t.columns.some((c) => c.type === "date" || c.type === "dateKey"))) {
+    const widePy = wideScenarios && wideScenarios.scenarios.includes("previousYear");
+    gaps.push(widePy
+      ? "NO DATE COLUMN in any file — there is no time axis, so YTD is unavailable and PY comes only from the previous-year column. A trend page cannot be built from this."
+      : "NO DATE COLUMN in any file — there is no time axis, so PY and YTD are unavailable. A trend page cannot be built from this.");
+  }
   if (!dateTables.length && lead) gaps.push("No date table among the files — build a calendar in the model (and carry any fiscal columns into it).");
-  if (!scenarios && lead && lead.distinctMonths < 13) gaps.push("NO COMPARATIVE — no scenario column and under two years. Zebra draws a variance from a pair; the documented fallback is benchmark-vs-population.");
+  if (!scenarios && !wideScenarios && lead && lead.distinctMonths < 13) gaps.push("NO COMPARATIVE — no scenario column and under two years. Zebra draws a variance from a pair; the documented fallback is benchmark-vs-population.");
   for (const j of joins) if (j.orphanRows) gaps.push(`ORPHAN KEYS: ${j.from} → ${j.to}: ${j.orphanRows} row(s) with no match (e.g. ${j.orphanExamples.join(", ")}).`);
   for (const p of periods) {
     if (p.futureDated) gaps.push(`FUTURE-DATED ROWS in ${p.table}[${p.column}]: ${p.futureDated.count} row(s) from ${p.futureDated.first}. The last-data-date measure must ignore them or the period label lies.`);
@@ -846,11 +935,11 @@ function profileSource(args = {}) {
       columns: t.columns.map(({ _distinct, _overflow, ...c }) => c),
     })),
     joins: joins.map(({ fromTable, fromColumn, toTable, toColumn, ...j }) => j),
-    fiscal, periods, scenarios, parentChild, signs, stocks, currency, perimeter, duplicates,
+    fiscal, periods, scenarios, wideScenarios, parentChild, signs, stocks, currency, perimeter, duplicates,
     analystBrief: brief,
     gaps,
     notProfiled,
   };
 }
 
-module.exports = { profileSource, sniffDelimiter, splitLine, toIsoDate, profileColumns, fiscalSignal, periodSignal };
+module.exports = { profileSource, sniffDelimiter, splitLine, toIsoDate, profileColumns, fiscalSignal, periodSignal, wideScenarioOf, WIDE_LABEL };
