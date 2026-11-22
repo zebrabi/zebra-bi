@@ -140,8 +140,9 @@ function proposePages(profile, opts = {}) {
   const measureFor = (colRef) => {
     const m = /^(.+)\[(.+)\]$/.exec(colRef);
     if (!m) return null;
-    const needle = `${m[1]}[${m[2]}]`.toLowerCase();
-    const hit = exprs.find((e) => (e.expression || "").toLowerCase().includes(needle));
+    // The table may be written bare or single-quoted ('Sales'[Amount]); both name the same column.
+    const needles = [`${m[1]}[${m[2]}]`, `'${m[1].replace(/'/g, "''")}'[${m[2]}]`].map((s) => s.toLowerCase());
+    const hit = exprs.find((e) => needles.some((n) => (e.expression || "").toLowerCase().includes(n)));
     return hit ? hit.ref : null;
   };
 

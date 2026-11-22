@@ -420,6 +420,21 @@ check("a ranked column with NO measure over it is refused, not bound raw", () =>
   assert.ok(/no measure aggregating it|takes a measure/i.test(r.error), r.error);
 });
 
+check("a measure over a single-quoted table reference still binds the ranked column", () => {
+  // 'Sales'[Amount] and Sales[Amount] name the same column. Matching only the bare form left every
+  // page unbindable on a model that quotes its table references.
+  for (const expr of ["SUM('Sales'[Amount])", "SUM ( 'sales'[Amount] )", "SUM(Sales[Amount])"]) {
+    const r = proposed({ fact: SIGNAL_FACT,
+      measures: `table '.Measures'\n\tmeasure 'Sales AC' = ${expr}\n` }, { maxPages: 1 });
+    assert.strictEqual(r.ok, true, `${expr}: ${r.error}`);
+    assert.strictEqual(r.subjectMeasure, ".Measures[Sales AC]", `${expr}: bound ${r.subjectMeasure}`);
+  }
+  // The control: a different column is still not matched.
+  const r = proposed({ fact: SIGNAL_FACT,
+    measures: "table '.Measures'\n\tmeasure 'Other' = SUM('Sales'[Region])\n" }, {});
+  assert.strictEqual(r.ok, false, "matched a measure over a different column");
+});
+
 check("every page carries the numbers that justified it", () => {
   const r = proposed({ fact: SIGNAL_FACT, measures: MEASURES });
   assert.strictEqual(r.rationale.length, r.spec.pages.length);
