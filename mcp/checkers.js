@@ -30,6 +30,9 @@ const ZEBRA = {
 const isZebra = (t = "") => Object.values(ZEBRA).some((p) => t.startsWith(p));
 const isTable = (t = "") => t.startsWith(ZEBRA.tables);
 const isCards = (t = "") => t.startsWith(ZEBRA.cards);
+// Charts (certified, `waterfall…`) and Charts+ (`ZebraBICharts…`) are the two Zebra visuals that draw a
+// category axis and take `chartSettings`.
+const isCharts = (t = "") => t.startsWith(ZEBRA.charts) || t.startsWith(ZEBRA.chartsPlus);
 // Tables+ and Charts+ are the two visuals whose GUID carries "Plus" after the product name. View-mode
 // comments exist only on them; the certified twins declare the same property and ignore it.
 const isPlus = (t = "") => /^ZebraBI(?:Tables|Charts)Plus/.test(t);
@@ -161,6 +164,59 @@ function partitionSources(src, lines) {
     }
   }
   return out;
+}
+
+/**
+ * The 0-based line indexes of a model source that hold M, not DAX: the `source` body of a partition
+ * written `= m`, and the body of a shared `expression`. A name such as `KPI` is an ordinary step or
+ * record in M (`KPI[Name]` is a field access there), so a DAX-name rule must not read those lines.
+ */
+function mLineSet(src) {
+  const skip = new Set();
+  if (!src.tree) return skip;
+  const mark = (owner) => {
+    const from = owner.line - 1;
+    const to = Math.max(owner.bodyEnd ?? 0, from + (owner.body ? owner.body.length : 0) + (owner.fenced ? 1 : 0));
+    for (let k = from; k <= to; k++) skip.add(k);
+  };
+  for (const n of src.tree.nodes) {
+    if (n.type === "expression") mark(n);
+    if (n.type !== "partition" || String(n.def || "").trim().toLowerCase() !== "m") continue;
+    for (const pr of n.props) if (pr.name.toLowerCase() === "source") mark(pr);
+  }
+  return skip;
+}
+
+/** The first `SourceRef.Entity` anywhere under a query expression, or null. */
+function entityOf(x) {
+  if (!x || typeof x !== "object") return null;
+  if (x.SourceRef && typeof x.SourceRef.Entity === "string") return x.SourceRef.Entity;
+  for (const k of Object.keys(x)) { const r = entityOf(x[k]); if (r) return r; }
+  return null;
+}
+
+/**
+ * Whether a query field is a point on a time axis, judged from the model: a column typed `dateTime`,
+ * any column of a table marked `dataCategory: Time` (a date table's Year, Quarter, Month, Day), or a
+ * level of Power BI's own `Date Hierarchy`. A column the model does not declare is not judged.
+ */
+function fieldIsTime(model, field) {
+  const tables = model.tables || [];
+  const tableOf = (name) => tables.find((t) => t.name.trim().toLowerCase() === String(name || "").trim().toLowerCase());
+  const marked = (t) => t && (t.dataCategory || "").trim() === "Time";
+  if (field && field.Column) {
+    const t = tableOf(entityOf(field.Column.Expression));
+    if (!t) return false;
+    if (marked(t)) return true;
+    const c = t.columns.find((x) => x.name.trim().toLowerCase() === String(field.Column.Property || "").trim().toLowerCase());
+    return Boolean(c) && /^datetime$/i.test((c.dataType || "").trim());
+  }
+  if (field && field.HierarchyLevel) {
+    const hl = field.HierarchyLevel;
+    if (hl.Expression?.Hierarchy?.Hierarchy === "Date Hierarchy" && /^(Year|Quarter|Month|Day)$/.test(hl.Level || "")) return true;
+    return marked(tableOf(entityOf(hl.Expression)));
+  }
+  return false;
 }
 
 /** A short rendering of a found value for a finding's detail: absent, number 0, string "5.59". */
@@ -605,17 +661,19 @@ const checkers = {
 
   /**
    * ---------------------------------------------------------------------------------------------
-   * THE FOUR DAX RULES. Read this before adding a fifth.
+   * THE DAX RULES. Read this before adding another.
    *
    * Everything from the first `=` onward is DAX, and this file has always treated it as opaque on
    * purpose: judging an expression needs the model's names and types, which no file check has.
-   * These four are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
+   * These are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
    * visible in the text alone. That matters for false positives: an expression that trips one of
    * these cannot work, so the rule cannot fire on a correct report -- which is the bar AGENTS.md
    * sets and the reason the wider "is this DAX sensible" rules were not written.
    *
    * The fourth is `datatable-rows-must-be-constants`, above: it reads a partition's `source`
-   * through `daxOnly()` and flags only DATE in a row.
+   * through `daxOnly()` and flags only DATE in a row. The fifth is `dax-kpi-table-must-be-quoted`,
+   * at the end of this object: the sibling of the Calculations rule for the one other word with
+   * field evidence, skipping lines of M.
    *
    * The three below are hard errors on Desktop 2.157 against a live model.
    * See feedback/2026-09-05-dax-layer-measured.md.
@@ -2106,6 +2164,189 @@ const checkers = {
         if (f.kind === "property-in-body") {
           const o = f.owner.kind === "prop" ? f.owner.owner : f.owner;
           out.push({ location: `${s.rel}:${f.line}`, detail: `'${f.property}:' sits inside the DAX body of ${o.type} '${o.name}' -- indent the body one level deeper than the properties` });
+        }
+      }
+    }
+    return out;
+  },
+
+  // --- rules added 22 Nov 2026, each from a field report of a project Desktop refused or drew empty ---
+  //
+  // Every one is gated on the exact shape in the report, and every one was run over the corpus of
+  // projects known to open (the 20 shipped templates and the agent-built projects that render) before
+  // it was kept; see the CHANGELOG entry for the counts.
+
+  /**
+   * `KPI` is a reserved word in DAX, like `Calculations`: a table named `KPI` loads, and every
+   * unquoted reference (`SELECTEDVALUE ( KPI[Name] )`) fails with "The syntax for 'KPI' is
+   * incorrect", which blanks every visual that uses the measure. `'KPI'[Name]` is fine.
+   *
+   * Only the evidenced word, only in the column-reference position `KPI[`, and only when the model
+   * declares such a table (a variable called kpi is never followed by a bracket). Lines of M (a partition written
+   * `= m`, a shared expression) are skipped: there `KPI[Name]` is a record field access. Read through
+   * `daxOnly`, so a comment or a string that says KPI[Name] is not code.
+   */
+  "dax-kpi-table-must-be-quoted"(p) {
+    if (!p.model || !p.model.present) return [];
+    const declares = (p.model.sources || []).some((s) => /^\s*table\s+'?KPI'?\s*$/im.test(s.text));
+    if (!declares) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      const lines = daxOnly(src.text);
+      const m = mLineSet(src);
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i] || m.has(i)) continue;
+        if (/(?<!['\w.])KPI\s*\[/i.test(lines[i])) {
+          out.push({ location: `${src.rel}:${i + 1}`, detail: "the table 'KPI' is referenced without quotes; write 'KPI'[Column]" });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * A Zebra BI visual type used on a page must be registered in `report.json`. A type that is not
+   * leaves the visual an unresolved placeholder, so the page draws without it. The AppSource visuals
+   * register as a bare GUID in `publicCustomVisuals`; a visual embedded in the report or minted by
+   * the organization's store registers through `resourcePackages` instead (and then
+   * `publicCustomVisuals` is correctly empty), so a type found there is registered too. The check is
+   * the exact type string, ignoring case. A report with no readable `report.json` is not judged.
+   *
+   * MEASURED 22 Nov 2026, why the registration is read from all three places: the first form of this
+   * rule, "listed in `publicCustomVisuals`" alone, fires on all 20 shipped templates, 17 of which
+   * leave `publicCustomVisuals` empty and register every Zebra BI visual through `resourcePackages`.
+   * Every one of them opens. With the three mechanisms read, the 20 templates and 69 further working
+   * projects give zero findings.
+   */
+  "zebra-visual-type-must-be-registered"(p) {
+    const r = p.files.get("definition/report.json");
+    if (!r || r.parseError || !r.parsed || typeof r.parsed !== "object") return [];
+    const listed = new Set((Array.isArray(r.parsed.publicCustomVisuals) ? r.parsed.publicCustomVisuals : [])
+      .filter((x) => typeof x === "string").map((x) => x.toLowerCase()));
+    const packaged = JSON.stringify([r.parsed.resourcePackages ?? null, r.parsed.organizationCustomVisuals ?? null]).toLowerCase();
+    const used = new Map();     // visualType -> how many visuals use it
+    for (const v of p.visuals) if (isZebra(v.visualType)) used.set(v.visualType, (used.get(v.visualType) || 0) + 1);
+    const missing = [...used].filter(([type]) => !listed.has(type.toLowerCase()) && !packaged.includes(type.toLowerCase()));
+    if (!missing.length) return [];
+    // One finding for the one fault, the registration list; the detail names every type it lacks.
+    return [{ location: "definition/report.json:publicCustomVisuals",
+      detail: `not registered: ${missing.map(([type, n]) => `'${type}' (${n} visual${n === 1 ? "" : "s"})`).join(", ")}; add each to publicCustomVisuals` }];
+  },
+
+  /**
+   * A textbox keeps its `paragraphs` in `visual.objects.general`. Written under
+   * `visualContainerObjects.general` (where the title, background and border live) it is a property
+   * the container schema does not declare, and Desktop refuses the visual: "An additional property
+   * 'paragraphs' was included". `textbox-height-below-font-floor` reads either place for its font
+   * sizes, so the two agree on where the paragraphs are; this one says which place is wrong.
+   */
+  "textbox-paragraphs-must-be-in-objects"(p) {
+    const out = [];
+    for (const v of p.visuals) {
+      if (v.visualType !== "textbox") continue;
+      const general = v.parsed?.visual?.visualContainerObjects?.general;
+      if (!Array.isArray(general)) continue;
+      general.forEach((e, i) => {
+        const props = e && typeof e === "object" ? e.properties : null;
+        if (props && typeof props === "object" && Object.prototype.hasOwnProperty.call(props, "paragraphs")) {
+          out.push({ location: `${v.rel}:visualContainerObjects.general[${i}].properties.paragraphs` });
+        }
+      });
+    }
+    return out;
+  },
+
+  /**
+   * Time runs along a Charts X axis. `chartSettings.showVerticalCharts: true` turns the chart on its
+   * side, which puts months or years down the page. Read from the model: the Category is a column typed
+   * `dateTime`, a column of a table marked `dataCategory: Time`, or a level of the `Date Hierarchy`.
+   * An account, product or region category (a ranking, a cash-flow bridge) is silent, and so is a
+   * report with no model to read.
+   */
+  "charts-vertical-orientation-needs-a-non-time-category"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const v of p.visuals) {
+      if (!isCharts(v.visualType)) continue;
+      if (lit(obj(v.parsed, "chartSettings")?.showVerticalCharts) !== "true") continue;
+      const hit = projections(v.parsed, "Category").find((pr) => fieldIsTime(p.model, pr.field));
+      if (hit) {
+        const f = hit.field.Column || hit.field.HierarchyLevel;
+        const what = hit.field.Column ? `${entityOf(f.Expression)}[${f.Property}]` : `${entityOf(f.Expression) || "Date Hierarchy"} ${f.Level}`;
+        out.push({ location: `${v.rel}:chartSettings.showVerticalCharts`, detail: `the Category ${what} is a time field` });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * A calculated table's expression is indented with tabs all the way down. Desktop refuses a body
+   * that starts tab-indented and then continues with space-indented lines (rows of a DATATABLE written
+   * with eight spaces under a tab-indented `source =`): "Invalid indentation was detected!" at the
+   * first such line. A file indented with spaces throughout is consistent and is not judged, and the
+   * rule reads only a partition written `= calculated`.
+   *
+   * The body is found by the characters of the leading whitespace, not by its width: a space-indented
+   * row can measure the same width as `source`, which is exactly why a width test would end the body
+   * before it.
+   */
+  "calculated-source-lines-must-be-tab-indented"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      if (!src.tree) continue;
+      const raw = src.text.split(/\r?\n/);
+      const lead = (l) => /^[\t ]*/.exec(l)[0];
+      for (const n of src.tree.nodes) {
+        if (n.type !== "partition" || String(n.def || "").trim().toLowerCase() !== "calculated") continue;
+        for (const pr of n.props) {
+          if (pr.delim !== "=" || pr.name.toLowerCase() !== "source") continue;
+          const i = pr.line - 1;
+          if (!lead(raw[i]).includes("\t") || lead(raw[i]).includes(" ")) continue;
+          const srcTabs = lead(raw[i]).length;
+          let started = false;
+          for (let j = i + 1; j < raw.length; j++) {
+            if (raw[j].trim() === "") continue;
+            const ws = lead(raw[j]);
+            if (ws.includes("\t")) {
+              // A line led by a tab is body while it is deeper than `source`; otherwise it is the
+              // next property or object. (A tab followed by alignment spaces still counts as tabs.)
+              if ((ws.match(/\t/g) || []).length <= srcTabs) break;
+              started = true;
+              continue;
+            }
+            if (ws.length === 0) break;                         // column 0: an object
+            if (!started) break;                                // the body did not start in tabs
+            out.push({ location: `${src.rel}:${j + 1}`,
+              detail: `a space-indented line follows tab-indented lines in the source of partition '${n.name}'; indent every line with tabs` });
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * Every column a calculated table declares carries `sourceColumn: [Name]` (with `isNameInferred`).
+   * Desktop: "Column 'Year' in calculated table 'Financials' is missing the SourceColumn property".
+   * Judged on a `column` of a table whose partition is written `= calculated` and that has no `=` of
+   * its own: a column with an expression is a calculated COLUMN, which carries its DAX and no
+   * `sourceColumn`, and a column of an imported table is another rule's business.
+   */
+  "calculated-table-column-must-declare-sourcecolumn"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      if (!src.tree) continue;
+      for (const t of src.tree.nodes) {
+        if (t.type !== "table") continue;
+        if (!t.children.some((c) => c.type === "partition" && String(c.def || "").trim().toLowerCase() === "calculated")) continue;
+        for (const c of t.children) {
+          if (c.type !== "column" || c.hasDefault) continue;
+          if (T.prop(c, "sourceColumn")) continue;
+          out.push({ location: `${src.rel}:${c.line}`,
+            detail: `column '${c.name}' of calculated table '${t.name}' has no sourceColumn; write sourceColumn: [${c.name}]` });
         }
       }
     }

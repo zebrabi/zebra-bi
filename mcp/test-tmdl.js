@@ -175,7 +175,8 @@ function project({ calendar = CALENDAR, fact = FACT, units = null, valuesRef = n
   fs.writeFileSync(path.join(def, "definition.pbir"), JSON.stringify(
     { datasetReference: { byPath: { path: "../Demo.SemanticModel" } } }));
   fs.writeFileSync(path.join(def, "report.json"), JSON.stringify(
-    { $schema: "https://x", themeCollection: { baseTheme: { name: "CY24SU10" } } }));
+    { $schema: "https://x", themeCollection: { baseTheme: { name: "CY24SU10" } },
+      publicCustomVisuals: ["ZebraBITablesBAE31B370F254F808553548EFB35BFA5"] }));
   fs.writeFileSync(path.join(def, "pages", "pages.json"),
     JSON.stringify({ pageOrder: ["P1"], activePageName: "P1" }));
   fs.writeFileSync(path.join(def, "pages", "P1", "page.json"), JSON.stringify({ name: "P1" }));
@@ -983,6 +984,91 @@ check("TRUE()/FALSE() rows, a commented-out DATATABLE and a `//` note after a ro
     "\t\tsource =\n\t\t\tDATATABLE(\"N\", STRING, {\n\t\t\t\t{\"a\"} // see note(1)\n\t\t\t})\n",
   ];
   cases.forEach((c, n) => assert.ok(!dtCodes(c).has("tmdl-datatable-row-calls-a-function"), "fired on case #" + (n + 1)));
+});
+
+// --- `KPI` is reserved in DAX, like Calculations (22 Nov 2026) ---------------------------------------
+// A table named KPI loads; every unquoted KPI[...] fails with "The syntax for 'KPI' is incorrect".
+const KPI_TABLE = "table KPI\n\n\tcolumn Name\n\t\tdataType: string\n\t\tsummarizeBy: none\n\t\tsourceColumn: Name\n";
+const kpiCodes = (extra) => codes(project({ fact: CLEAN_MODEL, extraTmdl: extra }));
+
+check("an unquoted KPI[Name] reference is caught when the model declares a KPI table; 'KPI'[Name] is not", () => {
+  const uses = (ref) => KPI_TABLE + `\ntable UsesIt\n\n\tmeasure U = SELECTEDVALUE ( ${ref} )\n\t\tformatString: #,##0\n`;
+  assert.ok(kpiCodes(uses("KPI[Name]")).has("dax-unquoted-kpi-table"), "missed KPI[Name]");
+  assert.ok(kpiCodes(uses("kpi[Name]")).has("dax-unquoted-kpi-table"), "missed a different case");
+  assert.ok(!kpiCodes(uses("'KPI'[Name]")).has("dax-unquoted-kpi-table"), "fired on the quoted form");
+  assert.ok(!kpiCodes(uses("'KPI'[Name]")).has("dax-unquoted-calculations-table"), "the sibling rule fired");
+});
+
+check("KPI is NOT flagged without a KPI table, as a column or measure name, in a string or comment, or in M", () => {
+  const measure = (dax) => `table UsesIt\n\n\tmeasure U = ${dax}\n\t\tformatString: #,##0\n`;
+  // no such table: a different fault with a different message
+  assert.ok(!kpiCodes(measure("SELECTEDVALUE ( KPI[Name] )")).has("dax-unquoted-kpi-table"), "fired with no KPI table");
+  // the table exists; none of these is an unquoted table reference
+  for (const dax of ["SUM ( Sales[KPI] )", "[KPI] * 2", "\"KPI[Name] is text\"", "SUM ( 'KPI'[Value] ) // KPI[Name]",
+                     "VAR kpi = 1 RETURN kpi"]) {
+    assert.ok(!kpiCodes(KPI_TABLE + "\n" + measure(dax)).has("dax-unquoted-kpi-table"), `fired on ${dax}`);
+  }
+  // M: KPI[Name] is a field access on a record or step called KPI
+  const m = "table Loaded\n\n\tcolumn A\n\t\tdataType: string\n\t\tsourceColumn: A\n\n\tpartition Loaded = m\n\t\tmode: import\n\t\tsource =\n"
+    + "\t\t\t\tlet\n\t\t\t\t    KPI = [Name = \"a\"],\n\t\t\t\t    Out = #table({\"A\"}, {{KPI[Name]}})\n\t\t\t\tin\n\t\t\t\t    Out\n";
+  assert.ok(!kpiCodes(KPI_TABLE + "\n" + m).has("dax-unquoted-kpi-table"), "read M as DAX");
+});
+
+// --- a calculated table's expression is indented with tabs throughout (22 Nov 2026) --------------------
+// Desktop: "Invalid indentation was detected!" when DATATABLE rows are space-indented under a tab-indented source.
+const CALC_HEAD = "table F\n\tpartition F = calculated\n\t\tmode: import\n\t\tsource =\n";
+const ROWS = (lead) => ["{ 2025, 1, \"Revenue\", 473363 },", "{ 2025, 2, \"Revenue\", 492779 }"].map((r) => lead + r).join("\n");
+const calcBody = (rowLead) => "\t\t\tADDCOLUMNS (\n\t\t\tDATATABLE (\n\t\t\t\t\"Year\", INTEGER, \"MonthNo\", INTEGER, \"Account\", STRING, \"Amount\", INTEGER,\n\t\t\t\t{\n"
+  + ROWS(rowLead) + "\n\t\t\t\t}\n\t\t\t),\n\t\t\t\"Key\", [Year] * 100 + [MonthNo]\n\t\t\t)\n";
+const SP = "calculated-source-lines-must-be-tab-indented";
+const spaceCodes = (src) => codes(project({ extraTmdl: src }));
+
+check("DATATABLE rows indented with spaces under a tab-indented source are caught, once, at the first such row", () => {
+  const root = project({ extraTmdl: CALC_HEAD + calcBody("        ") });
+  const hits = srv.validateReport({ projectPath: root }).findings.filter((f) => f.code === "tmdl-calculated-source-space-indented");
+  assert.strictEqual(hits.length, 1, `expected one finding, got ${hits.length}`);
+  assert.strictEqual(hits[0].severity, "wont-open");
+  assert.ok(/extra\.tmdl:9$/.test(hits[0].location), hits[0].location);
+});
+
+check("tab-indented rows, a file indented with spaces throughout, tab-plus-alignment-spaces and an M partition are NOT flagged", () => {
+  const code = "tmdl-calculated-source-space-indented";
+  assert.ok(!spaceCodes(CALC_HEAD + calcBody("\t\t\t\t\t")).has(code), "fired on tab-indented rows");
+  const allSpaces = CALC_HEAD.replace(/\t/g, "    ") + calcBody("        ").replace(/\t/g, "    ");
+  assert.ok(!spaceCodes(allSpaces).has(code), "fired on a file that is indented with spaces throughout");
+  assert.ok(!spaceCodes(CALC_HEAD + calcBody("\t\t\t\t\t  ")).has(code), "fired on tabs followed by alignment spaces");
+  const m = "table L\n\tpartition L = m\n\t\tmode: import\n\t\tsource =\n\t\t\t\tlet\n        Source = 1\n\t\t\t\tin\n\t\t\t\t    Source\n";
+  assert.ok(!spaceCodes(m).has(code), "judged an M partition");
+  // a property after the expression, at table depth, ends the body: not a space-indented row
+  assert.ok(!spaceCodes(CALC_HEAD + "\t\t\t{ 1 }\n\t\tannotation X = y\n").has(code), "read a property as a row");
+});
+
+// --- every column of a calculated table carries sourceColumn (22 Nov 2026) -----------------------------
+// Desktop: "Column 'Year' in calculated table 'Financials' is missing the SourceColumn property".
+const SC = "tmdl-calculated-table-column-without-sourcecolumn";
+const calcTable = (cols) => "table Financials\n" + cols + "\tpartition Financials = calculated\n\t\tmode: import\n\t\tsource =\n\t\t\tDATATABLE ( \"Year\", INTEGER, { { 2025 } } )\n";
+const scCodes = (tmdl) => codes(project({ extraTmdl: tmdl }));
+
+check("a calculated-table column with no sourceColumn is caught at the column; with sourceColumn: [Name] it is not", () => {
+  const bad = "\tcolumn Year\n\t\tdataType: int64\n\t\tisNameInferred\n";
+  const good = "\tcolumn Year\n\t\tdataType: int64\n\t\tisNameInferred\n\t\tsourceColumn: [Year]\n";
+  const root = project({ extraTmdl: calcTable(bad) });
+  const hits = srv.validateReport({ projectPath: root }).findings.filter((f) => f.code === SC);
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].severity, "wont-open");
+  assert.ok(/extra\.tmdl:2$/.test(hits[0].location), hits[0].location);
+  assert.ok(/Year/.test(hits[0].detail) && /Financials/.test(hits[0].detail), hits[0].detail);
+  assert.ok(!scCodes(calcTable(good)).has(SC), "fired on the form Desktop writes");
+});
+
+check("columns of an imported table, calculated columns and a calculated table with no columns are NOT flagged", () => {
+  const imported = "table Sales\n\tcolumn Year\n\t\tdataType: int64\n\t\tsourceColumn: Year\n\n\tcolumn Note\n\t\tdataType: string\n"
+    + "\n\tpartition Sales = m\n\t\tmode: import\n\t\tsource =\n\t\t\t\tlet\n\t\t\t\t    S = 1\n\t\t\t\tin\n\t\t\t\t    S\n";
+  assert.ok(!scCodes(imported).has(SC), "fired on an imported table");
+  const calcColumn = calcTable("\tcolumn Year\n\t\tdataType: int64\n\t\tisNameInferred\n\t\tsourceColumn: [Year]\n\n"
+    + "\tcolumn Date = DATE ( Financials[Year], 1, 1 )\n\t\tdataType: dateTime\n\t\tsummarizeBy: none\n\n");
+  assert.ok(!scCodes(calcColumn).has(SC), "fired on a calculated column of a calculated table");
+  assert.ok(!scCodes(calcTable("")).has(SC), "fired on a calculated table that declares no columns");
 });
 
 // --- cultures/ is a FACT, like compatibilityLevel -----------------------------------------
