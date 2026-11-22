@@ -257,6 +257,174 @@ check("a column key outside the legal set is warned about", () => {
   assert.ok(r.warnings.some((w) => /will be ignored/.test(w)));
 });
 
+// --- calculations: one comparison pair per variance slot ------------------------------------------
+//
+// The visual reads chartSettings.calculations by position: entry i sets variance slot i, and only
+// the first two "-" parts of an entry are read. This helper is an independent port of that reading
+// (written from the visual's parser, not from encoders.js), so the encoder is checked against the
+// visual rather than against itself.
+const VISUAL_NAMES = ["actual", "previousYear", "plan", "plan2", "plan3", "forecast", "forecast2", "forecast3"];
+function visualSlots(roles, calculations) {
+  const n = (k) => roles[k] || 0;
+  const nums = (base, count, from = 0) => {
+    const out = [];
+    for (let k = from; k < count; k++) out.push(k ? `${base}${k + 1}` : base);
+    return out;
+  };
+  const V = n("Values"), M = n("PreviousYear") > 0, f = n("Plan"), m = n("Forecast");
+  let value = null; const refs = [];
+  if (V > 0 && (M || f || m || V <= 1)) {
+    value = "actual";
+    if (f && M) refs.push("previousYear", ...nums("plan", f), ...nums("forecast", m));
+    else if (f && m) refs.push(...nums("forecast", m), ...nums("plan", f));
+    else if (f) refs.push(...nums("plan", f));
+    else if (m) refs.push(...(M ? ["previousYear"] : []), ...nums("forecast", m));
+    else if (M) refs.push("previousYear");
+  }
+  const bound = [value, ...refs];
+  const slots = refs.map((r) => `${value}-${r}`);
+  for (let i = 0; i < (calculations || []).length; i++) {
+    const t = calculations[i];
+    if (!t) continue;
+    const [a, b] = t.split("-");
+    if (!VISUAL_NAMES.includes(a) || !bound.includes(a) || !bound.includes(b)) break;
+    if (i < slots.length) slots[i] = `${a}-${b}`;
+  }
+  return slots;
+}
+const THREE = { Values: 1, PreviousYear: 1, Plan: 1 };
+const FOUR_KEYS = ["actual-plan", "actual-plan-percent", "actual-previousYear", "actual-previousYear-percent"];
+
+check("the helper reproduces the field fault: four keys on AC/PY/PL draw the plan comparison twice", () => {
+  // The control for every test below: if this does not show the fault, the helper is wrong.
+  assert.deepStrictEqual(visualSlots(THREE, FOUR_KEYS), ["actual-plan", "actual-plan"]);
+  assert.deepStrictEqual(visualSlots(THREE, undefined), ["actual-previousYear", "actual-plan"]);
+  assert.deepStrictEqual(e.tableComparisonSlots(THREE, FOUR_KEYS).slots.map((s) => s.comparison),
+    ["actual-plan", "actual-plan"]);
+});
+
+check("three scenarios: exactly the two pairs, and both variances draw", () => {
+  const r = e.encodeTableCalculations({ comparisons: ["actual-previousYear", "actual-plan"], roles: THREE });
+  assert.deepStrictEqual(decode(r), ["actual-previousYear", "actual-plan"]);
+  assert.deepStrictEqual(r.slots, ["actual-previousYear", "actual-plan"]);
+  assert.deepStrictEqual(visualSlots(THREE, decode(r)), ["actual-previousYear", "actual-plan"]);
+  assert.ok(!r.warnings, JSON.stringify(r.warnings));
+});
+
+check("two scenarios: a lone pair is right and draws its one variance", () => {
+  for (const [roles, pair] of [[{ Values: 1, PreviousYear: 1 }, "actual-previousYear"],
+                               [{ Values: 1, Plan: 1 }, "actual-plan"],
+                               [{ Values: 1, Forecast: 1 }, "actual-forecast"]]) {
+    const r = e.encodeTableCalculations({ comparisons: [pair], roles });
+    assert.deepStrictEqual(decode(r), [pair]);
+    assert.deepStrictEqual(visualSlots(roles, decode(r)), [pair]);
+  }
+});
+
+check("the four-key list is refused, and the message says what to pass and why", () => {
+  refuses(e.encodeTableCalculations, { comparisons: FOUR_KEYS },
+    "'actual-plan-percent' is a column, not a comparison.*already brings its absolute column and its percent column.*Pass 'actual-plan' once");
+});
+
+check("every -percent entry is refused, forecast ones included", () => {
+  for (const c of ["actual-previousYear-percent", "forecast-plan-percent", "actual-forecast-percent"]) {
+    refuses(e.encodeTableCalculations, { comparisons: [c] }, "is a column, not a comparison");
+  }
+});
+
+check("a repeated pair is refused", () => {
+  refuses(e.encodeTableCalculations, { comparisons: ["actual-plan", "actual-plan"] }, "listed twice");
+});
+
+check("with roles: a lone pair that repeats another slot's default is refused", () => {
+  // AC/PY/PL defaults to PY then PL; setting slot 1 to PL leaves slot 2 on PL.
+  refuses(e.encodeTableCalculations, { comparisons: ["actual-plan"], roles: THREE },
+    "draw 'actual-plan' in two variance slots and leave out 'actual-previousYear'");
+  // AC/FC/PL defaults to FC then PL.
+  refuses(e.encodeTableCalculations, { comparisons: ["actual-plan"], roles: { Values: 1, Forecast: 1, Plan: 1 } },
+    "leave out 'actual-forecast'");
+});
+
+check("with roles: a pair naming a scenario that is not bound is refused", () => {
+  refuses(e.encodeTableCalculations, { comparisons: ["actual-forecast"], roles: THREE }, "not bound");
+});
+
+check("the pair names are the 56 ordered pairs the visual labels, and none is a -percent key", () => {
+  assert.strictEqual(e.COMPARISONS.length, 56);
+  assert.ok(!e.COMPARISONS.some((c) => c.endsWith("-percent")));
+  for (const c of ["actual-previousYear", "actual-plan", "forecast-plan", "actual-forecast", "plan-actual", "plan2-actual"]) {
+    assert.ok(e.COMPARISONS.includes(c), c);
+  }
+});
+
+check("a pair's -percent column is legal without being listed", () => {
+  const cal = e.encodeTableCalculations({ comparisons: ["actual-previousYear", "actual-plan"], roles: THREE });
+  for (const k of ["actual-plan-percent", "actual-previousYear-percent", "actual", "plan", "previousYear"]) {
+    assert.ok(cal.legalColumnKeys.includes(k), k);
+  }
+  const r = e.encodeTableColumns({ mode: "table", legalKeys: cal.legalColumnKeys,
+    columns: [{ key: "actual-plan-percent", order: 5 }, { key: "actual-previousYear-percent", order: 7 }] });
+  assert.ok(!r.warnings, JSON.stringify(r.warnings));
+});
+
+check("a -percent column of an undeclared pair says to add the pair, never the -percent key", () => {
+  const cal = e.encodeTableCalculations({ comparisons: ["actual-plan"] });
+  const r = e.encodeTableColumns({ mode: "table", legalKeys: cal.legalColumnKeys,
+    columns: [{ key: "actual-previousYear-percent" }] });
+  assert.ok(r.warnings.some((w) => /add 'actual-previousYear' to calculations, and leave 'actual-previousYear-percent' out of it/.test(w)),
+    JSON.stringify(r.warnings));
+});
+
+check("ROUND TRIP: no value the encoder accepts draws one comparison in two slots", () => {
+  // Every role shape a Tables visual takes, and every ordered list of distinct pairs over its
+  // bound scenarios up to one entry longer than its slot count. Accepted lists must draw distinct
+  // comparisons by the independent helper, and agree with the encoder's own simulation.
+  const shapes = [
+    { Values: 1, PreviousYear: 1 }, { Values: 1, Plan: 1 }, { Values: 1, Forecast: 1 },
+    THREE, { Values: 1, Forecast: 1, Plan: 1 }, { Values: 1, PreviousYear: 1, Forecast: 1 },
+    { Values: 1, PreviousYear: 1, Plan: 1, Forecast: 1 }, { Values: 1, Plan: 2 },
+    { Values: 1, PreviousYear: 1, Plan: 2 },
+  ];
+  let accepted = 0, refused = 0;
+  for (const roles of shapes) {
+    const { value, references } = e.tableReferences(roles);
+    const names = [value, ...references];
+    const pairs = e.COMPARISONS.filter((c) => names.includes(c.split("-")[0]) && names.includes(c.split("-")[1]));
+    const lists = [];
+    const grow = (list) => {
+      if (list.length) lists.push(list);
+      if (list.length > references.length) return;
+      for (const p of pairs) if (!list.includes(p)) grow([...list, p]);
+    };
+    grow([]);
+    for (const list of lists) {
+      let r;
+      try { r = e.encodeTableCalculations({ comparisons: list, roles }); }
+      catch (err) { assert.ok(err instanceof e.EncodeError, err.message); refused++; continue; }
+      accepted++;
+      const drawn = visualSlots(roles, decode(r));
+      assert.strictEqual(new Set(drawn).size, drawn.length, `${JSON.stringify(roles)} ${JSON.stringify(list)} draws ${drawn}`);
+      assert.deepStrictEqual(r.slots, drawn, `${JSON.stringify(list)}: encoder and visual disagree`);
+    }
+  }
+  assert.ok(accepted > 0 && refused > 0, `accepted ${accepted}, refused ${refused}`);
+});
+
+check("ROUND TRIP: a percent-free pair list adds no validator finding to a real visual.json", () => {
+  const cal = e.encodeTableCalculations({ comparisons: ["actual-previousYear", "actual-plan"], roles: THREE });
+  const cols = e.encodeTableColumns({ mode: "table", legalKeys: cal.legalColumnKeys,
+    columns: [{ key: "actual-previousYear", order: 4 }, { key: "actual-plan", order: 5 },
+              { key: "actual-previousYear-percent", order: 6 }, { key: "actual-plan-percent", order: 7 }] });
+  assert.ok(!cols.warnings, JSON.stringify(cols.warnings));
+  const showAsTable = { expr: { Literal: { Value: "true" } } };
+  // The fixture project carries findings of its own; the encoded blobs must add none to them.
+  const codes = (root) => srv.validateReport({ projectPath: root }).findings.map((f) => f.code);
+  const base = codes(projectWith({ chartSettings: [{ properties: { showAsTable } }] }));
+  const found = codes(projectWith({ chartSettings: [{ properties: {
+    calculations: cal.literal, columnSettings: cols.literal, showAsTable } }] }));
+  assert.deepStrictEqual(found.filter((c) => !base.includes(c)), []);
+});
+
 // --- the cross-check: does the validator accept what the encoders produce? ----------------------
 
 function projectWith(objects) {

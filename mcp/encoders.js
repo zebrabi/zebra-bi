@@ -106,8 +106,15 @@ function encodeTableColumns({ columns, mode, legalKeys } = {}) {
   for (const c of columns) {
     need(c && c.key, "every column needs a key: a scenario role or a measure name");
     if (legalKeys && !legalKeys.includes(c.key)) {
-      warnings.push(`Column key '${c.key}' is not in the legal key set for the calculations you `
-        + `declared, so it will be ignored. Legal: ${legalKeys.join(", ")}`);
+      // A `-percent` key is never fixed by listing it in calculations: that list holds comparison
+      // pairs, and a `-percent` entry there fills a second variance slot with the same comparison.
+      const pair = c.key.endsWith("-percent") ? c.key.slice(0, -"-percent".length) : null;
+      warnings.push(`Column key '${c.key}' is not a column of the comparisons this table draws, so `
+        + `it will be ignored. Legal: ${legalKeys.join(", ")}.`
+        + (pair && COMPARISONS.includes(pair)
+          ? ` It is the percent column of the comparison '${pair}': add '${pair}' to `
+            + `calculations, and leave '${c.key}' out of it.`
+          : ""));
     }
     if ("header" in c) {
       warnings.push("`header` was authored and dropped: it has no observed effect and the cause "
@@ -143,20 +150,161 @@ function encodeTableColumns({ columns, mode, legalKeys } = {}) {
 }
 
 /**
- * `chartSettings.calculations` decides which keys are legal inside `columnSettings`, so one
- * caller owns both sides and the second call gets the key set handed to it.
+ * `chartSettings.calculations` (Tables and Tables+): which comparison each variance slot draws.
+ *
+ * The visual reads the array by POSITION. Entry 0 sets the first variance slot (its absolute and
+ * its percent column), entry 1 the second, and so on. Each entry is split on "-" and only the
+ * first two parts are read, as a value scenario and a reference scenario. So the array holds
+ * comparison PAIRS, never column keys: a `-percent` entry such as `actual-plan-percent` reads as
+ * `actual-plan` and fills its slot with the comparison another slot already draws. With Actual,
+ * Previous year and Plan bound, `["actual-plan","actual-plan-percent","actual-previousYear",
+ * "actual-previousYear-percent"]` draws the plan variance twice and the previous-year variance
+ * not at all.
+ *
+ * A slot the array does not set keeps its default, which comes from the bound roles (see
+ * `tableReferences`). An entry naming a scenario that is not bound stops the reading there:
+ * earlier slots keep what they were given, later slots keep their defaults. A null entry is
+ * skipped. The scenario names are the visual's own: the eight below, where `plan2`/`plan3` and
+ * `forecast2`/`forecast3` are the second and third measure bound to Plan or Forecast.
  */
 const SCENARIO_KEYS = ["actual", "plan", "previousYear", "forecast"];
-const COMPARISONS = ["actual-plan", "actual-plan-percent", "actual-previousYear",
-  "actual-previousYear-percent", "forecast-plan", "forecast-plan-percent"];
+const TABLE_SCENARIOS = ["actual", "previousYear", "plan", "plan2", "plan3",
+  "forecast", "forecast2", "forecast3"];
+/**
+ * Every pair the visual's parser accepts and labels: an ordered pair of two different scenario
+ * names, `<value>-<reference>`. 56 names. The ones in shipped files are `actual-previousYear`,
+ * `actual-plan`, `forecast-plan`, `plan-actual` and `plan2-actual`; the visual's own defaults
+ * add `actual-forecast`.
+ */
+const COMPARISONS = TABLE_SCENARIOS.flatMap((a) =>
+  TABLE_SCENARIOS.filter((b) => b !== a).map((b) => `${a}-${b}`));
 
-function encodeTableCalculations({ comparisons } = {}) {
+const roleCount = (v) => (Array.isArray(v) ? v.length : typeof v === "number" ? v : 0);
+const numbered = (base, n, from = 0) =>
+  Array.from({ length: Math.max(0, n - from) }, (_, k) => (k + from ? `${base}${k + from + 1}` : base));
+
+/**
+ * The value scenario and the reference scenarios a Tables visual derives from its bound roles,
+ * in slot order. Mirrors the visual's own role assignment: with Actual bound, the references are
+ * Previous year, then the Plan measures, then the Forecast measures; with no Previous year and a
+ * Forecast, the first Forecast comes first. `roles` takes counts or binding arrays, keyed by role.
+ */
+function tableReferences(roles = {}) {
+  const V = roleCount(roles.Values), M = roleCount(roles.PreviousYear) > 0;
+  const f = roleCount(roles.Plan), m = roleCount(roles.Forecast);
+  const w = f > 0, C = m > 0;
+  let value = null; const refs = [];
+  const hasValue = V > 0 && (M || w || C || V <= 1);
+  if (hasValue) {
+    value = "actual";
+    if (w) {
+      if (M) refs.push("previousYear", ...numbered("plan", f), ...(C ? numbered("forecast", m) : []));
+      else if (C) refs.push(...numbered("forecast", m), ...numbered("plan", f));
+      else refs.push(...numbered("plan", f));
+    } else if (C) {
+      if (M) refs.push("previousYear", ...numbered("forecast", m));
+      else refs.push(...numbered("forecast", m));
+    } else if (M) refs.push("previousYear");
+  } else if (w || C || M) {
+    // No Actual: the first of Forecast, Previous year, Plan becomes the value scenario.
+    if (C) { value = "forecast"; refs.push(...numbered("forecast", m, 1)); if (M) refs.push("previousYear"); if (w) refs.push(...numbered("plan", f)); }
+    else if (M) { value = "previousYear"; refs.push(...numbered("plan", f)); }
+    else { value = "plan"; refs.push(...numbered("plan", f, 1)); }
+  }
+  return { value, references: refs };
+}
+
+/**
+ * What a Tables visual draws for a given `calculations` value and set of bound roles: one entry
+ * per drawn variance slot, as a comparison pair, plus where the reading stopped and which drawn
+ * slots repeat a comparison. Pure; the same simulation the checker rule uses.
+ */
+function tableComparisonSlots(roles, calculations) {
+  const { value, references } = tableReferences(roles);
+  const bound = new Set([value, ...references].filter(Boolean));
+  const slots = references.map((ref) => ({ comparison: `${value}-${ref}`, setBy: null }));
+  let stoppedAt = null;
+  const entries = Array.isArray(calculations) ? calculations : [];
+  for (let i = 0; i < entries.length; i++) {
+    const t = entries[i];
+    if (!t) continue;
+    if (typeof t !== "string") { stoppedAt = i; break; }
+    const [a, b] = t.split("-");
+    if (!bound.has(a) || !bound.has(b)) { stoppedAt = i; break; }
+    if (i < slots.length) slots[i] = { comparison: `${a}-${b}`, setBy: t };
+  }
+  const seen = new Map(); const repeats = [];
+  slots.forEach((s, i) => {
+    if (seen.has(s.comparison)) repeats.push({ comparison: s.comparison, slots: [seen.get(s.comparison) + 1, i + 1] });
+    else seen.set(s.comparison, i);
+  });
+  const defaults = references.map((ref) => `${value}-${ref}`);
+  const missing = defaults.filter((d) => !slots.some((s) => s.comparison === d));
+  return { value, references, slots, stoppedAt, repeats, missing };
+}
+
+/** The `-percent` and repeated entries of a calculations list, which never belong in it. */
+function calculationsFaults(list) {
+  const percent = [], repeated = [], seen = new Set();
+  for (const c of list) {
+    if (typeof c !== "string") continue;
+    if (c.split("-").length > 2) percent.push(c);
+    const pair = c.split("-").slice(0, 2).join("-");
+    if (seen.has(pair)) repeated.push(c); else seen.add(pair);
+  }
+  return { percent, repeated };
+}
+
+function encodeTableCalculations({ comparisons, roles } = {}) {
   need(Array.isArray(comparisons) && comparisons.length,
-    `comparisons is required. Choose from: ${COMPARISONS.join(", ")}`);
+    "comparisons is required: one comparison pair per variance slot, in the order the slots draw, "
+    + "for example ['actual-previousYear','actual-plan'] for a table with Actual, Previous year "
+    + "and Plan bound.");
+  for (const c of comparisons) {
+    need(typeof c === "string", `every comparison must be a string such as 'actual-plan', not ${JSON.stringify(c)}`);
+    if (c.endsWith("-percent") && COMPARISONS.includes(c.slice(0, -"-percent".length))) {
+      need(false, `'${c}' is a column, not a comparison. calculations takes one comparison pair per `
+        + `variance slot, and each pair already brings its absolute column and its percent column. `
+        + `The visual reads '${c}' as '${c.slice(0, -"-percent".length)}' and draws that comparison `
+        + `a second time in the next slot. Pass '${c.slice(0, -"-percent".length)}' once; style its `
+        + `percent column in columnSettings under '${c}'.`);
+    }
+  }
   const bad = comparisons.filter((c) => !COMPARISONS.includes(c));
-  need(!bad.length, `unknown comparison(s): ${bad.join(", ")}. Choose from: ${COMPARISONS.join(", ")}`);
+  need(!bad.length, `unknown comparison(s): ${bad.join(", ")}. A comparison is '<value>-<reference>', `
+    + `two different scenario names from: ${TABLE_SCENARIOS.join(", ")}.`);
+  const dup = comparisons.filter((c, i) => comparisons.indexOf(c) !== i);
+  need(!dup.length, `'${dup[0]}' is listed twice. Each entry fills its own variance slot, so a `
+    + `repeated comparison is drawn twice and another comparison is left out.`);
+
+  const warnings = [];
+  let slots;
+  if (roles !== undefined) {
+    const sim = tableComparisonSlots(roles, comparisons);
+    need(sim.stoppedAt === null, `'${comparisons[sim.stoppedAt]}' names a scenario that is not bound `
+      + `(bound: ${[sim.value, ...sim.references].filter(Boolean).join(", ") || "none"}). The visual `
+      + `stops reading calculations at that entry.`);
+    need(!sim.repeats.length, `With these roles the table would draw '${sim.repeats[0]?.comparison}' `
+      + `in two variance slots and leave out ${sim.missing.map((m) => `'${m}'`).join(", ")}. A slot `
+      + `the list does not set keeps its default comparison. List one pair per slot, for example `
+      + `${JSON.stringify(sim.references.map((r) => `${sim.value}-${r}`))}, or leave calculations out.`);
+    if (comparisons.length > sim.references.length) {
+      warnings.push(`Only ${sim.references.length} variance slot(s) draw with these roles, so `
+        + `${comparisons.slice(sim.references.length).map((c) => `'${c}'`).join(", ")} will not draw.`);
+    }
+    slots = sim.slots.map((s) => s.comparison);
+  }
+
+  // Column keys: the scenarios, and for each comparison that draws, its absolute AND its percent
+  // column. A percent column is legal whenever its pair is, with nothing more to list.
+  const pairs = [...new Set([...comparisons, ...(slots ?? [])])];
+  const named = new Set(pairs.flatMap((p) => p.split("-")));
+  const legalColumnKeys = [...new Set([...SCENARIO_KEYS, ...TABLE_SCENARIOS.filter((s) => named.has(s)),
+    ...pairs.flatMap((p) => [p, `${p}-percent`])])];
   return emit("chartSettings.calculations", comparisons, {
-    legalColumnKeys: [...SCENARIO_KEYS, ...comparisons],
+    legalColumnKeys,
+    ...(slots ? { slots } : {}),
+    ...(warnings.length ? { warnings } : {}),
   });
 }
 
@@ -676,4 +824,5 @@ module.exports = {
   planCardInvert, encodeCardInvert, encodeDataValueList, encodeStorageConfig, siteIdFromDriveId,
   encodeHighlights, encodeCagrArrows, encodeCategoryScenarios,
   EncodeError, stableId, literalOf, COMPARISONS, SCENARIO_KEYS, LIST_TARGETS, SCENARIO_ENUM,
+  TABLE_SCENARIOS, tableReferences, tableComparisonSlots, calculationsFaults,
 };
