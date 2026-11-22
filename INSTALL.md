@@ -15,7 +15,7 @@ them.
 | You use | Route | State |
 |---|---|---|
 | Claude Code — terminal, desktop app, VS Code or JetBrains | **[1. Marketplace](#1-claude-code-marketplace)** | Works. This is the supported route |
-| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands. Install verified; **no report authored on it yet** |
+| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands. Skills and both servers register; **no report authored end to end on it yet** |
 | Codex, Cursor, Gemini CLI, OpenCode, Kiro, or anything else that reads agent skills | **[2. Skills folder](#2-the-skills-folder-any-other-agent)** | The skills are plain Markdown and the checker is a plain stdio MCP server, so they load. **We have not run a report end to end on any of these hosts** |
 | A machine with no git, or a locked-down build | **[3. Release zip](#3-release-zip-no-git)** | Same bytes, downloaded instead of cloned |
 
@@ -53,15 +53,18 @@ copilot plugin marketplace add zebrabi/zebra-bi
 copilot plugin install zebra-bi@zebrabi
 ```
 
-Then start Copilot and ask for the skill by name: *"use the setup-doctor skill"*. Copilot lists
-the three skills under `copilot skill list`. The MCP checker is not registered by this route;
-add it with `copilot mcp add` using the `node … mcp/server.js` command from route 2.
-We recommend it, but you can skip it.
+That installs the 11 skills and registers both MCP servers: `zebra-bi`, the hosted server that
+draws charts, and `zebra-bi-reports`, the checker, started as `node ${PLUGIN_ROOT}/mcp/server.js`
+from the installed plugin's own folder. `copilot mcp list` shows them under *Plugin servers*, and
+`copilot skill list` shows the skills. The checker needs [Node.js](https://nodejs.org) on the PATH;
+without it only that server fails to start and the skills and the hosted server still load.
 
-**What is verified:** both commands complete and all three skills load (Copilot CLI 1.0.83,
-2026-09-06). **What is not:** a report authored end to end on Copilot — the account we tested with
-sits in an organisation whose Copilot policy blocks the CLI, so the install is as far as we got.
-If your organisation allows it, you are further than we are; tell us what happened.
+Then start Copilot and ask for the skill by name: *"use the setup-doctor skill"*.
+
+**What is verified:** on Windows with Copilot CLI 1.0.108 and 1.0.114 (2026-11-22), the two commands
+register both servers and the skills, and a session calls the checker's `validate_report` on a
+Power BI project. **What is not:** macOS and Linux, and a report authored end to end on Copilot.
+If you try either, tell us what happened.
 
 ## 2. The skills folder (any other agent)
 

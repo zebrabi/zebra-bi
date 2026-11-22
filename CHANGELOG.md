@@ -12,6 +12,13 @@ This file starts at the first public release. Versions before it exist in the gi
 never published — the repository was private, with no tags and no releases — so listing them as
 though they shipped would misrepresent what anyone could have installed.
 
+## Unreleased
+
+- Installing the plugin in GitHub Copilot CLI now registers the checker as `zebra-bi-reports`
+  beside the hosted server. `mcp.json`, the file Copilot CLI reads, lists it, started as
+  `node ${PLUGIN_ROOT}/mcp/server.js`, so there is no `copilot mcp add` step. `INSTALL.md` section 1b
+  describes the install as measured.
+
 ## 0.3.2 — 2026-11-04
 
 - The hand-over now leads with the one step a changed model needs before it is opened again:
