@@ -1237,10 +1237,14 @@ function applyStatementOrder(spec, models, assumptions) {
   return [...touched];
 }
 
-/** A cell as a member of its column, the way Power BI compares text: trimmed, without case; a blank is "". */
+/**
+ * A cell as a member of its column: as the embedded row writes it (textConstant drops a byte-order
+ * mark and writes a line break or tab as one space), then as Power BI compares text (trimmed, without
+ * case). A blank is "".
+ */
 function orderKey(v) {
   const raw = String(v === undefined || v === null ? "" : v).trim();
-  return isBlank(raw) ? "" : memberKey(raw);
+  return isBlank(raw) ? "" : memberKey(raw.replace(/﻿/g, "").replace(/\r\n|[\r\n\t]/g, " "));
 }
 
 /**

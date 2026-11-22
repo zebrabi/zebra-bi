@@ -735,6 +735,21 @@ check("a member spelled two ways in the source takes one position, and the assum
   assert.ok(cells.filter((c) => c[3].toLowerCase() === "sales").every((c) => c[c.length - 1] === 1));
   assert.ok(r.assumptions.some((a) => /Sales, sales are one member of ledger\[Line\] to Power BI/.test(a)), r.assumptions.join(" | "));
 });
+check("a cell with a line break is the member it is written as, and takes that member's position", () => {
+  // The row writes "Cost of\ngoods" as "Cost of goods", so the two are one member in the model.
+  const text = csv(LEDGER_ROWS).replace("2025-01-01,Cost of goods,Direct cost,Actual", "2025-01-01,\"Cost of\ngoods\",Direct cost,Actual");
+  assert.ok(text.includes("\"Cost of\ngoods\""));
+  const src = bed({ "ledger.csv": text });
+  const out = target();
+  const r = write({ name: "L", outPath: out, source: { path: src }, order: [{ column: "Line", values: LINE_ORDER }] });
+  const cells = embeddedRows(tree(out)["L.SemanticModel/definition/tables/ledger.tmdl"].toString("utf8"));
+  const cog = cells.filter((c) => c[3] === "Cost of goods");
+  assert.strictEqual(cog.length, 6);
+  assert.ok(cog.every((c) => c[c.length - 1] === 2), JSON.stringify(cog));
+  assert.ok(!r.assumptions.some((a) => /not listed in order/.test(a)), r.assumptions.join(" | "));
+  refuses({ name: "L", outPath: target(), source: { path: src }, order: [{ column: "Line", values: ["Cost of goods", "Cost of\ngoods"] }] },
+    /which Power BI compares as one member of ledger\[Line\]/);
+});
 check("a group column takes its own order entry, and without one the assumptions say it sorts alphabetically", () => {
   const out = target();
   const r = write({ name: "L", outPath: out, source: { path: ledgerSrc() },
