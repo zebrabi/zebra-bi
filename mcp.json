@@ -1,7 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
   "mcpServers": {
-    "zebra-bi": { "type": "streamable-http", "url": "https://mcp.zebrabi.com/mcp" },
-    "zebra-bi-reports": { "type": "stdio", "command": "node", "args": ["${PLUGIN_ROOT}/mcp/server.js"] }
+    "zebra-bi": { "type": "streamable-http", "url": "https://mcp.zebrabi.com/mcp" }
   }
 }

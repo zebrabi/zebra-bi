@@ -102,7 +102,7 @@ jobs:
       # One ZIP for ChatGPT and Codex (plugin.json) and the claude.ai upload (.claude-plugin), built from
       # the release commit before anything is pushed, so a broken one stops the release. It carries
       # scripts/ because the story skills run them, and mcp/ because .mcp.json starts the Power BI
-      # checker from it; every ${CLAUDE_PLUGIN_ROOT} or ${PLUGIN_ROOT} path a skill, .mcp.json or mcp.json names must be in it.
+      # checker from it; every ${CLAUDE_PLUGIN_ROOT} path a skill or .mcp.json names must be in it.
       # install.ps1 is the skills-folder route in INSTALL.md.
       - name: Plugin ZIP
         run: |
@@ -112,7 +112,7 @@ jobs:
             README.md POWER-BI.md INSTALL.md SECURITY.md LICENSE LICENSE-ZEBRA-AGENT-SKILLS NOTICE
           listed=$(unzip -Z1 "$zip")
           missing=0
-          for path in $(grep -rhoE '\$\{(CLAUDE_)?PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' skills .mcp.json mcp.json | sed -E 's|^\$\{(CLAUDE_)?PLUGIN_ROOT\}/||' | sort -u); do
+          for path in $(grep -rhoE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' skills .mcp.json | sed 's|^${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
             grep -qxF "$path" <<< "$listed" || { echo "missing from the ZIP: $path"; missing=1; }
           done
           test "$missing" -eq 0

@@ -136,19 +136,15 @@ jobs:
             console.log(`${r.rules.length} rules, all fields present`);
           '
 
-      # Claude Code starts the checker from .mcp.json; Copilot CLI and the other Agent Plugins hosts
-      # start it from mcp.json. Each entry and the file it names move together or the installed
-      # plugin lists a server that cannot start.
-      - name: The checker's server entries name a file that exists
+      # Claude Code starts the checker from .mcp.json. The entry and the file it names move
+      # together or the installed plugin lists a server that cannot start.
+      - name: The checker's server entry names a file that exists
         run: |
           entry=$(jq -er '.mcpServers["zebra-bi-reports"].args[0]' .mcp.json)
-          test "$entry" = '${CLAUDE_PLUGIN_ROOT}/mcp/server.js' || { echo "::error::unexpected checker path in .mcp.json: $entry"; exit 1; }
-          entry=$(jq -er '.mcpServers["zebra-bi-reports"].args[0]' mcp.json)
-          test "$entry" = '${PLUGIN_ROOT}/mcp/server.js' || { echo "::error::unexpected checker path in mcp.json: $entry"; exit 1; }
-          test "$(jq -r '.mcpServers["zebra-bi-reports"].type' mcp.json)" = "stdio"
-          test "$(jq -r '.mcpServers | keys | sort | join(",")' mcp.json)" = "zebra-bi,zebra-bi-reports" \
-            || { echo "::error::mcp.json carries the hosted server and the checker, nothing else"; exit 1; }
+          test "$entry" = '${CLAUDE_PLUGIN_ROOT}/mcp/server.js' || { echo "::error::unexpected checker path: $entry"; exit 1; }
           test -f mcp/server.js
+          test "$(jq -r '.mcpServers | keys | join(",")' mcp.json)" = "zebra-bi" \
+            || { echo "::error::mcp.json (ChatGPT, Codex, VS Code) carries the hosted server only"; exit 1; }
 
   gates:
     name: gates

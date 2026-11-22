@@ -32,10 +32,8 @@ can be merged at all.
 
 - `.claude-plugin/marketplace.json` — marketplace metadata and the plugin entry.
 - `.claude-plugin/plugin.json` — installed plugin metadata and version.
-- `.mcp.json` and `mcp.json` — the plugin's two MCP servers: `zebra-bi` (hosted charts) and
-  `zebra-bi-reports` (the checker in `mcp/`). `.mcp.json` is for Claude Code and starts the checker
-  with `${CLAUDE_PLUGIN_ROOT}`; `mcp.json` is the Agent Plugins file (Copilot CLI, VS Code, ChatGPT,
-  Codex) and uses `${PLUGIN_ROOT}`.
+- `.mcp.json` — the plugin's two MCP servers: `zebra-bi` (hosted charts) and `zebra-bi-reports`
+  (the checker in `mcp/`).
 - `skills/setup-doctor/SKILL.md` — setup diagnosis and capability reporting.
   **Authored directly here**, not generated.
 - `skills/report-publishing/SKILL.md` — the Zebra-specific checks around
