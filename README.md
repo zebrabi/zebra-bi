@@ -102,7 +102,7 @@ The MCP URL is `https://mcp.zebrabi.com/mcp`.
 | Path | Read by |
 |---|---|
 | `.claude-plugin/plugin.json`, `.mcp.json` | Claude Code, claude.ai, Claude Desktop, Cowork, the Anthropic directory |
-| `.claude-plugin/marketplace.json` | Claude Code and Copilot marketplaces |
+| `.claude-plugin/marketplace.json` | Claude Code and GitHub Copilot CLI marketplaces |
 | `plugin.json`, `mcp.json` | Agent Plugins 1.0: VS Code, Copilot CLI, ChatGPT and Codex |
 | `skills/` | Hosts that install the plugin |
 | `scripts/`, `assets/` | The story skills in Claude Code: profiling, PDF and Office builds, the brand default and the page template |
