@@ -180,8 +180,13 @@ const COMPARISONS = TABLE_SCENARIOS.flatMap((a) =>
   TABLE_SCENARIOS.filter((b) => b !== a).map((b) => `${a}-${b}`));
 
 const roleCount = (v) => (Array.isArray(v) ? v.length : typeof v === "number" ? v : 0);
+// The visual names at most three measures per role (plan, plan2, plan3; forecast, forecast2, forecast3):
+// `getScenarioFromName` knows no other name, and a fourth measure is given the base name again, so a
+// list cannot address it. References are counted to three, the most a comparison can name.
+const MAX_MEASURES_PER_ROLE = 3;
 const numbered = (base, n, from = 0) =>
-  Array.from({ length: Math.max(0, n - from) }, (_, k) => (k + from ? `${base}${k + from + 1}` : base));
+  Array.from({ length: Math.max(0, Math.min(n, MAX_MEASURES_PER_ROLE) - from) },
+    (_, k) => (k + from ? `${base}${k + from + 1}` : base));
 
 /**
  * The value scenario and the reference scenarios a Tables visual derives from its bound roles,
@@ -217,7 +222,7 @@ function tableReferences(roles = {}) {
 /**
  * What a Tables visual draws for a given `calculations` value and set of bound roles: one entry
  * per drawn variance slot, as a comparison pair, plus where the reading stopped and which drawn
- * slots repeat a comparison. Pure; the same simulation the checker rule uses.
+ * slots repeat a comparison. Pure; the one simulation the checker rule and the writers also call.
  */
 function tableComparisonSlots(roles, calculations) {
   const { value, references } = tableReferences(roles);
@@ -241,6 +246,19 @@ function tableComparisonSlots(roles, calculations) {
   const defaults = references.map((ref) => `${value}-${ref}`);
   const missing = defaults.filter((d) => !slots.some((s) => s.comparison === d));
   return { value, references, slots, stoppedAt, repeats, missing };
+}
+
+/**
+ * The value to suggest in place of a refused list: the author's own list with the `-percent` tails and
+ * the repeats removed, in the author's order, when that draws no comparison twice with these roles;
+ * otherwise the default order for the roles.
+ */
+function suggestCalculations(list, roles) {
+  const pairsOnly = [...new Set(list.filter((c) => typeof c === "string" && c)
+    .map((c) => c.split("-").slice(0, 2).join("-")))];
+  if (pairsOnly.length && !tableComparisonSlots(roles, pairsOnly).repeats.length) return pairsOnly;
+  const { value, references } = tableReferences(roles);
+  return references.map((r) => `${value}-${r}`);
 }
 
 /** The `-percent` and repeated entries of a calculations list, which never belong in it. */
@@ -279,15 +297,20 @@ function encodeTableCalculations({ comparisons, roles } = {}) {
 
   const warnings = [];
   let slots;
-  if (roles !== undefined) {
+  if (roles != null) {
+    need(typeof roles === "object", "roles must be an object of role counts or binding arrays, keyed by role");
     const sim = tableComparisonSlots(roles, comparisons);
-    need(sim.stoppedAt === null, `'${comparisons[sim.stoppedAt]}' names a scenario that is not bound `
-      + `(bound: ${[sim.value, ...sim.references].filter(Boolean).join(", ") || "none"}). The visual `
-      + `stops reading calculations at that entry.`);
+    // One rule for every route: an entry for a scenario that is not bound is refused only when the
+    // table then draws a comparison twice; a list that draws correctly is written, with a warning.
     need(!sim.repeats.length, `With these roles the table would draw '${sim.repeats[0]?.comparison}' `
       + `in two variance slots and leave out ${sim.missing.map((m) => `'${m}'`).join(", ")}. A slot `
       + `the list does not set keeps its default comparison. List one pair per slot, for example `
-      + `${JSON.stringify(sim.references.map((r) => `${sim.value}-${r}`))}, or leave calculations out.`);
+      + `${JSON.stringify(suggestCalculations(comparisons, roles))}, or leave calculations out.`);
+    if (sim.stoppedAt !== null) {
+      warnings.push(`'${comparisons[sim.stoppedAt]}' names a scenario that is not bound (bound: `
+        + `${[sim.value, ...sim.references].filter(Boolean).join(", ") || "none"}), so the visual stops `
+        + `reading calculations at that entry and the entries after it are not read.`);
+    }
     if (comparisons.length > sim.references.length) {
       warnings.push(`Only ${sim.references.length} variance slot(s) draw with these roles, so `
         + `${comparisons.slice(sim.references.length).map((c) => `'${c}'`).join(", ")} will not draw.`);
@@ -824,5 +847,5 @@ module.exports = {
   planCardInvert, encodeCardInvert, encodeDataValueList, encodeStorageConfig, siteIdFromDriveId,
   encodeHighlights, encodeCagrArrows, encodeCategoryScenarios,
   EncodeError, stableId, literalOf, COMPARISONS, SCENARIO_KEYS, LIST_TARGETS, SCENARIO_ENUM,
-  TABLE_SCENARIOS, tableReferences, tableComparisonSlots, calculationsFaults,
+  TABLE_SCENARIOS, tableReferences, tableComparisonSlots, calculationsFaults, suggestCalculations,
 };

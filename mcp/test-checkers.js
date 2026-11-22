@@ -928,7 +928,7 @@ check("a four-key calculations value on a three-scenario table draws the plan va
     const hit = srv.validateReport({ projectPath: root }).findings.find((f) => f.code === CALC);
     assert.ok(hit, "missed the four-key value on " + g);
     assert.strictEqual(hit.severity, "wrong-numbers");
-    assert.ok(/AC-PL, AC-PL/.test(hit.detail) && /AC-PY is not drawn/.test(hit.detail), hit.detail);
+    assert.ok(/actual-plan, actual-plan/.test(hit.detail) && /actual-previousYear is not drawn/.test(hit.detail), hit.detail);
   }
   assert.ok(calcCodes(GUID.tablesPlus, ACPYPL, ["actual-previousYear", "actual-previousYear-percent", "actual-plan", "actual-plan-percent"]).has(CALC),
     "missed the mirror value");
@@ -954,6 +954,130 @@ check("pairs only, the key absent, a harmless percent tail past the drawn slots 
   assert.ok(!calcCodes(GUID.charts, ACPYPL, ["actual-plan", "actual-plan-percent"]).has(CALC), "fired on a Charts visual");
   assert.ok(!codes(project(tableWith(GUID.tablesPlus, ACPYPL, "x"))).has(CALC), "judged a calculations value that is a string");
   silent("no Values bound", GUID.tablesPlus, { PreviousYear: 1, Plan: 1 }, ["actual-plan", "actual-plan-percent"]);
+});
+
+// --- review fixes: a checker reports, never throws; one slot simulation; fences and block comments -----
+
+// Every rule over a project whose arrays hold null members, a visualType that is not a string, and the
+// shapes the nine rules of 22 Nov read. A rule that throws loses every finding on the project.
+const nullify = (x) => {
+  if (Array.isArray(x)) return [null, ...x.map(nullify), null];
+  if (x && typeof x === "object") return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, nullify(v)]));
+  return x;
+};
+const nullifyJsonFiles = (dir) => {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const f = path.join(dir, e.name);
+    if (e.isDirectory()) nullifyJsonFiles(f);
+    else if (/\.(json|pbir|pbip)$/.test(e.name)) {
+      const raw = fs.readFileSync(f, "utf8").replace(/^﻿/, "");
+      let j; try { j = JSON.parse(raw); } catch { continue; }
+      fs.writeFileSync(f, JSON.stringify(nullify(j)));
+    }
+  }
+};
+const dateField = { Column: { Expression: { SourceRef: { Entity: "Calendar" } }, Property: "Date" } };
+const richProject = (s) => {
+  s.reportJson.resourcePackages = [{ name: "R", type: "RegisteredResources", items: [{ name: "a", path: "a", type: "CustomVisual" }] }];
+  s.pbip.artifacts = [{ report: { path: "Demo.Report" } }];
+  const roles = (n) => ({ projections: Array.from({ length: n }, (_, i) => ({ field: dateField, queryRef: "m" + i })) });
+  s.visuals.V1 = { name: "V1", position: { x: 0, y: 0, width: 600, height: 400 },
+    visual: { visualType: GUID.tablesPlus,
+      query: { queryState: { Category: roles(2), Values: roles(1), PreviousYear: roles(1), Plan: roles(1), Forecast: roles(1) },
+        sortDefinition: { sort: [{ field: dateField, direction: "Ascending" }] } },
+      objects: { chartSettings: [{ properties: { calculations: W(JSON.stringify(["actual-plan", "actual-plan-percent"])),
+        showVerticalCharts: { expr: { Literal: { Value: "true" } } } } }],
+        sortSettings: [{ properties: {} }] },
+      visualContainerObjects: { general: [{ properties: {} }] } } };
+  s.visuals.C1 = { name: "C1", position: { x: 0, y: 0, width: 600, height: 400 },
+    visual: { visualType: GUID.chartsPlus, query: { queryState: { Category: roles(2) } },
+      objects: { chartSettings: [{ properties: { showVerticalCharts: { expr: { Literal: { Value: "true" } } } } }] } } };
+  s.visuals.T1 = { name: "T1", position: { x: 0, y: 0, width: 400, height: 40 },
+    visual: { visualType: "textbox",
+      objects: { general: [{ properties: { paragraphs: [{ textRuns: [{ value: "x" }] }] } }] },
+      visualContainerObjects: { general: [{ properties: { paragraphs: [{ textRuns: [{ value: "x" }] }] } }] } } };
+  s.visuals.N1 = { name: "N1", position: { x: 0, y: 0, width: 100, height: 100 }, visual: { visualType: 42, objects: {} } };
+};
+
+check("no rule throws on a project whose arrays hold null members", () => {
+  const root = project(richProject);
+  fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), [
+    "table Calendar", "\tdataCategory: Time", "", "\tcolumn Date", "\t\tdataType: dateTime", "\t\tisKey", ""].join("\n"));
+  nullifyJsonFiles(root);
+  try { srv.validateReport({ projectPath: root }); }
+  catch (e) { assert.fail("validate_report threw: " + e.stack.split("\n").slice(0, 3).join(" | ")); }
+  const p = srv.resolveProject(root);
+  const thrown = [];
+  for (const rule of srv.loadRules()) {
+    try { srv.checkers[rule.check](p); } catch (e) { thrown.push(`${rule.id}: ${e.message}`); }
+  }
+  assert.deepStrictEqual(thrown, [], thrown.join(" | "));
+});
+
+check("the vertical-orientation rule reports, and does not throw, on a null Category projection", () => {
+  const root = project((s) => {
+    s.visuals.C1 = { name: "C1", position: { x: 0, y: 0, width: 600, height: 400 },
+      visual: { visualType: GUID.charts, query: { queryState: { Category: { projections: [null, { field: dateField, queryRef: "x" }] } } },
+        objects: { chartSettings: [{ properties: { showVerticalCharts: { expr: { Literal: { Value: "true" } } } } }] } } };
+  });
+  fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), [
+    "table Calendar", "\tdataCategory: Time", "", "\tcolumn Date", "\t\tdataType: dateTime", "\t\tisKey", ""].join("\n"));
+  const out = srv.validateReport({ projectPath: root });
+  assert.ok(out.ok, out.error);
+});
+
+check("a drill hierarchy is judged on its first level: Account then Month is a ranking, Month then Account is not", () => {
+  const model = "table Accounts\n\n\tcolumn Account\n\t\tdataType: string\n\ntable Calendar\n\tdataCategory: Time\n\n\tcolumn Month\n\t\tdataType: string\n";
+  const acct = { Column: { Expression: { SourceRef: { Entity: "Accounts" } }, Property: "Account" } };
+  const month = { Column: { Expression: { SourceRef: { Entity: "Calendar" } }, Property: "Month" } };
+  const run = (fields) => {
+    const root = project((s) => {
+      s.visuals.C1 = { name: "C1", position: { x: 0, y: 0, width: 600, height: 400 },
+        visual: { visualType: GUID.charts, query: { queryState: { Category: { projections: fields.map((field, i) => ({ field, queryRef: "f" + i })) } } },
+          objects: { chartSettings: [{ properties: { showVerticalCharts: { expr: { Literal: { Value: "true" } } } } }] } } };
+    });
+    fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), model);
+    return codes(root);
+  };
+  assert.ok(!run([acct, month]).has("charts-vertical-orientation-on-time"), "fired on a ranking with a time drill");
+  assert.ok(run([month, acct]).has("charts-vertical-orientation-on-time"), "missed a time first level");
+});
+
+// One implementation of the visual's slot logic: the checker, the encoder and the writers agree.
+check("the calculations rule and tableComparisonSlots agree on 3,000 role and list combinations", () => {
+  const enc = require("./encoders.js");
+  const names = ["actual", "previousYear", "plan", "plan2", "plan3", "forecast", "forecast2", "forecast3", "plan4"];
+  let seed = 12345; const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const rule = srv.checkers["tables-calculations-must-name-distinct-drawn-pairs"];
+  let fired = 0;
+  for (let i = 0; i < 3000; i++) {
+    const roles = { Values: rnd(3), PreviousYear: rnd(2), Plan: rnd(5), Forecast: rnd(4) };
+    const list = Array.from({ length: rnd(5) }, () => {
+      const k = rnd(10); if (k === 0) return null;
+      const a = k < 7 ? "actual" : names[rnd(names.length)], b = names[rnd(names.length)];
+      return k === 1 || k === 8 ? `${a}-${b}-percent` : `${a}-${b}`;
+    });
+    const parsed = { visual: { visualType: GUID.tablesPlus, query: { queryState: Object.fromEntries(Object.entries(roles)
+      .filter(([, n]) => n > 0).map(([r, n]) => [r, { projections: Array.from({ length: n }, () => ({})) }])) },
+      objects: { chartSettings: [{ properties: { calculations: W(JSON.stringify(list)) } }] } } };
+    const hits = rule({ visuals: [{ visualType: GUID.tablesPlus, rel: "v.json", parsed }] });
+    const want = enc.tableComparisonSlots(roles, list).repeats.length > 0;
+    assert.strictEqual(hits.length > 0, want, `roles ${JSON.stringify(roles)} list ${JSON.stringify(list)}`);
+    if (want) fired++;
+  }
+  assert.ok(fired > 100, `only ${fired} cases exercised a repeat`);
+});
+
+check("a table with no Values is judged as the visual's role assignment does, and a role counts three measures at most", () => {
+  const enc = require("./encoders.js");
+  // no Values: Previous year becomes the value scenario, Plan its reference; ["previousYear-plan2"] then repeats nothing
+  const noValues = { PreviousYear: 1, Plan: 2 };
+  assert.deepStrictEqual(enc.tableReferences(noValues), { value: "previousYear", references: ["plan", "plan2"] });
+  assert.ok(calcCodes(GUID.tablesPlus, noValues, ["previousYear-plan2"]).has(CALC), "the checker skipped a table with no Values");
+  // a fourth Plan measure is not a fourth reference: the visual has no name for it
+  assert.deepStrictEqual(enc.tableReferences({ Values: 1, Plan: 4 }).references, ["plan", "plan2", "plan3"]);
+  assert.ok(!calcCodes(GUID.tablesPlus, { Values: 1, Plan: 4 }, ["actual-plan", "actual-plan2", "actual-plan3"]).has(CALC),
+    "judged a reference the visual cannot name");
 });
 
 // --- the silence bar -----------------------------------------------------------------------

@@ -345,8 +345,38 @@ check("with roles: a lone pair that repeats another slot's default is refused", 
     "leave out 'actual-forecast'");
 });
 
-check("with roles: a pair naming a scenario that is not bound is refused", () => {
-  refuses(e.encodeTableCalculations, { comparisons: ["actual-forecast"], roles: THREE }, "not bound");
+check("with roles: a pair naming an unbound scenario is written with a warning when no drawn slot repeats", () => {
+  // The visual reads slot 1 as given, stops at the unbound entry, and draws the other slot by default.
+  const r = e.encodeTableCalculations({ comparisons: ["actual-forecast"], roles: THREE });
+  assert.deepStrictEqual(JSON.parse(r.value), ["actual-forecast"]);
+  assert.ok(r.warnings.some((w) => /'actual-forecast' names a scenario that is not bound/.test(w)), JSON.stringify(r.warnings));
+});
+
+check("with roles: an unbound entry is still refused when the list leaves a drawn slot repeating", () => {
+  refuses(e.encodeTableCalculations, { comparisons: ["actual-plan", "actual-forecast"], roles: THREE }, "draw 'actual-plan' in two variance slots");
+});
+
+check("with roles: the pair list the author wrote for two scenarios is written, and roles: null is no roles", () => {
+  const two = { Values: 1, PreviousYear: 1 };
+  assert.deepStrictEqual(JSON.parse(e.encodeTableCalculations({ comparisons: ["actual-previousYear", "actual-plan"], roles: two }).value),
+    ["actual-previousYear", "actual-plan"]);
+  assert.deepStrictEqual(JSON.parse(e.encodeTableCalculations({ comparisons: ["actual-plan"], roles: null }).value), ["actual-plan"]);
+  refuses(e.encodeTableCalculations, { comparisons: ["actual-plan"], roles: "x" }, "roles must be an object");
+});
+
+check("the suggested value keeps the author's order with -percent tails and repeats removed", () => {
+  const four = ["actual-plan", "actual-plan-percent", "actual-previousYear", "actual-previousYear-percent"];
+  assert.deepStrictEqual(e.suggestCalculations(four, THREE), ["actual-plan", "actual-previousYear"]);
+  assert.deepStrictEqual(e.suggestCalculations(["actual-previousYear", "actual-plan", "actual-plan"], THREE), ["actual-previousYear", "actual-plan"]);
+  // the author's pairs still repeat with these roles: fall back to the defaults for the roles
+  assert.deepStrictEqual(e.suggestCalculations(["actual-plan"], { Values: 1, Forecast: 1, Plan: 1 }), ["actual-forecast", "actual-plan"]);
+});
+
+check("a role counts three measures at most, and a table with no Values takes its value scenario from the other roles", () => {
+  assert.deepStrictEqual(e.tableReferences({ Values: 1, Plan: 4, Forecast: 5 }).references,
+    ["forecast", "forecast2", "forecast3", "plan", "plan2", "plan3"]);
+  assert.strictEqual(e.tableReferences({ Values: 1, Plan: 4 }).references.length, 3);
+  assert.deepStrictEqual(e.tableReferences({ PreviousYear: 1, Plan: 1 }), { value: "previousYear", references: ["plan"] });
 });
 
 check("the pair names are the 56 ordered pairs the visual labels, and none is a -percent key", () => {
