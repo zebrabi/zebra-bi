@@ -100,6 +100,12 @@ const EXPECTED = {
   "tmdl-reserved-table-name-measures": "the model declares a table named exactly `Measures`, a "
     + "reserved name that fails the whole model load with ModelSchemaValidationFailed -- the "
     + "fixture was never opened in Desktop, so nothing caught it",
+  // Pinned as a defect. The same prototype writes definition.pbism with
+  // `"version": "1.0"` beside a TMDL `definition/` folder. Desktop reads that as the old model format
+  // and looks for model.bim: a project with exactly this pair stops on
+  // "Missing required artifact 'model.bim'", and the same project corrected to 4.2 opens.
+  "pbism-version-too-old-for-tmdl": "definition.pbism says `1.0` beside a TMDL definition/ folder, "
+    + "so Desktop looks for model.bim and refuses the project",
 };
 
 // Neither a missing manifest nor an override that points nowhere is a reason to report success

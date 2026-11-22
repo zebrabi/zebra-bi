@@ -30,6 +30,20 @@ const W = (s) => ({ expr: { Literal: { Value: `'${s}'` } } });
 const N = (n) => ({ expr: { Literal: { Value: `${n}D` } } });
 const SCHEMA =
   "https://developer.microsoft.com/json-schemas/fabric/pbip/pbipProperties/1.0.0/schema.json";
+const PBISM_SCHEMA =
+  "https://developer.microsoft.com/json-schemas/fabric/item/semanticModel/definitionProperties/1.0.0/schema.json";
+const REPORT_SCHEMA = (v) =>
+  `https://developer.microsoft.com/json-schemas/fabric/item/report/definition/report/${v}/schema.json`;
+// report.json exactly as a project that Desktop opened has it: schema 3.0.0,
+// reportVersionAtImport an object, type a word, no layoutOptimization. The negative control for the
+// report.json shape rules; each test below changes one thing in it.
+const OPENS_REPORT_JSON = () => ({
+  $schema: REPORT_SCHEMA("3.0.0"),
+  themeCollection: { baseTheme: { name: "CY24SU08",
+    reportVersionAtImport: { visual: "2.11.0", page: "2.1.0", report: "3.0.0" }, type: "SharedResources" } },
+  publicCustomVisuals: ["ZebraBITablesPlus3E6085701D7B426980C3859B16327993"],
+  settings: { useStylableVisualContainerHeader: true, useEnhancedTooltips: true },
+});
 
 /**
  * Build a project. `mutate` receives the writable pieces so a test can introduce exactly one
@@ -55,6 +69,8 @@ function project(mutate = () => {}) {
 
   const state = {
     pbip: { $schema: SCHEMA, version: "1.0" },
+    // definition.pbism: a project Desktop opens carries 4.2 beside a TMDL definition/ folder.
+    pbism: { $schema: PBISM_SCHEMA, version: "4.2", settings: {} },
     pbir: { version: "1.0", datasetReference: { byPath: { path: "../Demo.SemanticModel" } } },
     reportJson: { $schema: "https://x", themeCollection: { baseTheme: { name: "CY24SU10" } } },
     versionJson: { $schema: "https://x/versionMetadata/1.0.0/schema.json", version: "2.0.0" },
@@ -80,6 +96,7 @@ function project(mutate = () => {}) {
   ].join("\n"));
   const w = (p, o) => fs.writeFileSync(p, (state.bom ? "﻿" : "") + JSON.stringify(o, null, 2));
   fs.writeFileSync(path.join(root, "Demo.pbip"), JSON.stringify(state.pbip));
+  if (state.pbism !== null) fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition.pbism"), JSON.stringify(state.pbism));
   w(path.join(def, "definition.pbir"), state.pbir);
   w(path.join(def, "report.json"), state.reportJson);
   // definition/version.json is REQUIRED by Desktop's packaging layer -- a project without it will
@@ -124,6 +141,128 @@ function rule(code, name, mutate) {
 
 rule("pbip-schema-wrong", "a guessed .pbip $schema", (s) => {
   s.pbip.$schema = "https://developer.microsoft.com/json-schemas/fabric/pbip/schema.json";
+});
+
+// --- project-file shape -----------------------------------------------------------------------------
+// Each rule below fires on a project shape Power BI Desktop refuses. The controls are the shapes of
+// projects Desktop opens.
+
+// definition.pbism: "1.0" beside a TMDL definition/ folder is "Missing required artifact 'model.bim'".
+rule("pbism-version-too-old-for-tmdl", "definition.pbism at 1.0 beside a TMDL folder", (s) => { s.pbism.version = "1.0"; });
+
+check("pbism 4.0 and 4.2 are NOT flagged; neither is a missing or version-less pbism", () => {
+  for (const v of ["4.0", "4.2", "5.0"]) {
+    const root = project((s) => { s.pbism.version = v; });
+    assert.ok(!codes(root).has("pbism-version-too-old-for-tmdl"), `fired on ${v}`);
+  }
+  assert.ok(!codes(project((s) => { s.pbism = null; })).has("pbism-version-too-old-for-tmdl"), "fired on no pbism");
+  assert.ok(!codes(project((s) => { delete s.pbism.version; })).has("pbism-version-too-old-for-tmdl"),
+    "fired on a pbism with no version");
+});
+
+check("a pbism at 1.0 with NO TMDL folder (a model.bim model) is NOT flagged", () => {
+  const root = project((s) => { s.pbism.version = "1.0"; });
+  fs.rmSync(path.join(root, "Demo.SemanticModel", "definition"), { recursive: true, force: true });
+  assert.ok(!codes(root).has("pbism-version-too-old-for-tmdl"), "fired on a model.bim project");
+});
+
+// .pbip artifacts: only { report } is allowed.
+rule("pbip-artifact-not-a-report", "a model entry in .pbip artifacts", (s) => {
+  s.pbip.artifacts = [{ report: { path: "Demo.Report" } }, { model: { path: "Demo.SemanticModel" } }];
+});
+
+check("a .pbip with only a report artifact (or none) is NOT flagged; semanticModel is", () => {
+  assert.ok(!codes(project((s) => { s.pbip.artifacts = [{ report: { path: "Demo.Report" } }]; }))
+    .has("pbip-artifact-not-a-report"), "fired on the legal form");
+  assert.ok(!codes(project()).has("pbip-artifact-not-a-report"), "fired with no artifacts key");
+  assert.ok(codes(project((s) => { s.pbip.artifacts = [{ semanticModel: { path: "Demo.SemanticModel" } }]; }))
+    .has("pbip-artifact-not-a-report"), "missed a semanticModel entry");
+});
+
+// report.json shapes, judged by the schema the file declares.
+const reportCodes = (mutate) => codes(project((s) => { s.reportJson = OPENS_REPORT_JSON(); mutate(s.reportJson); }));
+
+check("the report.json of a project that opens produces none of the report.json shape findings", () => {
+  const c = reportCodes(() => {});
+  for (const id of ["report-theme-version-has-wrong-type", "report-type-is-a-number", "report-layout-optimization-invalid"]) {
+    assert.ok(!c.has(id), `FIRES ON A REPORT THAT OPENS: ${id}`);
+  }
+});
+
+check("reportVersionAtImport as a string under report schema 3.x is caught; an object under 2.0.0 is too", () => {
+  assert.ok(reportCodes((r) => { r.themeCollection.baseTheme.reportVersionAtImport = "5.59"; })
+    .has("report-theme-version-has-wrong-type"), "missed the string under 3.0.0");
+  assert.ok(reportCodes((r) => { r.$schema = REPORT_SCHEMA("3.2.0"); r.themeCollection.baseTheme.reportVersionAtImport = "5.59"; })
+    .has("report-theme-version-has-wrong-type"), "missed the string under 3.2.0");
+  assert.ok(reportCodes((r) => { delete r.themeCollection.baseTheme.reportVersionAtImport; })
+    .has("report-theme-version-has-wrong-type"), "missed an absent required version");
+  assert.ok(reportCodes((r) => { delete r.themeCollection.baseTheme.reportVersionAtImport.page; })
+    .has("report-theme-version-has-wrong-type"), "missed an object without page");
+  assert.ok(reportCodes((r) => { r.$schema = REPORT_SCHEMA("2.0.0"); })
+    .has("report-theme-version-has-wrong-type"), "missed an object where 2.0.0 wants a string");
+});
+
+check("a string version under report schema 1.0.0 or 2.0.0, or under no readable schema, is NOT flagged", () => {
+  for (const sch of ["1.0.0", "2.0.0"]) {
+    assert.ok(!reportCodes((r) => { r.$schema = REPORT_SCHEMA(sch); r.themeCollection.baseTheme.reportVersionAtImport = "5.58"; })
+      .has("report-theme-version-has-wrong-type"), `fired on a string under ${sch}`);
+  }
+  assert.ok(!reportCodes((r) => { delete r.$schema; r.themeCollection.baseTheme.reportVersionAtImport = "5.59"; })
+    .has("report-theme-version-has-wrong-type"), "judged a report that declares no schema");
+});
+
+check("a numeric theme or resource type is caught; words and absent types are NOT", () => {
+  assert.ok(reportCodes((r) => { r.themeCollection.baseTheme.type = 2; }).has("report-type-is-a-number"), "missed type 2");
+  assert.ok(reportCodes((r) => { r.themeCollection.customTheme = { name: "T", reportVersionAtImport:
+    { visual: "2.0.0", page: "2.0.0", report: "3.0.0" }, type: 1 }; }).has("report-type-is-a-number"), "missed customTheme type 1");
+  assert.ok(reportCodes((r) => { r.resourcePackages = [{ name: "RegisteredResources", type: 1, items: [] }]; })
+    .has("report-type-is-a-number"), "missed a numeric package type");
+  assert.ok(reportCodes((r) => { r.resourcePackages = [{ name: "SharedResources", type: "SharedResources",
+    items: [{ name: "a.json", path: "BaseThemes/a.json", type: 202 }] }]; }).has("report-type-is-a-number"), "missed a numeric item type");
+  assert.ok(!reportCodes((r) => {
+    r.resourcePackages = [{ name: "SharedResources", type: "SharedResources",
+      items: [{ name: "a.json", path: "BaseThemes/a.json", type: "BaseTheme" }] }];
+    r.themeCollection.customTheme = { name: "T", reportVersionAtImport: { visual: "2.0.0", page: "2.0.0", report: "3.0.0" },
+      type: "RegisteredResources" };
+  }).has("report-type-is-a-number"), "fired on word types");
+  assert.ok(!reportCodes((r) => { delete r.themeCollection.baseTheme.type; }).has("report-type-is-a-number"),
+    "fired on an absent type");
+});
+
+check("an absent type on a resource package or item is NOT flagged", () => {
+  assert.ok(!reportCodes((r) => { r.resourcePackages = [{ name: "SharedResources", items: [] }]; })
+    .has("report-type-is-a-number"), "fired on a package with no type");
+  assert.ok(!reportCodes((r) => { r.resourcePackages = [{ name: "SharedResources", type: "SharedResources",
+    items: [{ name: "a.json", path: "BaseThemes/a.json" }] }]; }).has("report-type-is-a-number"), "fired on an item with no type");
+});
+
+check("layoutOptimization: a number is caught in every schema; the 1.0.0 string and an absent key are NOT", () => {
+  assert.ok(reportCodes((r) => { r.layoutOptimization = 0; }).has("report-layout-optimization-invalid"), "missed 0 under 3.0.0");
+  assert.ok(reportCodes((r) => { r.$schema = REPORT_SCHEMA("1.0.0"); r.layoutOptimization = 0; })
+    .has("report-layout-optimization-invalid"), "missed 0 under 1.0.0");
+  assert.ok(reportCodes((r) => { delete r.$schema; r.layoutOptimization = 0; })
+    .has("report-layout-optimization-invalid"), "missed 0 with no schema");
+  assert.ok(reportCodes((r) => { r.layoutOptimization = "None"; }).has("report-layout-optimization-invalid"),
+    "missed a property that report schema 3.0.0 does not declare");
+  for (const v of ["None", "PhonePortrait"]) {
+    assert.ok(!reportCodes((r) => { r.$schema = REPORT_SCHEMA("1.0.0"); r.layoutOptimization = v; })
+      .has("report-layout-optimization-invalid"), `fired on the legal ${v} under 1.0.0`);
+  }
+  assert.ok(!reportCodes((r) => { r.$schema = REPORT_SCHEMA("1.0.0"); }).has("report-layout-optimization-invalid"),
+    "fired on an absent layoutOptimization under 1.0.0");
+});
+
+// The shape rules know report schema majors 1, 2 and 3. A later major may change either shape, so a
+// report that declares one is left alone by both rules.
+check("a report.json that declares an unknown schema major (4.0.0) is NOT judged by the shape rules", () => {
+  const v4 = (mutate) => reportCodes((r) => { r.$schema = REPORT_SCHEMA("4.0.0"); mutate(r); });
+  assert.ok(!v4((r) => { r.themeCollection.baseTheme.reportVersionAtImport = "5.59"; })
+    .has("report-theme-version-has-wrong-type"), "judged a string version under 4.0.0");
+  assert.ok(!v4(() => {}).has("report-theme-version-has-wrong-type"), "judged the object version under 4.0.0");
+  for (const v of [0, "None"]) {
+    assert.ok(!v4((r) => { r.layoutOptimization = v; }).has("report-layout-optimization-invalid"),
+      `judged layoutOptimization ${JSON.stringify(v)} under 4.0.0`);
+  }
 });
 
 rule("file-starts-with-bom", "a BOM in a report file", (s) => { s.bom = true; });

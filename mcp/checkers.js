@@ -114,6 +114,64 @@ function daxOnly(text) {
   });
 }
 
+// --- helpers for the project-file shape rules (added 17 Nov 2026) --------------------------------
+
+/**
+ * The report.json schema majors whose shapes the rules below were written against. A rule that
+ * branches on the major stays silent on any other, because a later major may change the shape.
+ */
+const KNOWN_REPORT_SCHEMA_MAJORS = new Set([1, 2, 3]);
+
+/** Major version of the report.json schema the file declares, or null when none is readable. */
+function reportSchemaMajor(f) {
+  const url = f && !f.parseError && f.parsed && typeof f.parsed === "object" ? f.parsed.$schema : null;
+  const m = typeof url === "string"
+    && /\/item\/report\/definition\/report\/(\d+)\.\d+\.\d+\/schema\.json$/.exec(url);
+  return m ? Number(m[1]) : null;
+}
+
+/** [key, object] for each of themeCollection.baseTheme and .customTheme that is an object. */
+function themesOf(f) {
+  const tc = f && !f.parseError && f.parsed && typeof f.parsed === "object" ? f.parsed.themeCollection : null;
+  if (!tc || typeof tc !== "object") return [];
+  return ["baseTheme", "customTheme"].filter((k) => tc[k] && typeof tc[k] === "object" && !Array.isArray(tc[k]))
+    .map((k) => [k, tc[k]]);
+}
+
+/**
+ * The `source =` property of every partition in one model source, as { i, indent, expr } with `i`
+ * the 0-based line, `indent` in columns and `expr` the text after `=` on that line of `lines`
+ * (the raw lines, or `daxOnly` lines for a rule that reads the expression).
+ *
+ * Found through the tree, not by a line regex: `source = ...` is also an ordinary step name inside
+ * an M `let` body, in a partition or an `expression`, and those lines are expression text, not the
+ * partition's property. `classifyLines().inExpr` cannot separate them either, because
+ * `partition X = m` is itself an assignment, so the real `source =` line is `inExpr` too.
+ */
+function partitionSources(src, lines) {
+  const out = [];
+  if (!src.tree) return out;
+  for (const n of src.tree.nodes) {
+    if (n.type !== "partition") continue;
+    for (const pr of n.props) {
+      if (pr.delim !== "=" || pr.name.toLowerCase() !== "source") continue;
+      const i = pr.line - 1;
+      const m = /^[\t ]*source\s*=\s*(.*)$/i.exec(lines[i] || "");
+      if (m) out.push({ i, indent: T.indentOf(lines[i]), expr: m[1] });
+    }
+  }
+  return out;
+}
+
+/** A short rendering of a found value for a finding's detail: absent, number 0, string "5.59". */
+function describeValue(v) {
+  if (v === undefined) return "no value";
+  if (v === null) return "null";
+  if (typeof v === "object") return Array.isArray(v) ? "an array" : "an object";
+  return `${typeof v} ${JSON.stringify(v)}`;
+}
+
+
 const checkers = {
   // --- will not open ------------------------------------------------------------------------
 
@@ -126,6 +184,139 @@ const checkers = {
       if (!ok.test(f.parsed?.$schema ?? "")) out.push({ location: `${f.rel}:$schema` });
     }
     return out;
+  },
+
+  // --- project-file shape: faults Desktop refuses that the catalogue never read -------------------
+  //
+  // Every shape below is checked against the Microsoft JSON schema the file declares in `$schema`
+  // and against projects Desktop opens (Desktop-saved templates and an agent-built project). Severity
+  // is `wont-open` for each: the project does not open, or opens on an empty "Page 1" behind an
+  // error dialog.
+
+  /**
+   * `definition.pbism` says `"version": "1.0"` beside a TMDL `definition/` folder. Desktop then
+   * assumes the old model format and looks for `model.bim`. Nothing in the TMDL is wrong, so no
+   * TMDL rule can see it. Only a version that PARSES to a major below 4 is a fault; an absent or
+   * unreadable version is not judged.
+   */
+  "pbism-version-must-be-4-for-tmdl-model"(p) {
+    const out = [];
+    for (const f of p.pbismFiles || []) {
+      if (f.parseError || !f.hasTmdl) continue;
+      const v = f.parsed?.version;
+      if (typeof v !== "string" && typeof v !== "number") continue;
+      const m = /^(\d+)(?:\.(\d+))?/.exec(String(v).trim());
+      if (m && Number(m[1]) < 4) {
+        out.push({ location: `${f.rel}:version`,
+          detail: `version is ${JSON.stringify(v)}; a TMDL definition/ folder needs 4.0 or higher (4.2 opens)` });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * The .pbip schema allows only `{ "report": { "path": ... } }` in `artifacts`. A `model` or
+   * `semanticModel` entry is "Property 'model' has not been defined and the schema does not allow
+   * additional properties", and the project is refused before anything is read.
+   */
+  "pbip-artifacts-must-each-be-a-report"(p) {
+    const out = [];
+    for (const f of p.pbipFiles || []) {
+      if (f.parseError || !Array.isArray(f.parsed?.artifacts)) continue;
+      f.parsed.artifacts.forEach((a, i) => {
+        const keys = a && typeof a === "object" && !Array.isArray(a) ? Object.keys(a) : null;
+        if (keys && keys.length === 1 && keys[0] === "report") return;
+        out.push({ location: `${f.rel}:artifacts[${i}]`,
+          detail: keys ? `entry holds ${keys.map((k) => `'${k}'`).join(", ") || "nothing"}; only 'report' is allowed`
+                       : "entry is not an object" });
+      });
+    }
+    return out;
+  },
+
+  /**
+   * `report.json` is validated against the schema it declares, and the schema decides the shape of
+   * `reportVersionAtImport`: report/3.0.0 and later take an object of three version strings,
+   * report/1.0.0 and 2.0.0 take a string. Both directions are faults. A report with no readable
+   * `$schema`, or one that declares a major outside KNOWN_REPORT_SCHEMA_MAJORS, is not judged
+   * (nothing says which shape applies).
+   */
+  "theme-version-at-import-must-match-report-schema"(p) {
+    const r = p.files.get("definition/report.json");
+    const major = reportSchemaMajor(r);
+    if (major === null || !KNOWN_REPORT_SCHEMA_MAJORS.has(major)) return [];
+    const out = [];
+    for (const [key, theme] of themesOf(r)) {
+      const v = theme.reportVersionAtImport;
+      const loc = `definition/report.json:themeCollection.${key}.reportVersionAtImport`;
+      if (major >= 3) {
+        const ok = v && typeof v === "object" && !Array.isArray(v)
+          && ["visual", "page", "report"].every((k) => typeof v[k] === "string" && /^\d+\.\d+\.\d+$/.test(v[k]));
+        if (!ok) out.push({ location: loc, detail: `schema ${major}.x needs an object with visual, page and report `
+          + `version strings (for example {"visual":"2.11.0","page":"2.1.0","report":"3.0.0"}); found ${describeValue(v)}` });
+      } else if (typeof v !== "string") {
+        out.push({ location: loc, detail: `schema ${major}.x needs a string; found ${describeValue(v)}` });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * Every `type` that names a resource kind is a word, never a number. `"type": 2` (the old enum
+   * value) on a theme is rejected by every report schema version. Themes are held to the two
+   * documented values; resource packages and their items only to "is a string", because their word
+   * lists differ between schema versions and a newer Desktop may add one. Only a PRESENT value is
+   * judged; an absent `type` is left alone.
+   */
+  "report-type-fields-must-be-declared-strings"(p) {
+    const r = p.files.get("definition/report.json");
+    if (!r || r.parseError || !r.parsed || typeof r.parsed !== "object") return [];
+    const out = [];
+    for (const [key, theme] of themesOf(r)) {
+      if (theme.type !== undefined && theme.type !== "SharedResources" && theme.type !== "RegisteredResources") {
+        out.push({ location: `definition/report.json:themeCollection.${key}.type`,
+          detail: `found ${describeValue(theme.type)}; must be "SharedResources" or "RegisteredResources"` });
+      }
+    }
+    const packages = Array.isArray(r.parsed.resourcePackages) ? r.parsed.resourcePackages : [];
+    packages.forEach((pkg, i) => {
+      if (!pkg || typeof pkg !== "object") return;
+      if (pkg.type !== undefined && typeof pkg.type !== "string") out.push({ location: `definition/report.json:resourcePackages[${i}].type`,
+        detail: `found ${describeValue(pkg.type)}; must be a string such as "SharedResources"` });
+      (Array.isArray(pkg.items) ? pkg.items : []).forEach((it, j) => {
+        if (it && typeof it === "object" && it.type !== undefined && typeof it.type !== "string") {
+          out.push({ location: `definition/report.json:resourcePackages[${i}].items[${j}].type`,
+            detail: `found ${describeValue(it.type)}; must be a string such as "Image"` });
+        }
+      });
+    });
+    return out;
+  },
+
+  /**
+   * `layoutOptimization` exists only in report/1.0.0, where it is the string "None" or
+   * "PhonePortrait". Anywhere else it is not a declared property, and a number (`0`) is wrong in
+   * every version. Fired only when the key is PRESENT; a 1.0.0 report without it is not judged,
+   * and neither is a report that declares a major outside KNOWN_REPORT_SCHEMA_MAJORS.
+   */
+  "report-layout-optimization-must-be-a-declared-string"(p) {
+    const r = p.files.get("definition/report.json");
+    if (!r || r.parseError || !r.parsed || typeof r.parsed !== "object") return [];
+    if (!Object.prototype.hasOwnProperty.call(r.parsed, "layoutOptimization")) return [];
+    const v = r.parsed.layoutOptimization;
+    const major = reportSchemaMajor(r);
+    if (major !== null && !KNOWN_REPORT_SCHEMA_MAJORS.has(major)) return [];
+    const loc = "definition/report.json:layoutOptimization";
+    const undeclared = major !== null && major >= 2;
+    if (v !== "None" && v !== "PhonePortrait") {
+      return [{ location: loc, detail: `found ${describeValue(v)}; ${undeclared
+        ? `report schema ${major}.x does not declare it at all, delete the line`
+        : 'the only legal values are "None" and "PhonePortrait"'}` }];
+    }
+    if (undeclared) {
+      return [{ location: loc, detail: `report schema ${major}.x does not declare layoutOptimization, delete the line` }];
+    }
+    return [];
   },
 
   /** A BOM anywhere makes Desktop reject the whole definition, not just that file. */
@@ -292,17 +483,141 @@ const checkers = {
   },
 
   /**
+   * A multi-line expression in a TMDL partition starts BELOW `source =`, indented deeper, with the
+   * `=` line bare. `source = DATATABLE ( ... {` with the rows underneath makes the first row a line
+   * type TMDL has no name for ("InvalidLineType ... Line - '{"Revenue",1},'"), so the whole model
+   * is refused. Same fault as the measure rule above, in the property that rule does not read.
+   *
+   * Two forms: (a) an expression still open at the end of the `source =` line (an unbalanced `(` or
+   * `{` outside string literals and comments); (b) a bare `source =` whose next line is not
+   * indented deeper, so there is no body at all. A balanced one-line expression and a fenced ```
+   * body are normal forms and stay silent, as does every M partition that opens with a bare
+   * `source =`. Only a partition's own `source` property is judged; a `source = ...` step inside
+   * an M body is expression text (see `partitionSources`).
+   */
+  "partition-source-must-start-below-the-equals-line"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      const lines = src.text.split(/\r?\n/);
+      for (const { i, indent, expr: rawExpr } of partitionSources(src, lines)) {
+        const expr = rawExpr.trim();
+        if (expr.startsWith("```")) continue;
+        let n = i + 1;
+        while (n < lines.length && !lines[n].trim()) n++;
+        const next = lines[n];
+        if (next === undefined) continue;
+        const nextIndent = T.indentOf(next);
+        if (expr === "") {
+          if (nextIndent <= indent) out.push({ location: `${src.rel}:${i + 1}`,
+            detail: "`source =` has no expression indented below it" });
+          continue;
+        }
+        let depth = 0, inString = false;
+        for (let k = 0; k < expr.length; k++) {
+          const ch = expr[k];
+          if (ch === '"') { inString = !inString; continue; }
+          if (inString) continue;
+          if (ch === "'") { const e = expr.indexOf("'", k + 1); if (e < 0) break; k = e; continue; }
+          if ((ch === "-" && expr[k + 1] === "-") || (ch === "/" && expr[k + 1] === "/")) break;
+          if (ch === "(" || ch === "{") depth++;
+          else if (ch === ")" || ch === "}") depth--;
+        }
+        if (depth > 0) {
+          out.push({ location: `${src.rel}:${i + 1}`,
+            detail: "the expression opens on the `source =` line and continues below it; leave the `=` line bare "
+              + "and indent the whole expression underneath" });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * In model.tmdl the `ref table X` / `ref cultureInfo X` / `ref role X` lines are top-level
+   * declarations: the model object's own properties are indented, the refs are NOT. A ref indented
+   * under `model` is read as a child line the model does not have, and Desktop refuses the whole
+   * model: "Unexpected line type: ReferenceObject! Document - './model'. Line Number - 4.
+   * Line - '\tref table Financials'" (17 Nov cold open). Only a `ref` line with leading whitespace
+   * in the semantic model's own `definition/model.tmdl` is a fault; every Desktop-saved model.tmdl
+   * in the corpus writes them at column 0. A table named Model is `definition/tables/Model.tmdl`,
+   * and an M step called `ref` in its body is expression text, so that file is not read.
+   */
+  "tmdl-ref-lines-must-start-at-column-0"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      if (!/^[^/]+\.SemanticModel\/definition\/model\.tmdl$/i.test(src.rel)) continue;
+      src.text.split(/\r?\n/).forEach((l, i) => {
+        if (/^[\t ]+ref\s+\S/.test(l)) out.push({ location: `${src.rel}:${i + 1}`,
+          detail: `${JSON.stringify(l.trim())} is indented; a ref line starts at column 0` });
+      });
+    }
+    return out;
+  },
+
+  /**
+   * Every value in a DATATABLE row is a constant. `DATE(2025,1,1)` in a row makes the calculated
+   * table fail on load ("does not have a constant expression in the column"), and every visual on
+   * it is blank; an ISO string constant such as "2025-01-01" in a DATETIME column loads. Severity
+   * `blank`: the project itself still opens. Fires once per DATATABLE, at the first row line with a DATE call, and
+   * looks only inside the row braces, so a DATE( applied OUTSIDE the DATATABLE (ADDCOLUMNS over it,
+   * one of the two forms the skill teaches) is silent.
+   *
+   * Only DATE is flagged. Other calls in a row (TRUE(), FALSE(), BLANK(), TIME(), ...) are not
+   * flagged. Reads the partition's `source` only, through `daxOnly`, so a
+   * commented-out DATATABLE or a `// note(1)` after a row is not code.
+   */
+  "datatable-rows-must-be-constants"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      const lines = daxOnly(src.text);
+      for (const { i, indent, expr } of partitionSources(src, lines)) {
+        let text = expr;
+        for (let j = i + 1; j < lines.length; j++) {
+          if (lines[j].trim() === "") { text += "\n"; continue; }
+          if (T.indentOf(lines[j]) <= indent) break;
+          text += "\n" + lines[j];
+        }
+        const lineOf = (off) => i + 1 + (text.slice(0, off).match(/\n/g) || []).length;
+        const re = /\bDATATABLE\s*\(/gi;
+        let dm;
+        while ((dm = re.exec(text))) {
+          // daxOnly has blanked string contents, so every bracket left is code.
+          let k = dm.index + dm[0].length, depth = 1, rowsAt = -1;
+          for (; k < text.length && depth > 0; k++) {
+            const ch = text[k];
+            if (ch === "{" && rowsAt < 0) rowsAt = k;
+            if (ch === "(") depth++; else if (ch === ")") depth--;
+          }
+          if (rowsAt < 0) continue;
+          const call = /(?<![\w.])DATE\s*\(/gi;
+          call.lastIndex = rowsAt;
+          const cm = call.exec(text);
+          if (cm && cm.index < k) out.push({ location: `${src.rel}:${lineOf(cm.index)}`,
+            detail: `a DATATABLE row calls DATE(...); every value in a DATATABLE row is a constant. Carry a date as an ISO string constant ("yyyy-mm-dd") in a DATETIME column, or build it outside the rows with ADDCOLUMNS ( DATATABLE ( ... ), "Date", DATE ( [Year], [MonthNo], 1 ) )` });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
    * ---------------------------------------------------------------------------------------------
-   * THE THREE DAX RULES. Read this before adding a fourth.
+   * THE FOUR DAX RULES. Read this before adding a fifth.
    *
    * Everything from the first `=` onward is DAX, and this file has always treated it as opaque on
    * purpose: judging an expression needs the model's names and types, which no file check has.
-   * These three are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
+   * These four are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
    * visible in the text alone. That matters for false positives: an expression that trips one of
    * these cannot work, so the rule cannot fire on a correct report -- which is the bar AGENTS.md
    * sets and the reason the wider "is this DAX sensible" rules were not written.
    *
-   * All three were measured on Desktop 2.157 against a live model, with controls.
+   * The fourth is `datatable-rows-must-be-constants`, above: it reads a partition's `source`
+   * through `daxOnly()` and flags only DATE in a row.
+   *
+   * The three below are hard errors on Desktop 2.157 against a live model.
    * See feedback/2026-09-05-dax-layer-measured.md.
    */
 
