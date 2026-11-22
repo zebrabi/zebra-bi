@@ -226,11 +226,9 @@ function pbirLiteral(value, where) {
  */
 function noApostrophe(s, where) {
   need(!s.includes("'"),
-    `${where} contains an apostrophe, and how a PBIR literal escapes one is not established — `
-    + `no file in the reference corpus contains a literal with one, raw or doubled. Emitting a `
-    + `guess would corrupt the property in silence. Use the typographic apostrophe U+2019 (’), `
-    + `which is better in a report title anyway, or pass {__literal: "'...'"} if you have `
-    + `verified the escaping against a render.`);
+    `${where} contains an apostrophe. An apostrophe inside a PBIR literal can corrupt the `
+    + `property in silence. Use the typographic apostrophe U+2019 (’), or pass `
+    + `{__literal: "'...'"} after checking it in a render.`);
   return s;
 }
 
@@ -394,8 +392,7 @@ function warnOnEncoderApostrophes(content, warnings) {
   while ((m = re.exec(content))) if (m[1].includes("'")) hits++;
   if (hits) {
     warnings.push(`${hits} emitted literal(s) contain an apostrophe inside the single-quoted PBIR `
-      + `wrapper, from encoded blob content such as comment text or a category value. How the `
-      + `format escapes one is not established, and no file in the reference corpus contains one. `
+      + `wrapper, from encoded blob content such as comment text or a category value. `
       + `Render the page and confirm the visual is not blank before shipping it.`);
   }
 }

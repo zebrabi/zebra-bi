@@ -245,7 +245,7 @@
       "id": "view-mode-storage-on-certified-visual",
       "severity": "looks-fine",
       "check": "view-mode-storage-config-requires-plus-visual",
-      "message": "A view-mode comments link (`annotationLayerSettings.annotationsStorageConfig`) belongs on Tables+ or\nCharts+, the visuals that carry the viewer comment panel. On the certified Tables and Charts the\nproperty has no effect, so a link written there looks configured while viewers get no comment panel\nand can add nothing. Switch the visual to its Plus twin, or drop the link and carry the commentary in\nthe authored comment layer.",
+      "message": "A view-mode comments link (`annotationLayerSettings.annotationsStorageConfig`) belongs on Tables+ or\nCharts+, the visuals that carry the viewer comment panel. On the certified Tables and Charts the\nproperty has no effect, so a link written there looks configured while viewers get no comment panel\nand can add nothing. Switch the visual to Tables+ or Charts+, or drop the link and carry the commentary in\nthe authored comment layer.",
       "source": "visuals.md",
       "held": false
     },
@@ -470,6 +470,70 @@
       "severity": "wont-open",
       "check": "pbip-schema-must-match-published-pattern",
       "message": "A wrong or guessed schema line in the project file makes Desktop open an empty report called\nUntitled with an error dialog. It has to match the published pattern exactly.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "pbism-version-too-old-for-tmdl",
+      "severity": "wont-open",
+      "check": "pbism-version-must-be-4-for-tmdl-model",
+      "message": "A semantic model stored as a TMDL `definition/` folder needs `definition.pbism` to say `\"version\":\n\"4.0\"` or higher; write `\"version\": \"4.2\"`, which is what a project that opens uses. With `1.0`\nDesktop takes the folder for the old model format, looks for `model.bim`, and refuses the whole\nproject with \"Missing required artifact 'model.bim'\". Nothing in the TMDL itself is wrong, so no\nmodel check can see it.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "pbip-artifact-not-a-report",
+      "severity": "wont-open",
+      "check": "pbip-artifacts-must-each-be-a-report",
+      "message": "Every entry in the `artifacts` list of the `.pbip` file holds a `report` and nothing else: `{\n\"report\": { \"path\": \"Name.Report\" } }`. Delete any `model` or `semanticModel` entry; the report\nreaches its model through `datasetReference.byPath` in `definition.pbir`. Desktop refuses the\nproject with \"Property 'model' has not been defined and the schema does not allow additional\nproperties\".",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "report-theme-version-has-wrong-type",
+      "severity": "wont-open",
+      "check": "theme-version-at-import-must-match-report-schema",
+      "message": "In `report.json`, `reportVersionAtImport` of the base theme must match the declared `$schema`. Write\nit as an object of three version strings, `{\"visual\": \"2.11.0\", \"page\": \"2.1.0\", \"report\":\n\"3.0.0\"}`, under `report/3.0.0` or later (copy the whole `report.json` shape from a project that\nopens), never a string such as `\"5.59\"`. Only a report that declares the older `report/1.0.0` or\n`2.0.0` schema takes a string. A wrong shape makes the report definition unreadable: \"Failed to load\nthe report\", or an empty page named Page 1.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "report-type-is-a-number",
+      "severity": "wont-open",
+      "check": "report-type-fields-must-be-declared-strings",
+      "message": "Every `type` in the theme and resource entries of `report.json` is a word, never a number. Write\n`\"type\": \"SharedResources\"` on the base theme (`\"RegisteredResources\"` is the other value), and a\nstring on every resource package and item. `\"type\": 2` is not read by any report schema, and the\nreport fails to load.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "report-layout-optimization-invalid",
+      "severity": "wont-open",
+      "check": "report-layout-optimization-must-be-a-declared-string",
+      "message": "Fix `layoutOptimization` in `report.json` by the schema the file declares. Under `report/1.0.0` it\nis a required property whose value is the string `\"None\"` (or `\"PhonePortrait\"`): write\n`\"layoutOptimization\": \"None\"`, never a number such as `0`. From `report/2.0.0` on it is not a\ndeclared property: delete the line. Desktop lists \"Property /layoutOptimization in report.json was\nnot provided as the correct type\" in a dialog and, until that is dismissed, shows an empty Page 1 in\nplace of your page.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "tmdl-partition-source-on-equals-line",
+      "severity": "wont-open",
+      "check": "partition-source-must-start-below-the-equals-line",
+      "message": "In a TMDL partition, a multi-line expression starts on the line below `source =`, indented deeper\nthan `source`, and the `=` line stays bare. Writing `source = DATATABLE ( ... {` and continuing\nunderneath makes the first continuation line a line type TMDL has no name for, and Desktop refuses\nthe whole model: \"TMDL Format Error: Parsing error type - InvalidLineType\" with the first row as the\noffending line. A one-line expression after `source =` is fine.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "tmdl-ref-line-indented",
+      "severity": "wont-open",
+      "check": "tmdl-ref-lines-must-start-at-column-0",
+      "message": "In `model.tmdl`, write every `ref table X` (and `ref cultureInfo`, `ref role`, `ref expression`)\nline at column 0, with no leading tab or spaces; only the properties under `model` (`culture:`,\n`defaultPowerBIDataSourceVersion:`) are indented. An indented `ref` line is a line type the model\ndoes not have, and Desktop refuses the whole model: \"TMDL Format Error ... Unexpected line type:\nReferenceObject! Document - './model'\".",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "tmdl-datatable-row-calls-a-function",
+      "severity": "blank",
+      "check": "datatable-rows-must-be-constants",
+      "message": "Every value in a DATATABLE row is a constant: a number, text or an ISO date string, never a function\ncall. `DATE(2025,1,1)` in a row makes the calculated table fail on load with \"The tuple at index '1'\nfrom the table definition of the DATATABLE function does not have a constant expression in the column\nat index '1'\", and every visual on it is blank. Carry a date as an ISO string constant\n(`\"yyyy-mm-dd\"`) in a `DATETIME` column, or build it outside the rows with `ADDCOLUMNS ( DATATABLE (\n... ), \"Date\", DATE ( [Year], [MonthNo], 1 ) )`.",
       "source": "validator",
       "held": true
     }

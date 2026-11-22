@@ -1,4 +1,4 @@
-<!-- Summary: Page archetypes proven against Zebra BI's own templates — copy the shape, swap the model vocabulary. -->
+<!-- Summary: Page archetypes taken from Zebra BI's own templates — copy the shape, swap the model vocabulary. -->
 # Recipes
 
 Each of these was authored from scratch and matched a page in a Zebra BI template, number for number.
@@ -123,8 +123,7 @@ change. Exclude non-P&L rows with a page filter (`Cash BOP`/`Cash EOP` double-co
 bold, looks right, and is inflated by the ratio row. Every `addedFormulas` entry that aggregates
 other rows needs a matching entry in `categoriesMetadata.skipCalculationCategories` —
 `[{"hierarchyIdentity":"Accounts.Account group","category":"Gross margin %","level":0}]` — and
-`encode_added_formulas` emits both blobs from one call so the pair cannot come apart. Render-proven
-on a from-scratch income statement with three margin rows.
+`encode_added_formulas` emits both blobs from one call so the pair cannot come apart.
 
 **`addedFormulas` chains.** An expression may reference another formula by name, so a KPI model
 builds up in the report layer while the model holds only raw accounts —
@@ -219,9 +218,6 @@ constant** — see the slicer table in `SKILL.md`.
 
 ## 5. A KPI row (Cards)
 
-*Proven: an agent with only this skill matched all 5 KPI values and all 10 deltas of a Zebra BI template
-baseline.*
-
 ```js
 V.zebraCards({
   name: 'Kpis', x: 0, y: 72, w: 1280, h: 264,   // HEIGHT IS THE SIZING LEVER - see below
@@ -249,7 +245,7 @@ those templates: **5 across wants w≈1272** (1232 wraps the fifth). And **give 
 `titleSettings`** — a title steals the room the cards need; Zebra BI's own 5-across has none.
 
 > **≈264px is for THIS role set — `Group` + `Values` + `PreviousYear`, with no `Category`.** Add a
-> `Category` and every card gains a per-point chart. There is **no verified height** for that shape,
+> `Category` and every card gains a per-point chart. Read the height for that shape off the render,
 > and it is **not simply taller**: Zebra BI's own templates ship Category-bound Cards at **118px**
 > without a scrollbar. So do not read 264 as a floor that rises — if a Cards row scrolls, the
 > question is whether it should have been Cards at all. When what you want inside each tile is a
@@ -297,7 +293,7 @@ changed, on a 3-member row:
 **The height is the immediately usable part: 218, not 264.** Reaching for ~264 on a
 `Group`+`Values`+`Plan` row produced a box 38% too tall *and* a scrollbar, at both 264 and 300.
 
-⚠️ **Untested: whether `custom-layout` works without its blobs.** The save also wrote
+⚠️ **`custom-layout` may need its blobs.** The save also wrote
 `customData.gridData`, `rowsData` and `uniformData`, ~2 KB each — the same family as the
 `uniformData` that is *accepted and silently ignored* when authored with an empty `cards{}`. So do
 not assume the preset alone is enough; render it before treating it as a recipe. If it turns out to
@@ -309,10 +305,10 @@ returned a property name nobody would have guessed. Probing would not have found
 
 `cardsInRow` is a hard **cap**, not a wrap: six cards at `cardsInRow: 5` lose the sixth.
 
-> **But do NOT respond to that by leaving it unset — that is what causes the scrollbar.** Render-proven:
-> a Cards row with **6** `Group` members, `Values`+`Plan`, 1248×264 and **no `cardsInRow`**
-> laid out **4 per row → 2 rows → ~528px of content in a 264px box → vertical scrollbar**, with two
-> members unreachable. Setting `cardsInRow: 6D` put all six in one row and the scrollbar vanished.
+> **But do NOT respond to that by leaving it unset — that is what causes the scrollbar.** A
+> Cards row with **6** `Group` members, `Values`+`Plan`, 1248×264 and **no `cardsInRow`**
+> lays out **4 per row → 2 rows → ~528px of content in a 264px box → vertical scrollbar**, with two
+> members unreachable. Setting `cardsInRow: 6D` puts all six in one row and the scrollbar goes.
 > **Count the members and set it.** If you genuinely cannot know the count before the render, give the
 > container height for two rows and narrow it afterwards — do not leave the lever unset.
 
@@ -420,7 +416,7 @@ collapses the year axis to a single bar.
 
 ## 7. The executive summary page, from a flat spreadsheet
 
-*Built end to end from `Financial Sample.xlsx` with no human Desktop step; every figure DAX-verified.
+*Built end to end from a flat spreadsheet with no human Desktop step.
 Use when someone hands you one flat table and asks for "an executive report".*
 
 **Canvas 1280×720. Align everything to x=4, w=1272** — Cards need that width for 5 across.

@@ -118,7 +118,7 @@ if ($rep) {
     if (-not $rj.themeCollection.baseTheme -and -not $rj.themeCollection.customTheme.name) { $issues += "NO THEME - the report will render blank with no page tabs" }
     foreach ($pkg in $rj.resourcePackages) {
       # SharedResources are Desktop built-ins (e.g. baseTheme CY23SU08) - no file on disk is correct.
-      # Verified by render: a report declaring one with no file paints normally.
+      # A report declaring one with no file paints normally.
       if ($pkg.type -eq 'SharedResources') { continue }
       foreach ($item in $pkg.items) {
         if (-not (Test-Path (Join-Path $rep.FullName "StaticResources\$($pkg.name)\$($item.path)"))) {
@@ -238,12 +238,12 @@ if ($sm) {
     if ($first -notmatch '^database(\s|$)') { $issues += "DATABASE LINE: database.tmdl must start with 'database' (found '$first')" }
   }
 
-  # Reported, not flagged: a cultures/ file is legitimate TMDL that cold-opens perfectly and, on
-  # Desktop 2.156, silently killed `file.reload/v1`, i.e. the whole one-second loop (one 2.159
-  # observation reloaded fine). Knowing costs nothing; not knowing cost seven cold opens.
+  # Reported, not flagged: a cultures/ file is legitimate TMDL that cold-opens normally, but on
+  # Desktop 2.156 it silently stops `file.reload/v1`, i.e. the whole one-second loop; on 2.159 reload
+  # can work. Knowing costs nothing; not knowing costs a cold open per iteration.
   $cul = Join-Path $sm.FullName 'definition\cultures'
   if (Test-Path $cul) {
-    "NOTE: a cultures/ file is present - on Desktop 2.156 file.reload/v1 did not work on such a project (it cold-opens normally; one 2.159 observation reloaded fine). Try a report-only reload, and if it fails budget a cold open per iteration or remove the file if nothing needs it."
+    "NOTE: a cultures/ file is present - the project cold-opens normally, but file.reload/v1 fails on such a project on Desktop 2.156 and can work on 2.159. Try a report-only reload, and if it fails budget a cold open per iteration or remove the file if nothing needs it."
   }
 
   # Reported, not flagged. Every shipped template sits at 1600/1601 and every one of them opens,
@@ -266,7 +266,8 @@ if ($issues.Count -eq 0) { "PRE-FLIGHT: PASS" } else { "PRE-FLIGHT: $($issues.Co
   `definition.pbism` and `.platform` are three lines each, they carry a pinned `$schema`, and there is
   no upside to writing one from memory. **Copy a working project's copy and change the path/name**
   (and re-stamp `.platform`'s `logicalId` so the copy has its own identity). Guessing a `$schema` by
-  analogy with the neighbouring files is exactly how the check above came to exist.
+  analogy with the neighbouring files is exactly how the check above came to exist. When there is no
+  working project to copy, write the five files the writers don't write from `references/project-files.md`, exactly.
 - **Never `Set-Content -Encoding utf8`** in PowerShell 5.1 — it writes a BOM. Use
   `[System.IO.File]::WriteAllText($p, $t, (New-Object System.Text.UTF8Encoding($false)))`.
 - **Assert the shape of GENERATED data before you write it.** Building DAX/JSON rows in a loop and

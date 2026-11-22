@@ -3,25 +3,24 @@ name: report-authoring
 description: >-
   Plan, author and verify Zebra BI reports (Tables+, Charts+, Cards, certified Tables and Charts)
   in PBIP/PBIR from the terminal: frame the reader and the comparison (analyst layer), choose
-  visual form, size, scale and sort (IBCS design layer), write the TMDL model, then bindings,
-  variance semantics, formatting, small multiples, comment layers, pre-flight and the screenshot
+  visual form, size, scale and sort (IBCS design layer), write the TMDL model, bindings,
+  variance semantics, formatting, comment layers, pre-flight and the screenshot
   verify loop. Use when creating or editing a Power BI report with Zebra BI visuals, building from
   a saved .pbip or a flat spreadsheet, or debugging a Zebra visual that renders blank, black,
   wrong-numbered or ignores a property. Also answers which comparison, period, fiscal year or
   polarity a page needs, and what a P&L, cost-centre, sales, pipeline, cash, headcount or SaaS
   page should carry. Triggers: Zebra BI, zebraBiCards, ZebraBITables, ZebraBITablesPlus,
-  ZebraBIChartsPlus, waterfall6C9ED82, Tables+, Charts+, Plus visuals, viewer commenting, IBCS
+  ZebraBIChartsPlus, waterfall6C9ED82, Tables+, Charts+, viewer commenting, IBCS
   report, variance chart, small multiples, publicCustomVisuals, PBIP, PBIR, TMDL, Desktop bridge.
 ---
 
 # Authoring Zebra BI reports
 
 Zebra BI is three custom visuals — **Charts**, **Tables**, **Cards** — that render IBCS-conformant
-financial reporting. Charts and Tables each also ship a **Plus** variant, **Charts+** and **Tables+**,
-identical to author and adding viewer commenting; **author the Plus visuals by default** and see
+financial reporting. Charts and Tables each also ship as **Charts+** and **Tables+**,
+identical to author and adding viewer commenting; **author Tables+ and Charts+ by default** and see
 `references/visuals.md` for the GUIDs and the four conditions that send you back to the certified
-track. All of them are fully authorable from PBIR text. Everything in this skill was proven by
-rendering it; nothing here is read off a schema.
+track. All of them are fully authorable from PBIR text.
 
 **The one rule that matters: the screenshot is the only evidence.** For Zebra visuals the validator
 knows nothing — not the roles, not the properties, not the values. A wrong report validates clean.
@@ -60,9 +59,7 @@ silently when the deepest path passes about 260 characters, and embedded custom 
      both. Never mix mechanisms, and never "helpfully" add a GUID to `publicCustomVisuals` on a
      report that registers some other way.
    - **If the report has no Zebra visual at all, just author one.** Put the three AppSource GUIDs
-     in `publicCustomVisuals` and go — **no human step, no payload, no licence key**. Proven
-     on a report with `CustomVisuals/` deleted and every `CustomVisual` resource package
-     stripped: a Table rendered a full IBCS variance view with correct data.
+     in `publicCustomVisuals` and go — **no human step, no payload, no licence key**.
    - **Only if a visual comes back unresolved** ("add it to this report first", grey box): restart
      Desktop first — it loads its visual registry at startup; then *Get more visuals → Zebra BI →
      Add*, once per machine; the 60-second seed only for **organizational-store-only** tenants.
@@ -96,8 +93,7 @@ silently when the deepest path passes about 260 characters, and embedded custom 
    PY = CALCULATE([AC], DATEADD('Calendar'[Date], -1, YEAR))
    ```
    **You may write these yourself** — see `references/model-layer.md`. Measures, a calculated
-   calendar table and relationships are all agent-authorable, verified against a DAX oracle with a
-   cold-open control. Run **`references/preflight.md`** before you launch — it covers
+   calendar table and relationships are all agent-authorable. Run **`references/preflight.md`** before you launch — it covers
    the whole project, model layer included: the mechanical TMDL errors (BOM, `//` comments, a
    `description:` property, name collisions, reserved table names) cause a cold-open failure, and a
    cold open has no instance to reload against, so each costs a cold open instead of ~1s.
@@ -361,7 +357,7 @@ member*. The moment you want a **series** inside each tile you are asking for Ch
 every card — but it is a different, much taller animal, and the KPI-row geometry does not cover it.
 
 **And do not assume the fix is height.** The ≈264px figure is for `Values` + `PreviousYear` with
-**no** `Category`, and there is no verified height for the Category-bound shape — Zebra BI's own
+**no** `Category`; for the Category-bound shape, read the height off the render — Zebra BI's own
 templates ship Category-bound Cards as short as **118px** with no scrollbar. So if one of yours
 scrolls, reach for the shape first, not the container.
 
@@ -375,7 +371,7 @@ property names**, which is the trap: Tables thin the **rows** through `categoryS
 `topNChartsPercentage`, `topNChartsOthersLabel`). Both encodings are in `references/formatting.md`.
 
 **Tables' Top N count lives in the `categorySettings.topNSettings` blob, and the bool alone does
-nothing** — render-proven: `showTopNCategories: true` without the blob leaves every row showing. The
+nothing**: `showTopNCategories: true` without the blob leaves every row showing. The
 blob's key set (`category`, `level`, `number`, a separate `numberInFocusMode` for focus mode,
 `columnName` paired with `sortSettings.columnName`, `type: 1`) is in `references/formatting.md`;
 write every key, and an authored blob is honoured on a cold open.
@@ -432,8 +428,8 @@ The house pattern:
 | `general.orientation` | `0D` / `1D` |
 | selection | `general.filter.filter` — **double-nested**; rule `slicer-filter-double-nested` has the shape |
 
-**Height is set by the header, not by a single house number.** Measured across all 408 shipped
-slicers: header off runs ~44 (median 43.7), header shown 58–64, and 319 of the 408 are under 56px
+**Height is set by the header, not by a single house number.** Across 408 shipped
+slicers, header off runs ~44 (median 43.7), header shown 58–64, and 319 of the 408 are under 56px
 because most turn the header off. Reading 64 as a blanket floor would therefore flag the large majority of slicers that are correct — the height only matters once the header is showing.
 
 **Decide the header first, then take the height from it.** The header **shows unless you turn it
@@ -609,7 +605,7 @@ takes colour and arrow first and prose last, if at all.
 **First pick the mechanism. There are three, they are not interchangeable, and the fallback order is
 fixed** — skip this and the comment lands where it cannot show, or where nobody can answer it.
 
-| | **View-mode comments** — Plus visuals + a SharePoint workbook | **Authored annotation layer** — bubbles, highlights, CAGR arrows in `visual.json` | **`Comments` data role** — text from the model |
+| | **View-mode comments** — Tables+ or Charts+ with a SharePoint workbook | **Authored annotation layer** — bubbles, highlights, CAGR arrows in `visual.json` | **`Comments` data role** — text from the model |
 |---|---|---|---|
 | What it is | Rows in an Excel table on a team site; viewers who can open it see, add and edit them in view mode, and so can an agent | Numbered bubbles on data points, rectangles or ellipses over Table cells, a growth arrow on a Chart; no model change | A text column or measure bound to the role; travels with the data |
 | Tables+ / Charts+ | ✅ | ✅ | ✅ |
@@ -618,7 +614,7 @@ fixed** — skip this and the comment lands where it cannot show, or where nobod
 | Use it when | People with view access should add or answer the commentary | The narrative is *this* report's own — cause, caveat, consequence — and the author owns it | The text belongs to a member and should survive into every report that reads the data |
 | Tool | `encode_storage_config` | `encode_annotations`, `encode_highlights`, `encode_cagr_arrows` | a DAX measure + `commentBoxSettings.show` |
 
-**Fall back in that order.** View mode needs Plus visuals, a library the viewers can open and a tenant
+**Fall back in that order.** View mode needs Tables+ or Charts+, a library the viewers can open and a tenant
 that lets the visual reach it; when any is missing, write the same commentary as authored bubbles, and
 when a bubble cannot be anchored — Cards, or a filter state you cannot pin — put it in the model.
 Never drop the narrative because the first mechanism was unavailable.
@@ -663,7 +659,7 @@ Charts and every comment is silently dropped.**
 | **Tables** | `[]` — always empty |
 | **Charts** | the **display name of the category field**, e.g. `["Segment"]`, `["Year"]`. One entry **per level** on a hierarchical axis: `["Year","Quarter Name"]` |
 
-Render-verified both ways on a Charts visual: with `[]` the visual renders fine and the comment panel
+On a Charts visual, with `[]` the visual renders fine and the comment panel
 says **"No comments match this view"** — no error, no bubble, nothing naming the reason. Set it to the
 category field name and the same comments render. **It is the only field that has to change**; a
 Tables-shaped `dataProperty` and an extra `queryName` are both tolerated.
@@ -690,14 +686,14 @@ it draws the eye without spending a numbered bubble; numbering follows the comme
 
 ⚠️ **Two vocabularies.** A highlight's `dataProperties` use the stable per-column index carried in
 `orderOfColumnsContext` — `actual` 0, the comparison 1, `actual-<cmp>` 2, `actual-<cmp>-percent` 3,
-measured for **one** comparison; anything else is `{name, index}` read from a Desktop save — not the
+these hold for **one** comparison; with more, read `{name, index}` from a Desktop save — not the
 `7 + Values position` of `annotationComments`. Do not carry one across.
 
 ☠️ **Omit `sortByColumnContext` or `orderOfColumnsContext` and the WHOLE VISUAL goes blank** — not
 the highlight, the visual; no error, no placeholder. The encoder writes both, always. If you author
 the blob by hand, so must you, even on a table with no sort applied.
 
-### View-mode comments — the Plus visuals' third source, and it is writable
+### View-mode comments — the third source on Tables+ and Charts+, and it is writable
 
 On **Tables+ and Charts+**, `annotationLayerSettings.annotationsStorageConfig` links the visual to
 an Excel workbook in a **SharePoint team-site library**; comments are rows there, so **viewers who
@@ -806,7 +802,7 @@ write ALL the PBIR JSON ─┘        ↑                                       
 loop and the easiest to skip, because on a from-scratch build there is nothing on screen yet to be
 suspicious of. Every other fault costs a **reload** to fix — sub-second. A TMDL fault costs a **cold
 open**, because a model Desktop refused is not a model you can reload against: 23 s on a small
-project, 159–210 s measured on real ones, plus reading the error and rewriting. **Eight known faults are
+project, 159–210 s on real ones, plus reading the error and rewriting. **Eight known faults are
 mechanical** and take 0.2 s to find — BOM, `//` outside an expression, `///` on a relationship, a
 `description:` property, an unquoted name containing a space, a measure and column sharing a name,
 and a table called `Measures` or `Goal`. `validate_report` and the pre-flight in
@@ -815,11 +811,9 @@ and a table called `Measures` or `Goal`. `validate_report` and the pre-flight in
 ### Know what each step costs, and never pay for one you don't need
 
 This is the difference between a loop that takes seconds and one that takes ten minutes, and it is
-almost entirely about **not cold-restarting**. Measured on one 3-page, 19-visual project:
-
-**Measured end to end**, on the pass you run most — *six edits made, now verify all three pages,
+almost entirely about **not cold-restarting**. On a 3-page, 19-visual project, on the pass you run most — *six edits made, now verify all three pages,
 Desktop already open*: checking after every write and cold-restarting per page took **88.2 s**;
-checking once, reloading once and switching tabs took **13.0 s**. **6.8×**, same evidence. **86.8 s
+checking once, reloading once and switching tabs took **13.0 s**. **6.8×**, same result. **86.8 s
 of the 88.2 s was the three cold restarts** — the routing table is the whole saving, and batching
 the checks is worth about a second.
 
@@ -835,8 +829,7 @@ the checks is worth about a second.
 | **Cold restart** | **23 s here; 159–210 s on real projects** | `definition/report.json`, or a model reload Desktop refused |
 
 **A from-scratch build need not pay the cold open at all.** Keep one throwaway scaffold project open
-and reload the real payload into it: **44.4 s → 15.8 s** and **50.2 s → 20.7 s**, each against a
-cold-open control, same verified pages. The trap that makes it fail — a stale `activePageName`, which
+and reload the real payload into it: **44.4 s → 15.8 s** and **50.2 s → 20.7 s**, same pages. The trap that makes it fail — a stale `activePageName`, which
 Desktop refuses while the RPC still returns `success: true` — is in `references/verify-loop.md`.
 
 **Author the whole increment, then check it once.** Pre-flight and validate read the project from
@@ -874,8 +867,7 @@ Two rules from it change what you do *now*, while you are still writing:
 ## Registration
 
 `definition/report.json` → `publicCustomVisuals`: a **flat array of GUID strings**. No payload, no
-`CustomVisuals/` folder, no "drag it onto the canvas first" — that step is unnecessary, proven from
-a cold file. The visual must be installed on the **rendering machine**; registration only says which
+`CustomVisuals/` folder, no "drag it onto the canvas first" — that step is unnecessary. The visual must be installed on the **rendering machine**; registration only says which
 installed visuals this report may use.
 
 ```json
@@ -886,7 +878,7 @@ installed visuals this report may use.
 ]
 ```
 
-**That is the default set: Tables+, Charts+, and Cards** (which has no Plus variant). Swap the first
+**That is the default set: Tables+, Charts+, and Cards** (there is no Cards+). Swap the first
 two for `ZebraBITablesBAE31B370F254F808553548EFB35BFA5` and
 `waterfall6C9ED82ABD1F44C4A0D590CE01EB5EE7` when the certified track is called for —
 `references/visuals.md` has the full table and the four conditions that decide it. **Register only
@@ -898,22 +890,21 @@ visual Desktop cannot resolve. Charts' GUID says `waterfall` for historical reas
 whole Charts product, not "the waterfall visual" — and **Charts+ does not carry that prefix at all**.
 
 ☠️ **A `visualType` the rendering machine cannot resolve renders NOTHING — no error, no placeholder,
-no dialog, just empty canvas where the visual should be.** A one-character typo in a GUID, or a Plus
-visual on a machine without it installed, looks exactly like a visual you forgot to author. Verified
-against a deliberately-unresolvable GUID: stable blank across two captures four seconds apart, one
-visible top-level window, so the load-dialog check never fires either. **If a visual is simply absent from
+no dialog, just empty canvas where the visual should be.** A one-character typo in a GUID, or Tables+ or
+Charts+ on a machine without it installed, looks exactly like a visual you forgot to author. No dialog opens either,
+so the load-dialog check does not fire. **If a visual is simply absent from
 the screenshot, suspect the GUID before you touch the bindings.**
 
 ### The other two registration mechanisms — read `references/visuals.md`
 
 `publicCustomVisuals` is one of three. The other two use **different GUIDs for the same product**,
 so a visual that comes back as a grey box is usually a mechanism mismatch rather than a binding
-fault. **`references/visuals.md`** has both, and the two experiments that settled them.
+fault. **`references/visuals.md`** has both.
 
 ## Bindings are the product
 
 Roles are **uniform across every one of them**, so chart↔table is a one-line `visualType` swap with
-the query untouched — and so is certified↔Plus, which is the same swap with the same query:
+the query untouched — and so is Tables↔Tables+ or Charts↔Charts+, which is the same swap with the same query:
 
 `Category` · `Group` · `Values` · `PreviousYear` · `Plan` · `Forecast` · `Tooltips` · `Comments` ·
 `Filters` — plus `CategoryClass` (Tables) and `KPI Descriptions` (Cards).
@@ -957,8 +948,8 @@ Before adding a measure to the model, check whether the report can already do it
   file and it is the one blob with no human step in it**: the `uuid` is a random **v4**
   GUID you mint, and the anchor is **plain data values** off the binding — unlike Cards `kpiInvert`,
   whose ids must be minted by Desktop first. Pair it with `commentBoxSettings.show: true` or nothing
-  appears. **Authoring is PROVEN** — end to end, including on a brand-new agent-authored Table on a
-  brand-new page with no Desktop step anywhere. `dataProperty` = **7 + the index of the
+  appears. It authors end to end, including a brand-new Table on a brand-new page, with no
+  Desktop step. `dataProperty` = **7 + the index of the
   projection in `Values`**. ⚠️ **`filterContexts` is mandatory and must match the live filter state —
   omitting the KEY blanks the entire visual.** `validate_report` checks the shape.
 - **Variances, IBCS notation and colour** come from the binding. Never write DAX for a ΔPY.
@@ -976,7 +967,7 @@ total. The encoders make both unreachable by requiring the field:
 | The comment layer | `encode_annotations` |
 | A rectangle or ellipse over Table cells, with or without a comment on it | `encode_highlights`, then `encode_annotations` with `highlightId` |
 | A CAGR arrow on a Chart | `encode_cagr_arrows` |
-| View-mode comments on a Plus visual: the link to the SharePoint workbook | `encode_storage_config` |
+| View-mode comments on Tables+ or Charts+: the link to the SharePoint workbook | `encode_storage_config` |
 | Hatched forecast steps on ONE Chart series, without the `Forecast` role | `encode_category_scenarios` |
 | One Card inverted rather than all of them | `plan_card_invert`, then `encode_card_invert` |
 | Result rows, highlighted categories, inverted groups, collapsed groups | `encode_data_value_list` |
@@ -994,8 +985,9 @@ Power BI instinct expects.
 | I want | It lives in |
 |---|---|
 | **Check it before you launch — BOM, mojibake, bad JSON, missing theme, dead title tokens, TMDL killers** | **`references/preflight.md`** — run after every write, whole project |
+| A new project from nothing: the five files the writers don't write | `references/project-files.md` |
 | **Write the model — measures, calendar, relationships, TMSL refresh** | **`references/model-layer.md`** — the write gate is open |
-| **TMDL itself — grammar, every object and property, exact load errors, proven constructs** | **`references/tmdl.md`** |
+| **TMDL itself — grammar, every object and property, exact load errors, constructs that load** | **`references/tmdl.md`** |
 | **Writing or debugging DAX — engine messages, blank/zero, variance sign, house style** | **`references/dax.md`** — check measures with `EVALUATE` before you launch |
 | Roles, GUIDs, per-product differences; drillthrough, `expansionStates`, `loadStrategy` | `references/visuals.md` |
 | Property names, literal encoding, the colour gate | `references/formatting.md` |

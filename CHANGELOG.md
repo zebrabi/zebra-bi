@@ -87,7 +87,7 @@ thing you can do is tell us when it does not.
 | **`setup-doctor`** | Ten checks on the machine, each with a fix. Two are about your model — scenario measures and a marked date table — and they are the ones that decide whether the report comes out right |
 | **`report-authoring`** | Planning, data binding, IBCS variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates |
 | **`report-publishing`** | The Zebra-specific parts of publishing. Microsoft's own skill does the upload; this covers the visual-track choice and the refresh without which the report arrives empty |
-| **The checker** | 59 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
+| **The checker** | 67 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
 | **18 MCP tools** | Profiling, page proposal, the encoders for the property blobs that cannot be written by hand, and the report writers |
 
 Ten on-demand reference layers sit behind the authoring skill and load only when they are needed:

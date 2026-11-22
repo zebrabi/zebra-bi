@@ -253,8 +253,8 @@ which is exactly the plan-bridge form `references/design.md` §2 reserves for no
 
 **The like-for-like perimeter is two calculated columns and one filter.** The entity dimension
 learns when each member first posted, and a status follows from it; every measure then has a
-like-for-like twin that filters on the status. Verified against an oracle on a ledger where one
-division joined eleven months into the comparison window:
+like-for-like twin that filters on the status. For example, where one division joined eleven months
+into the comparison window:
 
 ```dax
 First period = CALCULATE ( MIN ( Fact[Period] ) )                       // calculated column, entity dimension

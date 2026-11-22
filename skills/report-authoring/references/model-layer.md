@@ -1,13 +1,10 @@
-<!-- Summary: Authoring the semantic model in TMDL — the write gate, the pre-flight lint, refresh, measure conventions and the calendar table. Everything here was verified against a DAX oracle with a cold-open control. -->
+<!-- Summary: Authoring the semantic model in TMDL — the write gate, the pre-flight lint, refresh, measure conventions and the calendar table. -->
 # The model layer — you may write it
 
-**This supersedes "Do not write these yourself. Desktop owns the model."** That rule was true when
-written; its stated reason was loop cost (one error per ~60s restart, no headless TMDL check), and
-the Desktop Bridge — now an official Microsoft preview, on by default since June 2026 — removed it.
-
-Verified with predictions registered before each query and a **cold-open control**:
-measures, a calculated calendar table (incl. `dataCategory: Time` and `sortByColumn`), and a
-relationship were all accepted by Desktop and returned values exact to the last digit.
+The Desktop Bridge — an official Microsoft preview, on by default since June 2026 — makes the model
+loop fast enough that the model is yours to write. Measures, a calculated calendar table (incl.
+`dataCategory: Time` and `sortByColumn`), and a relationship are all accepted by Desktop and return
+exact values.
 
 - **`lineageTag` is optional** on measures, tables and columns. You need not mint GUIDs.
 - **Relationship names need not be GUIDs** — a readable identifier works.
@@ -210,14 +207,14 @@ Three rules, each of which replaces a failure that actually shipped:
 
 - **Never end a session telling the user to "click Refresh now."** The banner click is not even
   reliable: Desktop is documented as unaware of files changed outside it, and a first click after an
-  external write has been observed to do nothing until the file was reopened.
+  external write can do nothing until the file is reopened.
 - **Never send keystrokes (F5, Ctrl+R) to refresh.** The foreground lock belongs to whatever the
   user last touched; the keystroke lands in another window and nothing tells you.
 - **After every cold open of a PQ-backed model, run the TMSL refresh yourself**, then verify through
   the engine — the whole loop is ~5s and needs no human.
 
-The complete recipe, in-box PowerShell, verified end to end twice (cold open → refresh → exact
-oracle match → visuals repainted on their own, banners cleared, zero clicks):
+The complete recipe, in-box PowerShell (cold open → refresh → visuals repaint on their own, banners
+clear, zero clicks):
 
 ```powershell
 # 1. Find the right Desktop instance. msmdsrv is a CHILD process of its PBIDesktop,
@@ -257,15 +254,12 @@ fact. On an **unprocessed** table the count comes back **blank (DBNull), not 0**
 before-state signature, and seeing it confirms you connected to the right instance. Desktop's
 visuals repaint by themselves after the refresh, and **every warning banner clears** — the grey
 *"incomplete or no data"*, the *"relationships have been modified"* bar, **and the red "calculated
-objects need to be manually refreshed"** (verified by before/after captures of the banner strip;
-that last one tracks Desktop's compute state, not the partition type, so it shows on any
+objects need to be manually refreshed"** (that last one tracks Desktop's compute state, not the partition type, so it shows on any
 agent-authored model and this same refresh clears it in ~1s). Understand them, then clear them —
 never end your work with a banner on screen for the user to resolve.
 
-**But verify the repaint by screenshot, not by the refresh return code**: in 2 of 24 verified runs
-a single Charts visual stayed blank after the repaint while the engine demonstrably held its data
-(the visual's own 12-row query returned perfect values; the other 22 runs — including 17 distinct
-generated projects — painted fully). If a visual is blank and the engine has the data, it is a
+**But verify the repaint by screenshot, not by the refresh return code**: a single
+visual can stay blank after the repaint while the engine holds its data. If a visual is blank and the engine has the data, it is a
 render-side hiccup, not your model: reopen the file (or use a report-only reload where the bridge exists)
 and refresh again.
 
@@ -283,7 +277,7 @@ data persists for the next human who opens it.
 
 ### ⚠️ And on a PQ-backed model, `file.reload/v1` was unavailable on Desktop 2.156 — budget cold restarts
 
-Reproduced twice on Desktop 2.156.951.0, on two different projects: every `file.reload/v1` against a
+On Desktop 2.156.951.0, every `file.reload/v1` against a
 model whose fact table is an **M/Power Query partition** raised a **modal**:
 
 > `InvalidPackageReferenceException — Could not find a PackageSession for the given sessionID`
@@ -297,25 +291,23 @@ Two things make this worse than a plain failure:
 2. **A modal is invisible to every non-visual probe.** `MainWindowTitle` stayed correct, the pipe
    kept answering, ADOMD kept serving queries. Nothing in a text-only loop can see it.
 
-Reload-as-validator was verified on a model of **calculated
-tables and measures only**. It bounds it. **On a PQ-backed model, treat reload as unavailable, batch
+Reload-as-validator works on a model of **calculated
+tables and measures only**. **On a PQ-backed model, treat reload as unavailable, batch
 your edits, and budget a cold restart (your own first open's time, plus the refresh) per model change.**
 
-**That is measured on Desktop 2.156 and may not hold on every build.** One observation on Desktop 2.159.883.0
-went the other way: a report-only reload (`reloadModelDefinition: false`) on a PQ-backed model that also
-carried a `cultures/` file returned success in 2.5 s with no modal and the edit applied. That bounds the
-2.156 result without refuting it. On 2.159 try a report-only reload first and look for a modal either
-way, and keep the cold-restart budget for model changes until a second observation says otherwise.
+**That holds on Desktop 2.156; later builds can differ.** On Desktop 2.159 a report-only reload
+(`reloadModelDefinition: false`) on a PQ-backed model with a `cultures/` file can succeed in about 2.5 s
+with no modal. On 2.159 and later, try a report-only reload first, look for a modal either way, and keep
+the cold-restart budget for model changes.
 
 **And screenshot the screen after any state-changing bridge call**, not only when something already
 looks wrong. A modal wedges the bridge, and the CLI can neither see nor dismiss it; a return code is not evidence that it didn't happen.
 
 ### ☠️ After a model-SHAPE change, reload then refresh — and if the refresh does not return, cold restart, never reconnect
 
-The instruction is at the end of this section; the paragraphs before it are the evidence, including
-the hang that was first read as "never reload a model change". Reproduced twice in one session on
-Desktop 2.156.951.0. Remove a table and its relationship from
-TMDL, call `file.reload/v1` with `reloadModelDefinition: true`, then run the TMSL refresh. The bridge
+The instruction is at the end of this section. On Desktop 2.156.951.0, remove a table and its
+relationship from TMDL, call `file.reload/v1` with `reloadModelDefinition: true`, then run the TMSL
+refresh, and this can happen: the bridge
 answers `{"success":true}` at once and `application.state.get/v1` reports no unsaved-change problem.
 **The refresh then never returns** — no exception, no timeout, and `CommandTimeout` is ignored.
 
@@ -332,41 +324,14 @@ Two details are what make this the most expensive single move in the loop:
 **So: batch the model edits, then cold restart before the next refresh.** Reload stays the right
 instrument for report-layer changes, and `reloadModelDefinition: false` is not affected.
 
-⚠️ **The cause named here is WRONG, and the arm that settles it has now been run.**
+⚠️ **Do not name a cause for the hang.** A relationship alone does not trigger it: on a small model,
+removing a table or replacing the table set refreshes in under a second with or without a
+relationship.
 
-The hang was reproduced by **removing a table AND its relationship**, and a project whose entire
-table set was **replaced** reload+refreshed cleanly. Those two observations differ in **two** ways,
-not one — the operation changed at the same time as the relationship did — so "relationships cause
-it" was an untested guess that happened to fit.
-
-Four cells over one base model, each axis moved on its own, each cell on its own cold instance, two
-passes, verdict rule fixed in advance (HANG = the refresh does not return within 60 s):
-
-| | remove a table | replace table set |
-|---|---|---|
-| **with a relationship** | **CLEAN** 789–928 ms | **CLEAN** 793–1023 ms |
-| **no relationship** | **CLEAN** 773–785 ms | **CLEAN** 780–855 ms *(positive control)* |
-
-**8/8 clean.** The positive control — the already-observed clean case — came back inside its known
-0.3–1.6 s band on every pass, so the instrument reproduces the result it should before anything is
-read off the other cells.
-
-**Two conclusions, and the second matters as much as the first.**
-
-1. **A relationship does not cause it.** The cell that matches the reported hanging shape exactly —
-   with a relationship, remove a table — refreshed in under a second, twice.
-2. **The original hang did not reproduce at all**, on any cell. So this is not "relationships are
-   innocent, mystery solved"; it is "the stated cause is refuted and the hang is unexplained." The
-   observation was real and reproduced twice when it happened. What differs is the *project*: the
-   hang was on a real model, and this was two three-row DATATABLE tables. Scale, partition type
-   (a PQ-backed table is already known to break reload) and measure dependencies are all still
-   candidates and none has been tested.
-
-**So the instruction is unchanged in practice, and its reason is now honest:** a model change needs
-`reload` + TMSL refresh, and **if the refresh does not return within a few seconds, kill and cold
-restart** — the hang holds a server-side lock, so reconnecting will not save you. Do not spend a
-cold open in advance on every model edit; the refresh usually returns in about a second. Do not
-delete this warning on the strength of eight clean cells on a toy model.
+**So the instruction stands:** a model change needs `reload` + TMSL refresh, and **if the refresh does
+not return within a few seconds, kill and cold restart** — the hang holds a server-side lock, so
+reconnecting will not save you. Do not spend a cold open in advance on every model edit; the refresh
+usually returns in about a second.
 
 
 
@@ -390,9 +355,7 @@ relationship is what gets rewritten; the relationship is correct and the **colum
 **Why this one is worth a rule rather than a sentence: without a relationship it is invisible.** The
 table loads, `COUNTROWS` returns the right number, the report renders. Nothing is wrong until
 something relates to that column, and then the failure is a **cold open** — no running instance to
-reload against, and a modal on screen rather than a message in your terminal. Verified by four
-cells: with the imported form the two related arms would not open at all, and with the inferred form
-all eight passes loaded and refreshed in under a second.
+reload against, and a modal on screen rather than a message in your terminal.
 
 ## Do not bake a computed value into a column just because you can compute it while writing
 
@@ -464,10 +427,9 @@ the rows as a **calculated table** removes all four at once.
 | absolute path into somebody's `Downloads` — breaks on every other machine | no external reference at all |
 | does **not** refresh on open → structurally perfect, **EMPTY** model + a banner | computes on load |
 | needs `.pbi/cache.abf` to survive the copy, or a TMSL refresh per cold open | nothing to carry |
-| **`file.reload/v1` raises a modal** (above) → a cold restart per model change | **reload works** — measured below |
+| **`file.reload/v1` raises a modal** (above) → a cold restart per model change | **reload works** — timings below |
 
-Proven on Microsoft's `Financial Sample.xlsx`: **700 rows × 14 columns**, cold open,
-computed first try, four Zebra visuals rendering values exact against a DAX oracle.
+Example, from Microsoft's `Financial Sample.xlsx` (**700 rows × 14 columns**):
 
 ```tmdl
 partition financials = calculated
@@ -486,8 +448,7 @@ partition financials = calculated
 			)
 ```
 
-**Reload was measured on this model, not inferred** — both arms, then screenshotted to rule out the
-success-code-over-a-modal case:
+**Reload on this model**, both modes. Screenshot after each: a success code can sit over a modal.
 
 | arm | result | elapsed |
 |---|---|---|
@@ -510,29 +471,22 @@ partition. That is the whole reason to prefer this shape while iterating.
   `-join ','` produced 700 **space**-separated rows — valid-looking and completely wrong. Use
   `List[string]` + `[string]::Join`, then count the separators on row 0.
 
-**Portability was TESTED, not inferred.** "No absolute path" is necessary and not sufficient, so:
-the project folder was **byte-copied to a different path**, its `.pbi/` (and therefore `cache.abf`)
-**deleted**, and cold-opened. All 24 visuals on 4 pages rendered with correct values and resolved title
-tokens. That is the claim — a copy of this project opens and works with no cache, no source workbook,
-and no path fixing.
+**Portability.** "No absolute path" is necessary and not sufficient. A copy of this project at a
+**different path**, with `.pbi/` (and therefore `cache.abf`) **deleted**, opens and works with no cache,
+no source workbook and no path fixing.
 
 ⚠️ **But copy it BEFORE Desktop saves, or delete `.pbi/` in the copy.** Once Desktop saves, the folder
 carries a ~100 KB `cache.abf`, so *"nothing to carry"* stops being true of the file as it stands — and
 a copy made after a save no longer tests the DATATABLE at all, because the cache alone would open it.
 
-**Limits, stated plainly.** Three facts on two machines: the 700-row `Financial Sample` workbook; an
-**18,760-row, 1.1 MB `DATATABLE`** (15 columns) that cold-opened, TMSL-refreshed in under five
-seconds across four cold opens, and rendered 32 visuals on four pages with every figure agreeing
-with a Python oracle computed before the model existed; and a **39,409-row, 1.1 MB ledger** (five
-narrow columns) that cold-opened first time, refreshed in 4.7 s, and rendered four Zebra Tables
-whose every figure matched an oracle computed from the CSV to the cent. So the ceiling is **at
-least 39,409 rows**; beyond that it is unknown, and a fact of a hundred thousand rows is a question
-you settle with one cold open, not one you assume. It is a **snapshot**: it does not refresh, by
+**Limits.** A **39,409-row, 1.1 MB** `DATATABLE` (five narrow columns) cold-opens and refreshes in
+about 4.7 s; an **18,760-row, 1.1 MB** one (15 columns) refreshes in under five seconds. For a larger
+fact, settle it with one cold open before you rely on it. It is a **snapshot**: it does not refresh, by
 design. The
 *"calculated objects need to be manually refreshed"* banner still appears on cold open — it tracks
 whether Desktop has computed and persisted the model, not the partition type, and shows on any
-agent-authored model. **The TMSL refresh clears it, no human step** — verified by before/after captures of the banner strip on a fully-calculated
-model (~1s, data already computed; the refresh exists here purely to clear the banner and recompute).
+agent-authored model. **The TMSL refresh clears it, no human step** — on a fully-calculated
+model too (~1s, data already computed; the refresh exists here purely to clear the banner and recompute).
 So run the refresh after a cold open **even on a DATATABLE model**, and every warning banner — this
 one, *"incomplete or no data"*, and *"relationships have been modified"* — is gone without the user
 touching anything. A Desktop save remains the way to **persist** the computed data.
@@ -542,8 +496,7 @@ touching anything. A Desktop save remains the way to **persist** the computed da
 A warehouse ledger ships its accounts as a **parent-child** table — `AccountKey`,
 `ParentAccountKey`, and an `Operator` column reading `+`, `-` or `~` that says how each account
 rolls into its parent. Zebra hierarchies come from level columns, and a P&L needs the subtotals
-signed, so both are made in the model. Verified against an oracle computed from the source file on
-a 99-account, six-level tree: every node figure matched to the cent.
+signed, so both are made in the model.
 
 ```dax
 ParentKey = IF ( Accounts[ParentAccountKey] = 0, BLANK (), Accounts[ParentAccountKey] )  // PATH wants BLANK at the root
@@ -634,9 +587,9 @@ render is wrong.
 ### ⚠️ A PY measure over-reaches when the PAGE frames a whole period but the data stops mid-period
 
 The `Sales PY` line in the measure conventions is the idiomatic form, and it is **wrong whenever
-your data ends mid-month** — which is most real extracts. Measured on a marketplace export ending
-**16 Jun 2025**: with the page framed on that window, `SAMEPERIODLASTYEAR` returned **1 Jan – 30 Jun
-2024**, not 1 Jan – 16 Jun. It compared 16 days of June against 30.
+your data ends mid-month** — which is most real extracts. For data ending
+**16 Jun 2025**, with the page framed on that window, `SAMEPERIODLASTYEAR` returns **1 Jan – 30 Jun
+2024**, not 1 Jan – 16 Jun. That compares 16 days of June against 30.
 
 **The function is not what rounds.** Given an explicit mid-month window, `SAMEPERIODLASTYEAR` and
 `DATEADD` return exactly the shifted days — measured to the digit against a hand-built window:
@@ -686,8 +639,6 @@ RETURN CALCULATE ( [Sales AC], REMOVEFILTERS ( 'Calendar' ), TREATAS ( PYDates, 
 29 Feb maps to `BLANK()` rather than rolling into 1 Mar, so a leap day has no counterpart. That keeps
 the measure **additive** — monthly PY values sum to the PY total exactly. A `DATESBETWEEN` over a
 contiguous shifted range does not: it sweeps 29 Feb into the total but not into any month.
-
-Verified against an independent oracle on three groups, six months and the total, all to the digit.
 
 ### ☠️ A PY measure returns BLANK when the visual groups by a calendar ATTRIBUTE column
 
@@ -749,8 +700,8 @@ it. `YearMonth` as `"YYYY-MM"` sorts correctly as text, so it needs no sort colu
 `CALENDARAUTO` scans **non-calculated** tables for date columns. On a model whose only date column
 lives in a calculated (`DATATABLE`) fact, it has nothing to scan and the calendar dies with
 *"The query referenced calculated table 'Calendar' which does not hold any data because there is an
-error in its expression."* Two-arm verified on one model, everything equal but the calendar:
-`CALENDARAUTO` → dead calendar; the guarded `CALENDAR(MIN/MAX)` below → correct values.
+error in its expression."* With everything else equal, `CALENDARAUTO` gives a dead calendar and
+the guarded `CALENDAR(MIN/MAX)` below gives correct values.
 So: **`CALENDARAUTO` is for models with a Power Query fact; a DATATABLE model takes the guarded
 `CALENDAR` pattern** (which is also the shape that pins the range honestly).
 
@@ -800,7 +751,7 @@ Last data date  = CALCULATE(MAX(financials[Date]), ALL('Calendar'), ALL(financia
 First data date = CALCULATE(MIN(financials[Date]), ALL('Calendar'), ALL(financials))   // hidden
 Period label    = FORMAT([First data date],"mmm yyyy") & " - " & FORMAT([Last data date],"mmm yyyy")
 ```
-then `titleSettings.text = 'Net sales by month, in USD · [Period label]'`. **Verified resolving.**
+then `titleSettings.text = 'Net sales by month, in USD · [Period label]'`.
 
 The same trick fixes partial-coverage windows without hardcoding a year:
 
@@ -814,14 +765,15 @@ Sales AC LFL =
 
 
 
-## What is still NOT proven
+## Limits
 
-- One machine, two Desktop builds (2.156 and 2.157). **RLS roles, calculation groups, field
-  parameters, hierarchies, translations, KPIs and dynamic format strings now load** — each was
-  reloaded and the engine's DMVs read back a ready state; `references/tmdl.md` carries the exact
-  TMDL for every one. **Power Query partitions with incremental refresh are still untested.**
+- **RLS roles, calculation groups, field parameters, hierarchies, translations, KPIs and dynamic
+  format strings load**; `references/tmdl.md` carries the exact TMDL for every one. For **Power Query
+  partitions with incremental refresh**, confirm the load and the refresh before you report the model
+  as working.
 - Nothing here changes **"close Desktop while you write."** That rule stands.
-- A model written this way and then *saved by Desktop* was not tested for round-trip fidelity.
+- After Desktop saves a model written this way, re-read its TMDL before you edit it again; do not
+  assume your text came back unchanged.
 
 The language itself — the file set, every object and property, what Desktop writes, the exact text
 of every load error and which "mistakes" load anyway — is `references/tmdl.md`. Read it before

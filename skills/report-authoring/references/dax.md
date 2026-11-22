@@ -9,8 +9,7 @@ is not repeated here. This file is the other half: **what the engine says back, 
 means.** Read it when a measure errors, when a number looks wrong, or once before writing a model's
 measures.
 
-Everything below was measured on Desktop 2.157 against a 20,000-row model — 452 variants, 108
-controlled pairs. Where a claim is not measured, it says so.
+Timings in this file are from Desktop 2.157 on a 20,000-row model.
 
 ---
 
@@ -161,7 +160,7 @@ DIVIDE ( AC - PY, ABS ( PY ) ) //                      →  +1.5   correct
 `DIVIDE` returns blank for both, and "no prior year" is not "0% change".
 
 **Zebra BI's own ΔPY% already does this, so a naive measure disagrees with the visual beside it.**
-Render-verified on a Zebra Table with `PreviousYear` bound: a division at AC −86k against PY −29k
+On a Zebra Table with `PreviousYear` bound, a division at AC −86k against PY −29k
 drew **−193.5%** in red — worse, and shown as worse — while a `DIVIDE(AC − PY, PY)` measure on the
 same page printed **+193.5%**; a division at AC +474k against PY −54k drew **+973.3%** in green
 where the naive measure said −973.3%. The visual divides by `|PY|`. Any variance % you write
@@ -188,14 +187,14 @@ community settled on (daxformatter.com). It matters because a human opens this m
 
 ## 8. Performance — what is worth optimising, and what is not
 
-Measured on a **20,000-row** model where the measurement floor is about **10 ms** per query.
+Costs on a **20,000-row** model; differences under about **10 ms** per query do not show.
 
-| | measured |
+| | cost |
 |---|---|
 | **Context transition in an iterator** — `SUMX(T, [Measure])` or `SUMX(T, CALCULATE(…))` | **3–6× slower** than a flat iterator (38–69 ms vs 11–14 ms) |
 | `CROSSJOIN` of a fact and a calendar | 3.2 s — real, and almost always a mistake |
-| `CALCULATE(…, FILTER(Table, …))` vs a bare predicate | **below the floor. Not measurable at this size** |
-| `SUM` vs `SUMX`, `/` vs `DIVIDE` | below the floor |
+| `CALCULATE(…, FILTER(Table, …))` vs a bare predicate | **under 10 ms at this size** |
+| `SUM` vs `SUMX`, `/` vs `DIVIDE` | under 10 ms |
 
 **So there is exactly one performance rule worth applying while authoring: do not call a measure
 inside an iterator over a large table unless you mean the per-row context transition.** Iterate the

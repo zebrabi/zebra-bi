@@ -87,7 +87,7 @@ function walk(dir, out = []) {
 function resolveProject(projectPath) {
   const p = {
     files: new Map(), checked: [], problems: [], allFiles: [], visuals: [], pages: [],
-    pbipFiles: [], pbirFiles: [], declaredPages: [], notCheckedExtra: [],
+    pbipFiles: [], pbirFiles: [], pbismFiles: [], declaredPages: [], notCheckedExtra: [],
   };
   if (!projectPath || !fs.existsSync(projectPath)) {
     return { ...p, fatal: `No such directory: ${projectPath}` };
@@ -200,6 +200,18 @@ function resolveProject(projectPath) {
 
   // The model layer. Everything above reads the report; these are the only facts that come
   // from the semantic model, and they are the two the plan calls commercially decisive.
+  // definition.pbism, one per .SemanticModel. Read for exactly one fact: its `version`, which decides
+  // whether Desktop reads a TMDL `definition/` folder or goes looking for model.bim. `hasTmdl` is
+  // "a definition/ directory exists", so a model.bim-only model never trips a TMDL rule.
+  for (const d of modelDirs) {
+    const abs = path.join(projectPath, d.name, "definition.pbism");
+    if (!fs.existsSync(abs)) continue;
+    p.pbismFiles.push({
+      ...readJson(abs, `${d.name}/definition.pbism`),
+      hasTmdl: fs.existsSync(path.join(projectPath, d.name, "definition")),
+    });
+  }
+
   p.model = tmdl.readModel(projectPath);
   if (p.model.present && p.model.tables.length === 0) {
     // A model directory with nothing parsed out of it is not a model with no measures. Saying
@@ -640,7 +652,8 @@ const VISUAL_SPEC_SCHEMA = {
     name: { type: "string", description: "The visual id, and the visuals/<name>/ directory name. "
       + "Letters, digits, underscore and hyphen only." },
     visualType: { type: "string", description: "A GUID, or an alias: 'tables+' and 'charts+' (the "
-      + "Plus track, the default for new reports), 'cards', 'tables' and 'charts' (certified), or "
+      + "Tables+ and Charts+ GUIDs, the default for new reports), 'cards', 'tables' and 'charts' (Power BI "
+      + "certified), or "
       + "'tables-appsource' / 'charts-appsource' / 'cards-appsource' for the older GUIDs found "
       + "inside file-imported reports. Any other string is written through with a warning, which "
       + "is how a slicer or a textbox gets onto the page." },
