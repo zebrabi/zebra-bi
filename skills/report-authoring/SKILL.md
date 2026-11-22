@@ -92,8 +92,8 @@ silently when the deepest path passes about 260 characters, and embedded custom 
    PL = CALCULATE(SUM(<fact>[<amount>]), <fact>[Scenario] = "PL")
    PY = CALCULATE([AC], DATEADD('Calendar'[Date], -1, YEAR))
    ```
-   **You may write these yourself** — see `references/model-layer.md`. Measures, a calculated
-   calendar table and relationships are all agent-authorable. Run **`references/preflight.md`** before you launch — it covers
+   **On an existing model you may write these yourself** (`references/model-layer.md`: measures, a
+   calendar and relationships are agent-authorable). Run **`references/preflight.md`** before you launch — it covers
    the whole project, model layer included: the mechanical TMDL errors (BOM, `//` comments, a
    `description:` property, name collisions, reserved table names) cause a cold-open failure, and a
    cold open has no instance to reload against, so each costs a cold open instead of ~1s.
@@ -197,11 +197,10 @@ the story are all decided against the reader, not against the data.
 
 **1. Profile the data — and FIRST, write down the list of everything there is to profile.**
 
-☠️ **Start with the SOURCES, not with the model.** When someone points this skill at a folder rather
-than at one saved `.pbip`, there is no model yet — so "everything there is to profile" quietly
-becomes "the first file I opened", and every later count is computed against a denominator that is
-wrong from the start. **List every file the user made available before you open any of them**, and
-say which you are using and which you are not.
+☠️ **Start with the SOURCES, not with the model.** Pointed at a folder rather than one saved `.pbip`,
+there is no model yet, so "everything there is to profile" quietly becomes "the first file I opened"
+and every later count has the wrong denominator. **List every file the user made available before you
+open any of them**, and say which you use and which you do not.
 
 **Run `profile_source` on that folder first**, before any model exists: delimiter, joins and orphan
 keys, the **fiscal year** (and whether the source column is consistent), the **last complete period**
@@ -209,10 +208,14 @@ and trailing stub, drifting postings, empty scenarios and plan reach, sign, pare
 ownership (`references/analyst.md` §1b). Its `analystBrief` lines **are** the step 0 assumptions:
 copy them into the plan and the delivery.
 
-**Then look for the joins between them**, because that is what decides whether they are one model or
-several unrelated ones. A column with the same name and the same member set in two files is a shared
-dimension, and it usually is the report: a budget by department and a ledger by department are one
-subject, and profiling either alone will look complete.
+**From flat files (CSV, JSON), create the project with `write_project`; write no project file,
+model or DATATABLE by hand.** Given the source folder it writes a new folder, never overwriting: `.pbip`, report and
+model files, every table with its data, a marked Calendar and the AC / PL / FC / PY measures. Then change
+pages with `write_page` / `write_report` and run `validate_report`.
+
+**Then look for joins.** A column with the same name and member set in two files is a
+shared dimension and usually the report: a budget and a ledger by department are one subject;
+profiling either alone looks complete.
 
 Now enumerate and **write out**:
 
@@ -221,17 +224,17 @@ Now enumerate and **write out**:
 - every **categorical column on the fact table itself** — status, stage, rating, band, flag, type.
   These are the ones that get missed, because they are not in the relationship diagram.
 
-**`profile_project` builds all three, with cardinality, the gaps and the denominator** — use it,
-because a hand-written list cannot be complete.
+**`profile_project` builds all three, with cardinality, the gaps and the denominator** — use it;
+a hand-written list cannot be complete.
 `propose_pages` turns its ranking into a page spec, and `write_report` writes the whole `pages` tree
-in one call. Both refuse rather than invent: with no AC/PL/PY
-pair `propose_pages` emits value-only pages and says so, and what it would not decide comes back in
+in one call. With no AC/PL/PY
+pair `propose_pages` emits value-only pages; what it would not decide comes back in
 `youMustStillDecide`. Replacing existing files? Pass `existingReportPath` (`existingVisualPath` on
 `write_visual`) to keep licence information. **You still own the story — read the ranking before you accept the pages.**
 
-That list is the artefact the rest of the planning is checked against, and **steps 2 and 3b are not
+That list is what the rest of the planning is checked against, and **steps 2 and 3b are not
 finished until every name on it has either a number beside it or a one-line reason it was
-excluded.** Without it there is nothing for "I covered the data" to be false about.
+excluded.**
 
 Then profile: cardinality of every dimension, the date range, and — always — **coverage per period**
 (see the partial-actuals trap). You cannot choose visuals for data you have not looked at. Report
@@ -985,7 +988,7 @@ Power BI instinct expects.
 | I want | It lives in |
 |---|---|
 | **Check it before you launch — BOM, mojibake, bad JSON, missing theme, dead title tokens, TMDL killers** | **`references/preflight.md`** — run after every write, whole project |
-| A new project from nothing: the five files the writers don't write | `references/project-files.md` |
+| Read or repair a project's five files (a new project comes from `write_project`) | `references/project-files.md` |
 | **Write the model — measures, calendar, relationships, TMSL refresh** | **`references/model-layer.md`** — the write gate is open |
 | **TMDL itself — grammar, every object and property, exact load errors, constructs that load** | **`references/tmdl.md`** |
 | **Writing or debugging DAX — engine messages, blank/zero, variance sign, house style** | **`references/dax.md`** — check measures with `EVALUATE` before you launch |

@@ -1,5 +1,7 @@
 # The five project files the writers don't write
 
+A new project from a folder of flat files (CSV, TSV, JSON) is created with `write_project`, which writes these files, the model and its tables. Writing these files by hand is for reading, repairing or extending an existing project.
+
 `write_report` and the other writers produce the `definition/pages` tree and `version.json`. They do not write these five files, and Power BI Desktop refuses to open a project, or opens it empty, when one of them is off. When there is no working project to copy, write each one exactly as shown, replacing `<Name>` with the project name. Do not add properties and do not change a version.
 
 ## `<Name>.pbip`

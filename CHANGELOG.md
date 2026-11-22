@@ -104,6 +104,9 @@ though they shipped would misrepresent what anyone could have installed.
   such a measure left every ranked question unbindable.
 - The Microsoft 365 Copilot package names `write_project` as the way to create the project and
   model, and its tests call it through `scripts/zbi.js`.
+- The authoring skill tells the agent to create a project from flat files with `write_project` and to write
+  no project file, model or `DATATABLE` by hand. The hand-written forms in `project-files.md`,
+  `model-layer.md` and `preflight.md` stay, for reading, repairing or extending an existing project.
 
 ## 0.3.2 — 2026-11-04
 

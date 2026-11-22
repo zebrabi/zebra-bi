@@ -418,6 +418,9 @@ assumption, stated where the reader will see it, is the analyst's answer.
 
 ## Want a `.pbip` that opens anywhere? Embed the fact table as a `DATATABLE`
 
+A new model from flat files, with every table embedded as a `DATATABLE`, is created with `write_project`.
+Writing the model by hand is for reading, repairing or extending an existing model.
+
 The counterpart to the section above. **A Power Query partition is the right answer for live data and
 the wrong answer for a report you hand to somebody**, because it drags four problems with it. Embedding
 the rows as a **calculated table** removes all four at once.
