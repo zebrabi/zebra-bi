@@ -620,7 +620,7 @@ check("aliases resolve to the installed GUIDs, and every product is reachable", 
     assert.strictEqual(emit({ visualType: alias }).visual.visualType, guid, alias);
   }
   assert.ok(Object.keys(w.INSTALLED).length === 5 && Object.keys(w.FILE_IMPORTED).length === 3,
-    "the certified, Plus and file-imported GUID universes are not all present");
+    "the certified, Tables+/Charts+ and file-imported GUID universes are not all present");
 });
 
 check("an explicit GUID is written through untouched", () => {

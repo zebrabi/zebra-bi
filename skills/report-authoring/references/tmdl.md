@@ -1,19 +1,17 @@
-<!-- Summary: TMDL as a language — the file set, the grammar, every object and property an author can legally write, what Power BI Desktop itself writes, the exact error text each fault produces, and the constructs proven to load on Desktop 2.157 (hierarchies, calculation groups, field parameters, RLS, translations, KPIs, dynamic format strings, calculated columns, inline Power Query). -->
+<!-- Summary: TMDL as a language — the file set, the grammar, every object and property an author can legally write, what Power BI Desktop itself writes, the exact error text each fault produces, and the constructs that load on Desktop 2.157 (hierarchies, calculation groups, field parameters, RLS, translations, KPIs, dynamic format strings, calculated columns, inline Power Query). -->
 # TMDL — the language, and what Desktop accepts
 
 `references/model-layer.md` is about **what to model** and how to refresh and verify it. This file is
 about **the text itself**: how a TMDL file is put together, which properties exist on which object,
-how Desktop's own files look, and — measured on Desktop 2.157.879.0 — which mistakes are rejected,
+how Desktop's own files look, and — on Desktop 2.157.879.0 — which mistakes are rejected,
 with the exact message, and which "mistakes" are quietly accepted. Read it when you are about to
 write a model from scratch, when you meet a construct you have not written before (a hierarchy, a
 calculation group, a field parameter, a role), or when Desktop rejects a model and the message
 names a line whose indentation looks fine.
 
-Every claim marked **measured** was run through `file.reload/v1` against a live Desktop on a
-hand-written base model that itself opened first time; the constructs in section 6 and the killers
-in section 7 were also cold-opened, and the reload verdict matched the cold open in every pair.
-Claims marked **docs** come from Microsoft's TMDL specification and Tabular Object Model reference
-and were not independently re-tested.
+A claim marked **measured** is Desktop's own behaviour on reload, and a reload verdict matches the
+cold open. Claims marked **docs** come from Microsoft's TMDL specification and Tabular Object Model
+reference.
 
 ## 1. The file set
 
@@ -178,7 +176,7 @@ at column 0. `//` and `--` comments inside any expression body, fenced or not, a
 load.
 
 **Indentation.** Desktop writes one **tab** per level, and the specification calls the tab the
-default. **Measured on reload and on a cold open:** four spaces, two spaces, and one object indented
+default. Four spaces, two spaces, and one object indented
 with spaces among tab-indented siblings all load on Desktop 2.157. Write tabs anyway — every file
 Desktop hands back uses them, and a mixed file diffs badly — but do not spend a cold open
 re-indenting a file that loaded.
@@ -219,7 +217,7 @@ on the next save.
 
 | property | values | note |
 |---|---|---|
-| `compatibilityLevel` | `1606` | **Measured on 2.157:** a running instance accepts `1606`, `1607`, `1608`, `1700`, `1701`, `1702` and refuses `1601`, `1605` (*"downgrade"*) and `1650` (*"Unsupported db compat level"*); a cold open accepts `1600` and raises it in memory, so a `1600` file refuses `file.reload/v1` afterwards. Raise it only if you will reload; a higher level refuses to open on an older Desktop. Feature minimums: calculation groups 1470, query groups 1480, dynamic format strings 1601, calendar objects 1701, DAX functions 1702. |
+| `compatibilityLevel` | `1606` | **On 2.157**, a running instance accepts `1606`, `1607`, `1608`, `1700`, `1701`, `1702` and refuses `1601`, `1605` (*"downgrade"*) and `1650` (*"Unsupported db compat level"*); a cold open accepts `1600` and raises it in memory, so a `1600` file refuses `file.reload/v1` afterwards. Raise it only if you will reload; a higher level refuses to open on an older Desktop. Feature minimums: calculation groups 1470, query groups 1480, dynamic format strings 1601, calendar objects 1701, DAX functions 1702. |
 | `compatibilityMode` | `powerBI` | optional; Desktop omits it |
 
 `database.tmdl` must start with the `database` line, with or without a name. A file holding only
@@ -568,8 +566,7 @@ one — and a tag that is not a GUID loads. `validate_report` catches this.
 
 ## 4. What Desktop writes — read it as a style guide
 
-From a census of 860 real `.tmdl` files (the 20 shipped Zebra BI templates plus every model built
-in this project). Numbers are how often each form appears, so you know what "normal" looks like.
+Counts across 860 real `.tmdl` files, the 20 shipped Zebra BI templates among them. Numbers are how often each form appears, so you know what "normal" looks like.
 
 - **`database`** is written **bare**, followed by `compatibilityLevel` (every Desktop file).
 - **`model.tmdl`** carries `culture`, `defaultPowerBIDataSourceVersion: powerBI_V3`,
@@ -624,10 +621,10 @@ in this project). Numbers are how often each form appears, so you know what "nor
 Nothing about a PBIR report changes when you add a hierarchy, a calculation group, a role or a
 translation: the report binds to measure and column names, and those objects are model-side only.
 
-## 6. Constructs proven on Desktop 2.157 — copy these
+## 6. Constructs that load on Desktop 2.157 — copy these
 
-Each block loaded through `file.reload/v1` on the base model, the engine's DMVs showed the new
-objects in a ready state, and the calculation group, field parameter and role also cold-opened.
+Each block loads through `file.reload/v1` with the new objects in a ready state, and the calculation
+group, field parameter and role also load on a cold open.
 Section 3 has the loading form of the hierarchy, calculation group, role, perspective,
 translations, expression, query group, KPI, detail rows, dynamic format string and inactive
 many-to-many relationship.
@@ -716,8 +713,8 @@ without any external source, so a Power Query fault can be separated from a conn
 
 Every row was produced on purpose on Desktop 2.157.879.0 through `file.reload/v1`, which runs the
 same deserializer a cold open does and returns the text in about half a second instead of a modal
-after a fifteen-second restart; the rows marked † were also cold-opened and produced the *"Issues
-were found"* modal. The message always names the **file and line**; the *line* is where the parser
+after a fifteen-second restart; the rows marked † also produce the *"Issues
+were found"* modal on a cold open. The message always names the **file and line**; the *line* is where the parser
 gave up, which for two of these faults is one line **after** the real one.
 
 | You wrote | Desktop says | Fix |

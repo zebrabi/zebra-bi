@@ -652,7 +652,8 @@ const VISUAL_SPEC_SCHEMA = {
     name: { type: "string", description: "The visual id, and the visuals/<name>/ directory name. "
       + "Letters, digits, underscore and hyphen only." },
     visualType: { type: "string", description: "A GUID, or an alias: 'tables+' and 'charts+' (the "
-      + "Plus track, the default for new reports), 'cards', 'tables' and 'charts' (certified), or "
+      + "Tables+ and Charts+ GUIDs, the default for new reports), 'cards', 'tables' and 'charts' (Power BI "
+      + "certified), or "
       + "'tables-appsource' / 'charts-appsource' / 'cards-appsource' for the older GUIDs found "
       + "inside file-imported reports. Any other string is written through with a warning, which "
       + "is how a slicer or a textbox gets onto the page." },
