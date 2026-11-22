@@ -187,8 +187,7 @@ function readDelimited(file, notes) {
     rows.push(r);
   }
   if (padded) notes.push(`${path.basename(file)}: ${padded} row(s) had fewer fields than the header; the missing trailing fields were read as blank.`);
-  if (headerless) notes.push(`${path.basename(file)} has no header row, so its columns are named col1..col${header.length}.`);
-  return { header, rows, delimiter };
+  return { header, rows, delimiter, headerless };
 }
 
 function readSource(root, overrides) {
@@ -196,18 +195,25 @@ function readSource(root, overrides) {
     + "folder of flat files (CSV, TSV, pipe or semicolon text, or JSON arrays) or to one file.");
   need(path.isAbsolute(root), `source.path must be absolute, not '${root}'.`);
   need(fs.existsSync(root), `source.path ${root} does not exist.`);
+  const isFolder = fs.statSync(root).isDirectory();
   const files = ps.listFiles(root);
   need(files.length, `no .csv, .txt, .tsv, .psv or .json file was found under ${root}.`);
   const notes = [];
   const tables = [];
+  // Every file that is not loaded, with the reason. Nothing is left out in silence.
   const skipped = [];
+  const skip = (file, reason) => skipped.push({ file: path.basename(file), reason });
   for (const file of files) {
     const ext = path.extname(file).toLowerCase();
     const stem = path.basename(file, ext);
     const ov = overrides.find((o) => sameSource(o.source, file));
-    if (ov && ov.role === "skip") { skipped.push(path.basename(file)); continue; }
+    if (ov && ov.role === "skip") { skip(file, "skipped as asked (role: skip)"); continue; }
+    // A file the caller named, or the one file source.path points at, must load or refuse; any other
+    // file in a folder that cannot be read as a table is skipped with the reason.
+    const required = Boolean(ov) || !isFolder;
     if (/^\.(xlsx|xls|xlsb|parquet|pbix|accdb)$/.test(ext)) {
-      notes.push(`${path.basename(file)} is a binary file and was not read. Export it to CSV to include it.`);
+      need(!required, `${path.basename(file)} is a binary file; export it to CSV.`);
+      skip(file, "a binary file; export it to CSV to include it");
       continue;
     }
     const size = fs.statSync(file).size;
@@ -218,20 +224,29 @@ function readSource(root, overrides) {
     let t;
     if (ext === ".json") {
       t = ps.readJsonTable(file);
-      if (t.unreadable) { notes.push(`${path.basename(file)} was not read: ${t.unreadable}.`); continue; }
+      if (t.unreadable) {
+        need(!required, `${path.basename(file)} was not read: ${t.unreadable}.`);
+        skip(file, `not a table: ${t.unreadable}`);
+        continue;
+      }
     } else {
-      t = readDelimited(file, notes);
+      try { t = readDelimited(file, notes); } catch (e) {
+        if (required) throw e;
+        skip(file, `not readable as a table: ${e.message}`);
+        continue;
+      }
     }
-    if (!t.rows.length) { notes.push(`${path.basename(file)} has no data rows and was left out.`); continue; }
-    tables.push({ file: path.basename(file), stem, header: t.header, rows: t.rows, override: ov || null });
+    if (!t.rows.length) { skip(file, "no data rows"); continue; }
+    tables.push({ file: path.basename(file), stem, header: t.header, rows: t.rows, override: ov || null,
+      headerless: Boolean(t.headerless), required });
   }
   for (const o of overrides) {
     const hit = files.some((f) => sameSource(o.source, f));
     need(hit, `tables: no source file matches '${o.source}'. Files read: `
       + files.map((f) => path.basename(f)).join(", "));
   }
-  need(tables.length, `nothing readable was found under ${root}.${notes.length ? ` ${notes.join(" ")}` : ""}`);
-  return { tables, notes, skipped };
+  need(tables.length, `nothing readable was found under ${root}.${skipped.length ? ` ${skipped.map((s) => `${s.file}: ${s.reason}`).join("; ")}` : ""}`);
+  return { tables, notes, skipped, isFolder };
 }
 
 function sameSource(name, file) {
@@ -506,7 +521,7 @@ function tableText(mt, lay, stats) {
     } else {
       const c = d.col;
       declared.push(columnBlock(c.name, dataColumnProps(TMDL_TYPE[c.kind], {
-        hidden: c.hidden, source: c.name, formatString: c.kind === "integer" ? "0" : null })));
+        hidden: c.hidden, source: c.name, formatString: c.kind === "integer" ? "0" : null, sortBy: c.sortBy })));
     }
   }
   for (const c of lay.added) {
@@ -980,22 +995,179 @@ function modelFromTexts(files) {
   return model;
 }
 
-function proposeSpec(model, fact, metrics, sc, assumptions) {
-  const profile = prof.profileProject({ model });
+function proposeSpec(model, fact, metrics, sc, rels, assumptions) {
+  // Every question is ranked here, not the top 25 propose_pages sees, because the narrowing below
+  // would otherwise start from a list that key and date-part columns have already filled.
+  const profile = prof.profileProject({ model }, { rankLimit: 1e6 });
   if (!profile.ok) return { error: profile.error };
+  assumptions.push("Pages: profile_project ran on the model text in memory, before anything was written; the same files are on disk now.");
   // Pages cut by the actuals: keep the questions that rank an AC source column, and never use the
-  // scenario column as a page's category.
+  // scenario column, or a table it relates to, as a page's category.
   const acCols = new Set(metrics.filter((m) => !m.ratio).map((m) => `${fact.name}[${(m.column || m.columns.AC).name}]`));
   const scenarioDim = sc.form === "long" ? `${fact.name}[${sc.column.name}]` : null;
+  const scenarioTables = new Set(sc.form === "long" ? rels.filter((x) => x.fromTable === fact.name && x.fromColumn === sc.column.name).map((x) => x.toTable.toLowerCase()) : []);
   const ranked = (profile.signal && profile.signal.ranked) || [];
-  const keep = ranked.filter((q) => q.dimension !== scenarioDim);
+  const keep = ranked.filter((q) => q.dimension !== scenarioDim && !scenarioTables.has(q.dimension.replace(/\[.*$/, "").toLowerCase()));
   const onActuals = keep.filter((q) => acCols.has(q.measureColumn));
-  profile.signal = { ...profile.signal, ranked: onActuals.length ? onActuals : keep };
+  profile.signal = { ...profile.signal, ranked: onActuals.length ? onActuals : keep, rankedCount: (onActuals.length ? onActuals : keep).length };
+  assumptions.push(`Pages: before propose_pages, the ranked questions were narrowed to those on the actuals (${[...acCols].join(", ")})`
+    + `${scenarioDim ? `, leaving out ${scenarioDim}${scenarioTables.size ? ` and the columns of ${[...scenarioTables].join(", ")}` : ""} as page categories` : ""}; a direct propose_pages call does not narrow them.`);
   const r = propose.proposePages(profile, {});
   if (!r.ok) return { error: r.error };
   assumptions.push(`Pages: proposed from the written model, ${r.spec.pages.length} page(s) of ${r.subjectMeasure}`
     + `${r.comparisonBound ? ` against ${[r.comparisonBound.plan, r.comparisonBound.previousYear].filter(Boolean).join(" and ")}` : " with no comparison"}, ordered by measured effect.`);
   return { spec: r.spec, rationale: r.rationale };
+}
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const ym = (iso) => iso.slice(0, 7);
+const shiftMonths = (m, k) => { const [y, mo] = m.split("-").map(Number); const t = y * 12 + (mo - 1) + k; return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`; };
+
+/**
+ * The reporting window of a proposed page: from the start of the latest year that has actuals (the
+ * fiscal year when one is set) to the last month with actuals. All scenarios on the page are then
+ * read over the same months; previous year is the same months a year earlier. Returns the months,
+ * a label, and a line for each bound comparison that does not cover the whole window.
+ */
+function reportingWindow(fact, sc, dateCol, fiscalStart, bound) {
+  const di = dateCol.index;
+  const monthsWhere = (pred) => new Set(fact.rows.filter(pred)
+    .map((r) => String(r[di] || "").trim()).filter((v) => !isBlank(v)).map((v) => ym(ps.toIsoDate(v, dateCol.dayFirst))));
+  const val = (r, c) => String(r[c.index] === undefined ? "" : r[c.index]).trim();
+  const memberOf = {};
+  if (sc.form === "long") for (const [v, code] of Object.entries(sc.members)) memberOf[code] = v;
+  const covers = (code) => {
+    if (sc.form === "long") return memberOf[code] === undefined ? null : monthsWhere((r) => val(r, sc.column) === memberOf[code]);
+    if (sc.form === "wide") return sc.columns[code] ? monthsWhere((r) => !isBlank(val(r, sc.columns[code]))) : null;
+    return code === "AC" ? monthsWhere(() => true) : null;
+  };
+  const ac = covers("AC");
+  if (!ac || !ac.size) return null;
+  const actualDates = fact.rows.filter((r) => sc.form !== "long" || val(r, sc.column) === memberOf.AC)
+    .map((r) => String(r[di] || "").trim()).filter((v) => !isBlank(v)).map((v) => ps.toIsoDate(v, dateCol.dayFirst)).sort();
+  const lastDate = actualDates[actualDates.length - 1];
+  const last = ym(lastDate);
+  const [ly, lm] = last.split("-").map(Number);
+  const startYear = lm >= fiscalStart ? ly : ly - 1;
+  const start = `${startYear}-${String(fiscalStart).padStart(2, "0")}`;
+  const months = [];
+  for (let m = start; m <= last; m = shiftMonths(m, 1)) months.push(m);
+  const limits = [];
+  for (const role of bound) {
+    let have;
+    if (role === "PY" && sc.py === "timeIntelligence") have = new Set([...ac].map((m) => shiftMonths(m, 12)));
+    else have = covers(role);
+    if (!have) continue;
+    const missing = months.filter((m) => !have.has(m));
+    if (missing.length) limits.push(`${role} has no rows for ${missing.join(", ")}${role === "PY" ? " (a year earlier)" : ""}, so those months compare against nothing`);
+  }
+  const monthStartsOnly = actualDates.every((d) => d.endsWith("-01"));
+  const lastDay = new Date(Date.UTC(ly, lm, 0)).getUTCDate();
+  if (!monthStartsOnly && Number(lastDate.slice(8, 10)) < lastDay) {
+    limits.push(`the actuals stop on ${lastDate}, so ${last} is a part month; previous year follows the same days through the calendar, plan does not`);
+  }
+  const name = (m) => `${MONTH_NAMES[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
+  const label = months.length === 1 ? name(months[0]) : `${name(months[0])} to ${name(months[months.length - 1])}`;
+  return { months, label, limits, fiscal: fiscalStart !== 1 };
+}
+
+/** A native slicer on the calendar's YearMonth, preset to the window, in the double-nested form. */
+function windowSlicer(window) {
+  return {
+    name: "periodSlicer", visualType: "slicer",
+    position: { x: 16, y: 16, z: 2000, width: 260, height: 64, tabOrder: 0 },
+    bindings: { Values: [{ entity: CALENDAR, property: "YearMonth", kind: "Column" }] },
+    properties: {
+      "data.mode": "Dropdown", "data.textSize": 10, "general.orientation": 0, "slicerHeader.show": true,
+      "general.filter": { __raw: { filter: {
+        Version: 2,
+        From: [{ Name: "c", Entity: CALENDAR, Type: 0 }],
+        Where: [{ Condition: { In: {
+          Expressions: [{ Column: { Expression: { SourceRef: { Source: "c" } }, Property: "YearMonth" } }],
+          Values: window.months.map((m) => [{ Literal: { Value: `'${m}'` } }]),
+        } } }],
+      } } },
+    },
+    visualContainerObjects: { "title.show": false },
+  };
+}
+
+/** Adds the period slicer to every proposed page and names the window in each table's title. */
+function applyReportingWindow(spec, fact, sc, dateInfo, fiscalStart, assumptions) {
+  if (!dateInfo) return null;
+  const roles = new Set();
+  for (const p of spec.pages || []) for (const v of p.visuals || []) {
+    if (v.bindings && v.bindings.Plan) roles.add("PL");
+    if (v.bindings && v.bindings.PreviousYear) roles.add("PY");
+    if (v.bindings && v.bindings.Forecast) roles.add("FC");
+  }
+  const w = reportingWindow(fact, sc, dateInfo.col, fiscalStart, [...roles]);
+  if (!w) return null;
+  for (const p of spec.pages || []) {
+    for (const v of p.visuals || []) {
+      if (v.position) { v.position = { ...v.position, y: 96, height: 608 }; }
+      if (v.properties && typeof v.properties["titleSettings.text"] === "string") {
+        v.properties["titleSettings.text"] = `${v.properties["titleSettings.text"]}, ${w.label}`;
+      }
+    }
+    p.visuals = [windowSlicer(w), ...(p.visuals || [])];
+  }
+  assumptions.push(`Period: each proposed page opens on ${w.label} (${w.fiscal ? "fiscal" : "calendar"} year to date, ending with the last month that has actuals), set as the default of a slicer on ${CALENDAR}[YearMonth] that the reader can change; ${[...roles].length ? `${[...roles].join(" and ")} ${[...roles].length > 1 ? "are" : "is"} read over the same months` : "no comparison is bound"}. With nothing selected the page would add up every year in the data.`);
+  for (const l of w.limits) assumptions.push(`Period: ${l}.`);
+  assumptions.push(`Period: the table titles name ${w.label}; a title does not follow the slicer when the reader changes it, and Tables+ may draw its own automatic title instead (see warnings), so the slicer is where the window shows for certain.`);
+  return w;
+}
+
+/** A column that gives the order of the rows of a statement: Sort, Order, LineNo, AccountSort. */
+const ORDER_LAST_WORDS = new Set(["sort", "order", "ordinal", "sequence", "seq", "position"]);
+function isOrderName(name) {
+  const w = words(name);
+  if (!w.length) return false;
+  if (ORDER_LAST_WORDS.has(w[w.length - 1])) return true;
+  return w.length === 2 && w[0] === "line" && ["no", "nr", "number", "num"].includes(w[1]);
+}
+
+/**
+ * Statement order. For each proposed table whose category's own table carries an order column, that
+ * column is bound as the category's sortByColumn in the model and the table sorts by the model's
+ * order (sortSettings.categorySort 0) instead of by value. An order column counts only when every
+ * category value has exactly one order value. Without one the sort is left as proposed and said.
+ */
+function applyStatementOrder(spec, models, assumptions) {
+  const touched = new Set();
+  for (const page of spec.pages || []) {
+    for (const v of page.visuals || []) {
+      const cat = v.bindings && v.bindings.Category && v.bindings.Category[0];
+      if (!cat || typeof cat !== "object") continue;
+      const m = models.find((x) => x.name === cat.entity);
+      const c = m && m.cols.find((x) => x.name === cat.property);
+      if (!c) continue;
+      const cands = m.cols.filter((x) => x !== c && (x.kind === "integer" || x.kind === "number") && isOrderName(x.source));
+      let order = null;
+      for (const o of cands) {
+        const seen = new Map();
+        let ok = true;
+        for (const r of m.rows) {
+          const k = String(r[c.index] === undefined ? "" : r[c.index]).trim();
+          const val = String(r[o.index] === undefined ? "" : r[o.index]).trim();
+          if (seen.has(k) && seen.get(k) !== val) { ok = false; break; }
+          seen.set(k, val);
+        }
+        if (ok) { order = o; break; }
+        assumptions.push(`Pages: ${m.name}[${o.name}] reads like an order column, but some ${c.name} values carry two different orders in it, so it is not used.`);
+      }
+      if (!order) {
+        assumptions.push(`Pages: the rows of ${m.name}[${c.name}] on page ${page.displayName} are sorted by value, as propose_pages sorts them; ${m.name} has no order column (such as Sort, Order or LineNo) to keep a statement order.`);
+        continue;
+      }
+      c.sortBy = order.name;
+      touched.add(m);
+      delete v.properties["sortSettings.columnName"];
+      v.properties["sortSettings.categorySort"] = 0;
+      assumptions.push(`Pages: the rows of ${m.name}[${c.name}] on page ${page.displayName} follow ${m.name}[${order.name}] (sortByColumn in the model; the table sorts by the model's order, categorySort 0), not value.`);
+    }
+  }
+  return [...touched];
 }
 
 // --- writing --------------------------------------------------------------------------------
@@ -1106,11 +1278,37 @@ function writeProject(args = {}, deps = {}) {
     t.rec = rec;
   }
 
+  // From a folder, a file becomes a table only when it is plausibly data: it reads as a fact, has a
+  // date or an amount column, or joins another file in the folder. A headerless file with one column
+  // never is. A file the caller names in `tables` is always loaded.
+  if (src.isFolder) {
+    const joins0 = ps.joinSignals(src.tables.map((t) => t.rec));
+    for (const t of src.tables) {
+      if (t.required) continue;
+      const r = t.rec;
+      const hasDate = r.columns.some((c) => c.type === "date");
+      const hasAmount = r.columns.some((c) => (c.type === "integer" || c.type === "number") && !keyish(c.name));
+      const joined = joins0.some((j) => j.fromTable === r.table || j.toTable === r.table);
+      let reason = null;
+      if (t.headerless && t.header.length === 1) reason = "one column and no header row, so not a table of data";
+      else if (r.role === "date") reason = null;                       // set aside below, with its own note
+      else if (r.role === "fact" || hasDate || hasAmount || joined) reason = null;
+      else reason = `reads as ${r.role === "unknown" ? "neither a fact nor a dimension" : `a ${r.role} table`}, joins no other file, and has no date or amount column`;
+      if (reason) { t.notData = true; src.skipped.push({ file: t.file, reason: `${reason}; name it in tables to load it` }); }
+    }
+    src.tables = src.tables.filter((t) => !t.notData);
+    need(src.tables.length, `no file under ${args.source.path} reads as data: ${src.skipped.map((s) => `${s.file}: ${s.reason}`).join("; ")}.`);
+  }
+  for (const t of src.tables) {
+    if (t.headerless) src.notes.push(`${t.file} has no header row, so its columns are named col1..col${t.header.length}.`);
+  }
+
   // Calendar-like source tables are set aside by default: the model's own Calendar replaces them.
   for (const t of src.tables) {
     if (t.rec.role === "date") {
       t.dropped = true;
       assumptions.push(`${t.file} reads as a date table and is left out: the model's Calendar replaces it. Pass tables: [{source: "${t.stem}", role: "dimension"}] to keep it.`);
+      src.skipped.push({ file: t.file, reason: "a date table; the model's Calendar replaces it. Pass it with role: \"dimension\" to keep it" });
     }
   }
   const kept = src.tables.filter((t) => !t.dropped);
@@ -1245,7 +1443,8 @@ function writeProject(args = {}, deps = {}) {
     const lay = layout(m, assumptions);
     const text = tableText(m, lay, stats);
     datatableBytes += Buffer.byteLength(text, "utf8");
-    modelFiles[`${S}/definition/tables/${tableFile(m.name)}.tmdl`] = text;
+    m.fileRel = `${S}/definition/tables/${tableFile(m.name)}.tmdl`;
+    modelFiles[m.fileRel] = text;
     m.lay = lay;
     modelSummary.push({ name: m.name, source: m.file, role: m.rec.role === "fact" ? "fact" : "dimension",
       rows: m.rows.length, columns: lay.dt.length + lay.added.length, measures: m.measures.map((x) => x.name) });
@@ -1271,17 +1470,21 @@ function writeProject(args = {}, deps = {}) {
   }
   let spec;
   let rationale;
+  let reportWindow = null;
   if (args.pages === undefined) {
     spec = { pages: [{ name: "p1", displayName: "Page 1" }] };
     assumptions.push("Pages: one empty page, so the project opens. Pass pages as a write_report spec, or \"propose\".");
   } else if (args.pages === "propose") {
-    const p = proposeSpec(model, fact, metrics, sc, assumptions);
+    const p = proposeSpec(model, fact, metrics, sc, rels, assumptions);
     if (p.error) {
       spec = { pages: [{ name: "p1", displayName: "Page 1" }] };
       assumptions.push(`Pages: none could be proposed, so the report has one empty page. propose_pages said: ${p.error}`);
     } else {
       spec = p.spec;
       rationale = p.rationale;
+      // A sortByColumn changes the category's table file, which is rebuilt before anything is written.
+      for (const m of applyStatementOrder(spec, models, assumptions)) modelFiles[m.fileRel] = tableText(m, m.lay, { lineBreaks: 0 });
+      reportWindow = applyReportingWindow(spec, fact, sc, dateInfo, fiscalStart, assumptions);
     }
   } else {
     spec = args.pages;
@@ -1351,8 +1554,12 @@ function writeProject(args = {}, deps = {}) {
       measures: fact.measures.map((m) => `${fact.name}[${m.name}]`),
       relationships: rels.map((r) => `${r.fromTable}[${r.fromColumn}] -> ${r.toTable}[${r.toColumn}]${r.active ? "" : " (inactive)"}`),
     },
-    assumptions: [...src.notes, ...(src.skipped.length ? [`Skipped as asked: ${src.skipped.join(", ")}.`] : []), ...assumptions],
+    assumptions: [`Loaded as tables: ${models.map((m) => (m.name === m.stem ? m.file : `${m.file} as ${m.name}`)).join(", ")}.`,
+      ...(src.skipped.length ? [`Not loaded: ${src.skipped.map((s) => s.file).join(", ")} (reasons under skipped).`] : []),
+      ...src.notes, ...assumptions],
+    skipped: src.skipped,
     ...(rationale ? { pageRationale: rationale } : {}),
+    ...(reportWindow ? { period: { field: `${CALENDAR}[YearMonth]`, months: reportWindow.months, label: reportWindow.label } } : {}),
     ...(rep.warnings ? { warnings: rep.warnings } : {}),
     validation: {
       rulesRun: v.ok ? v.rulesRun : 0,

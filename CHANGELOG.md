@@ -107,6 +107,24 @@ though they shipped would misrepresent what anyone could have installed.
 - The authoring skill tells the agent to create a project from flat files with `write_project` and to write
   no project file, model or `DATATABLE` by hand. The hand-written forms in `project-files.md`,
   `model-layer.md` and `preflight.md` stay, for reading, repairing or extending an existing project.
+- New tool `write_measures`: add measures to an existing TMDL model. The caller gives the DAX; the
+  tool lays out the TMDL, requires a `formatString` (a date format for a measure that returns a
+  date), refuses a name already used in the table or by a measure anywhere in the model, checks
+  every table, column and measure reference outside strings and comments against the model and
+  names the nearest existing names, single-quotes bare table references, and refuses a write that
+  would add a validator finding. It changes one table file, keeps every other byte of it, and
+  returns the exact text added and removed.
+- `write_project` from a folder loads a file as a table only when it reads as data (a fact, a date
+  or amount column, or a join to another file); the rest are listed under `skipped` with the reason,
+  a file named in `tables` always loads, and the assumptions name every file loaded.
+- Pages that `write_project` proposes open on one reporting window: a slicer on `Calendar[YearMonth]`
+  preset to the year to date ending with the last month that has actuals, with plan and previous
+  year checked against it and any gap stated. The proposal uses columns of related dimension tables
+  on a star schema, and sorts a statement by its order column (`sortByColumn`) when the source has
+  one.
+- `profile_project` ranks a fact table's measures by the columns of dimension tables related to it,
+  and no longer ranks a relationship's key columns as amounts. A model with no relationships ranks
+  as before.
 
 ## 0.3.2 — 2026-11-04
 

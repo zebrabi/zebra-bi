@@ -24,8 +24,10 @@
  * Zero dependencies. The MCP stdio transport is newline-delimited JSON-RPC 2.0, which is small
  * enough that adding an SDK would mean shipping node_modules inside a plugin to save very
  * little. It also never touches the network. Every tool returns its content for the agent host to
- * save, except write_project, which creates a new project in a folder that does not exist or is
- * empty, never overwrites or deletes a file, and returns the list of files it wrote.
+ * save, except two. write_project creates a new project in a folder that does not exist or is
+ * empty, never overwrites or deletes a file, and returns the list of files it wrote. write_measures
+ * inserts measures into one existing table file, or replaces a measure of the same name when asked,
+ * keeps every other byte of that file, writes no other file, and returns the text it added.
  */
 
 const fs = require("fs");
@@ -62,6 +64,7 @@ const prof = require("./profile.js");
 const propose = require("./propose.js");
 const profSource = require("./profile-source.js");
 const project = require("./project.js");
+const measures = require("./measures.js");
 
 // --- reading the project ------------------------------------------------------------------
 
@@ -832,7 +835,10 @@ const PROJECT_WRITER = {
       + "the .Report folder (definition.pbir, report.json with publicCustomVisuals taken from the "
       + "visuals on the pages, version.json and the pages) and the .SemanticModel folder "
       + "(definition.pbism, database.tmdl, model.tmdl, relationships.tmdl and one TMDL file per table). "
-      + "Use it instead of writing any of those files by hand. It reads the source the way "
+      + "Use it instead of writing any of those files by hand. From a folder it loads a file as a "
+      + "table only when it reads as data (a fact, a date or amount column, or a join to another "
+      + "file); every other file is listed under skipped with the reason, and a file named in tables "
+      + "always loads. It reads the source the way "
       + "profile_source does, embeds every table as a calculated DATATABLE of constants (dates built "
       + "outside the rows), adds a marked Calendar from 1 January of the first year to the last date "
       + "in the data, relates the tables, and writes AC / PL / FC / PY measures on the fact table from "
@@ -909,14 +915,57 @@ const PROJECT_WRITER = {
   },
 };
 
+// The measure writer edits one existing file: it inserts measure blocks into one table's TMDL file,
+// or replaces a measure of the same name when asked, and keeps every other byte of that file.
+const MEASURE_WRITER = {
+  write_measures: {
+    fn: (a) => measures.writeMeasures(a, { validateReport, resolveProject, loadRules, checkers }),
+    description: "Add measures to an existing project's TMDL model: you give the DAX, the tool writes "
+      + "the TMDL around it. Use it instead of editing a .tmdl file by hand, for any measure "
+      + "write_project does not template (year to date, a subtotal, a ratio of filtered sums). It "
+      + "lays each measure out with its body below the `=` line, requires a formatString (a date format "
+      + "when the measure returns a date, such as a last actual date for a title), refuses a "
+      + "name already used by a column or measure of the table or by a measure anywhere in the model, "
+      + "checks every Table[Column], 'Table'[Column] and [Measure] reference outside strings and "
+      + "comments against the model (naming the nearest existing names when one does not resolve), "
+      + "single-quotes every bare table reference and lists each one it quoted, and runs every "
+      + "validator rule on the model before and after the edit, refusing a write that adds a finding "
+      + "(a VAR named after a DAX function, a swallowed formatString). It changes one file: the "
+      + "measures are inserted at the end of the table's block, or replace a measure of the same "
+      + "name when replace is true; every other byte of the file is kept and the exact text added is "
+      + "returned. Close Power BI Desktop first; afterwards refresh and save in Desktop.",
+    schema: {
+      type: "object",
+      properties: {
+        projectPath: { type: "string", description: "Absolute path of the folder holding the .pbip." },
+        table: { type: "string", description: "The table the measures live on, as the model names it." },
+        measures: { type: "array", description: "The measures to add.", items: { type: "object", properties: {
+          name: { type: "string" },
+          expression: { type: "string", description: "The DAX after `=`, one line or several, without TMDL fences." },
+          formatString: { type: "string", description: "Required, e.g. '#,0' or '0.0%'." },
+          description: { type: "string", description: "Written as a /// description above the measure." },
+          displayFolder: { type: "string" },
+        }, required: ["name", "expression", "formatString"] } },
+        replace: { type: "boolean", description: "Replace a measure of the same name on this table. Default false: a name in use is refused." },
+      },
+      required: ["projectPath", "table", "measures"],
+    },
+  },
+};
+
 /** Explicit labels: it writes files (not read-only), never overwrites or deletes (not destructive),
  *  and a second call into the same folder is refused (not idempotent). */
 const WRITES_NEW_FILES = Object.freeze({
   readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
 });
+/** write_measures edits an existing file, and with replace: true replaces a measure, so it is
+ *  labelled destructive; the host keeps asking. */
+const EDITS_ONE_FILE = Object.freeze({
+  readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false,
+});
 
 /** Everything reachable through tools/call that is not validate_report. */
-const CALLABLE = { ...ENCODERS, ...WRITERS, ...PROJECT_WRITER };
+const CALLABLE = { ...ENCODERS, ...WRITERS, ...PROJECT_WRITER, ...MEASURE_WRITER };
 
 /**
  * Labels that let a host skip its per-call confirmation, given ONLY to the encoders: they turn
@@ -933,6 +982,7 @@ const NO_READS = Object.freeze({
 const annotate = (t) => {
   if (Object.prototype.hasOwnProperty.call(ENCODERS, t.name)) return { ...t, annotations: NO_READS };
   if (Object.prototype.hasOwnProperty.call(PROJECT_WRITER, t.name)) return { ...t, annotations: WRITES_NEW_FILES };
+  if (Object.prototype.hasOwnProperty.call(MEASURE_WRITER, t.name)) return { ...t, annotations: EDITS_ONE_FILE };
   return t;
 };
 
@@ -1140,5 +1190,5 @@ process.stdin.on("data", (chunk) => {
 if (require.main === module) listen();
 
 module.exports = { validateReport, resolveProject, checkers, loadRules, listen,
-                   ENCODERS, WRITERS, PROJECT_WRITER, CALLABLE, TOOLS, profileProjectTool,
+                   ENCODERS, WRITERS, PROJECT_WRITER, MEASURE_WRITER, CALLABLE, TOOLS, profileProjectTool,
                    profileSourceTool: profSource.profileSource };

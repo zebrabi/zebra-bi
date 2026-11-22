@@ -487,6 +487,43 @@ check("a measure over a single-quoted table reference still binds the ranked col
   assert.strictEqual(r.ok, false, "matched a measure over a different column");
 });
 
+/** A star: a fact holding only keys and an amount, a dimension holding the category, one relationship. */
+function star({ relationship = true } = {}) {
+  const fact = ["table Sales",
+    "\tcolumn RegionKey", "\t\tdataType: int64", "\t\tisNameInferred", "\t\tsourceColumn: [RegionKey]",
+    "\tcolumn Amount", "\t\tdataType: double", "\t\tisNameInferred", "\t\tsourceColumn: [Amount]",
+    "\tpartition Sales = calculated", "\t\tmode: import", "\t\tsource =", "\t\t\t\tDATATABLE (",
+    "\t\t\t\t\t\"RegionKey\", INTEGER, \"Amount\", DOUBLE,", "\t\t\t\t\t{",
+    "\t\t\t\t\t\t{1, 10}, {1, 12}, {2, 300}, {2, 320}, {3, 40}, {3, 45}", "\t\t\t\t\t}", "\t\t\t\t)", ""].join("\n");
+  const root = project({ fact, measures: "table '.Measures'\n\tmeasure 'Sales AC' = SUM('Sales'[Amount])\n" });
+  const md = path.join(root, "Demo.SemanticModel", "definition");
+  fs.writeFileSync(path.join(md, "tables", "Region.tmdl"), ["table Region",
+    "\tcolumn RegionKey", "\t\tdataType: int64", "\t\tisNameInferred", "\t\tsourceColumn: [RegionKey]",
+    "\tcolumn RegionName", "\t\tdataType: string", "\t\tisNameInferred", "\t\tsourceColumn: [RegionName]",
+    "\tpartition Region = calculated", "\t\tmode: import", "\t\tsource =", "\t\t\t\tDATATABLE (",
+    "\t\t\t\t\t\"RegionKey\", INTEGER, \"RegionName\", STRING,", "\t\t\t\t\t{",
+    "\t\t\t\t\t\t{1, \"North\"}, {2, \"South\"}, {3, \"West\"}", "\t\t\t\t\t}", "\t\t\t\t)", ""].join("\n"));
+  if (relationship) fs.writeFileSync(path.join(md, "relationships.tmdl"), "relationship Sales_Region\n\tfromColumn: Sales.RegionKey\n\ttoColumn: Region.RegionKey\n");
+  return srv.profileProjectTool({ projectPath: root });
+}
+
+check("a star schema ranks the fact's measure by a related dimension's column", () => {
+  const p = star();
+  const q = p.signal.ranked.find((x) => x.dimension === "Region[RegionName]" && x.measureColumn === "Sales[Amount]");
+  assert.ok(q, `not ranked: ${JSON.stringify(p.signal.ranked.map((x) => x.question))}`);
+  assert.strictEqual(q.members, 3);
+  assert.deepStrictEqual([q.lowest.member, q.highest.member], ["North", "South"]);
+  // Relationship keys are keys, not amounts.
+  assert.ok(!p.signal.ranked.some((x) => /RegionKey\]$/.test(x.measureColumn)), "a key column was ranked as a measure");
+  const r = propose.proposePages(p, {});
+  assert.strictEqual(r.ok, true, r.error);
+  assert.deepStrictEqual(r.spec.pages[0].visuals[0].bindings.Category[0], { entity: "Region", property: "RegionName", kind: "Column", active: true });
+});
+check("the same two tables with no relationship rank nothing across them", () => {
+  const p = star({ relationship: false });
+  assert.ok(!p.signal.ranked.some((x) => x.dimension === "Region[RegionName]" && x.measureColumn === "Sales[Amount]"));
+});
+
 check("every page carries the numbers that justified it", () => {
   const r = proposed({ fact: SIGNAL_FACT, measures: MEASURES });
   assert.strictEqual(r.rationale.length, r.spec.pages.length);

@@ -77,7 +77,7 @@ function longRows() {
     for (let m = 1; m <= 12; m++) {
       const d = `${y}-${String(m).padStart(2, "0")}-01`;
       regions.forEach((r, ri) => products.forEach((p, pi) => {
-        const base = 100 * (ri + 1) + 37 * pi + m;
+        const base = 100 * (ri + 1) + 37 * pi + m + (y === 2025 ? 3 : 0);
         if (y === 2024 || m <= 6) rows.push([d, r, p, "Actual", base * (ri ? 9 : 1)]);
         if (y === 2025) rows.push([d, r, p, "Budget", base * (ri ? 9 : 1) + 5]);
       }));
@@ -272,7 +272,7 @@ check("pages: \"propose\" binds only measures and columns the written model has"
     return Boolean(t && (kind === "Column" ? t.columns : t.measures).some((x) => x.name === prop));
   };
   const files = tree(out1);
-  const visuals = Object.entries(files).filter(([k]) => k.endsWith("/visual.json"));
+  const visuals = Object.entries(files).filter(([k]) => k.endsWith("/visual.json") && !k.includes("/periodSlicer/"));
   assert.ok(visuals.length >= 1, "no visual proposed");
   let bindings = 0;
   for (const [rel, buf] of visuals) {
@@ -291,11 +291,56 @@ check("pages: \"propose\" binds only measures and columns the written model has"
   assert.ok(bindings >= 3, `${bindings} bindings`);
 });
 
+check("the proposed page opens on one window, and AC, PL and PY under its slicer cover the same months", () => {
+  const files = tree(out1);
+  const slicer = JSON.parse(files["Sales.Report/definition/pages/p1/visuals/periodSlicer/visual.json"].toString("utf8"));
+  assert.strictEqual(slicer.visual.visualType, "slicer");
+  const f = slicer.visual.objects.general[0].properties.filter.filter;      // double-nested
+  assert.strictEqual(f.From[0].Entity, "Calendar");
+  assert.strictEqual(f.Where[0].Condition.In.Expressions[0].Column.Property, "YearMonth");
+  const months = f.Where[0].Condition.In.Values.map((v) => v[0].Literal.Value.replace(/'/g, ""));
+  assert.deepStrictEqual(months, ["2025-01", "2025-02", "2025-03", "2025-04", "2025-05", "2025-06"]);
+  assert.deepStrictEqual(r1.period.months, months);
+  // Evaluate the three measures' definitions under that selection, over the rows as written.
+  const text = files["Sales.SemanticModel/definition/tables/sales.tmdl"].toString("utf8");
+  const rows = text.split("\n").filter((l) => /^\t+\{\d{4}, /.test(l)).map((l) => l.trim().replace(/,$/, "").slice(1, -1).split(", "));
+  const mon = (r) => `${r[0]}-${String(r[1]).padStart(2, "0")}`;
+  const back = (m) => `${Number(m.slice(0, 4)) - 1}${m.slice(4)}`;
+  const sum = (pred) => rows.filter(pred).reduce((s, r) => s + Number(r[6]), 0);
+  const inW = new Set(months);
+  const ac = sum((r) => r[5] === "\"Actual\"" && inW.has(mon(r)));
+  const pl = sum((r) => r[5] === "\"Budget\"" && inW.has(mon(r)));
+  const py = sum((r) => r[5] === "\"Actual\"" && inW.has(`${Number(r[0]) + 1}-${String(r[1]).padStart(2, "0")}`));
+  // The same three straight from the fixture.
+  const src = longRows().slice(1);
+  const exp = (s, inMonths) => src.filter((r) => r[3] === s && inMonths.includes(r[0].slice(0, 7))).reduce((t, r) => t + Number(r[4]), 0);
+  assert.strictEqual(ac, exp("Actual", months));
+  assert.strictEqual(pl, exp("Budget", months));
+  assert.strictEqual(py, exp("Actual", months.map(back)));
+  // Like with like: every scenario has rows in every month of the window.
+  for (const m of months) {
+    assert.ok(rows.some((r) => r[5] === "\"Actual\"" && mon(r) === m), `no AC in ${m}`);
+    assert.ok(rows.some((r) => r[5] === "\"Budget\"" && mon(r) === m), `no PL in ${m}`);
+    assert.ok(rows.some((r) => r[5] === "\"Actual\"" && mon(r) === back(m)), `no PY for ${m}`);
+  }
+  assert.ok(ac > 0 && pl > 0 && py > 0 && ac !== py, `ac ${ac} pl ${pl} py ${py}`);
+  assert.ok(r1.assumptions.some((a) => /^Period: each proposed page opens on Jan 2025 to Jun 2025 .* PL and PY are read over the same months/.test(a)), r1.assumptions.join(" | "));
+  const table = JSON.parse(files["Sales.Report/definition/pages/p1/visuals/p1Table/visual.json"].toString("utf8"));
+  assert.ok(/Jan 2025 to Jun 2025'$/.test(table.visual.objects.titleSettings[0].properties.text.expr.Literal.Value), "title");
+  assert.ok(!r1.validation.findings.some((x) => x.code === "page-filter-hardcodes-the-period" || x.code === "slicer-filter-double-nested"), JSON.stringify(r1.validation.findings));
+});
+
+check("a plan that does not cover the whole window is stated as a limitation", () => {
+  const rows = longRows().filter((r, i) => i === 0 || !(r[3] === "Budget" && r[0] >= "2025-04"));
+  const r = write({ name: "Short", outPath: target(), source: { path: bed({ "sales.csv": csv(rows) }) }, pages: "propose" });
+  assert.ok(r.assumptions.some((a) => a === "Period: PL has no rows for 2025-04, 2025-05, 2025-06, so those months compare against nothing."), r.assumptions.join(" | "));
+});
+
 check("publicCustomVisuals equals the set of custom visual types on the pages", () => {
   const files = tree(out1);
   const report = JSON.parse(files["Sales.Report/definition/report.json"].toString("utf8"));
   const types = new Set(Object.entries(files).filter(([k]) => k.endsWith("/visual.json"))
-    .map(([, b]) => JSON.parse(b.toString("utf8")).visual.visualType));
+    .map(([, b]) => JSON.parse(b.toString("utf8")).visual.visualType).filter(project.isCustomVisualType));
   assert.deepStrictEqual(report.publicCustomVisuals, [...types].sort());
   assert.strictEqual(report.themeCollection.baseTheme.type, "SharedResources");
   assert.strictEqual(typeof report.themeCollection.baseTheme.reportVersionAtImport, "object");
@@ -452,7 +497,16 @@ check("long form with keyed scenarios is read through the scenario table", () =>
   assert.ok(!by["Amount FC"], "a measure for a scenario with no rows");
   assert.ok(r.assumptions.some((a) => /Forecast \(3\) is declared in DimScenario\[ScenarioName\] and has no rows/.test(a)), r.assumptions.join(" | "));
   assert.ok(r.model.relationships.some((x) => /FactLedger\[AccountKey\] -> DimAccount\[AccountKey\]/.test(x)));
-  assert.ok(r.assumptions.some((a) => /no categorical column|none could be proposed/i.test(a)) || r.files.some((f) => /visual\.json$/.test(f.path)));
+  // A star: the fact holds only keys, so the page is cut by the related dimension's column, never by
+  // the scenario table's.
+  const v = Object.entries(tree(out)).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8"))).filter((x) => x.visual.visualType !== "slicer");
+  assert.ok(v.length >= 1, `no page proposed: ${r.assumptions.join(" | ")}`);
+  const cats = v.map((x) => x.visual.query.queryState.Category.projections[0].field.Column);
+  assert.ok(cats.some((c) => c.Expression.SourceRef.Entity === "DimAccount" && c.Property === "AccountName"), JSON.stringify(cats));
+  assert.ok(!cats.some((c) => c.Expression.SourceRef.Entity === "DimScenario"), "a page is cut by the scenario table");
+  assert.ok(v.every((x) => x.visual.query.queryState.Plan), "the comparison was not bound");
+  assert.ok(r.assumptions.some((a) => /profile_project ran on the model text in memory/.test(a)));
+  assert.ok(r.assumptions.some((a) => /narrowed to those on the actuals.*leaving out FactLedger\[ScenarioKey\] and the columns of dimscenario.*a direct propose_pages call does not narrow them/.test(a)), r.assumptions.join(" | "));
   assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
 });
 
@@ -472,6 +526,37 @@ check("a ratio metric divides the two metrics per scenario", () => {
   const m = t.measures.find((x) => x.name === "Cost ratio AC");
   assert.strictEqual(m.expression, "DIVIDE ( [Cost AC], [Revenue AC] )");
   assert.strictEqual(m.formatString, "0.0%");
+});
+
+// --- statement order ------------------------------------------------------------------------
+
+const PL_ROWS = [["Date", "Line", "LineNo", "Scenario", "Amount"],
+  ...[1, 2, 3].flatMap((m) => [["Revenue", 1, 500], ["Cost of sales", 2, -200], ["Opex", 3, -150], ["Tax", 4, -40]]
+    .flatMap(([l, no, a]) => [[`2025-0${m}-01`, l, no, "Actual", a * m], [`2025-0${m}-01`, l, no, "Budget", a * m + 7]]))];
+
+check("an order column on the category's table sorts the proposed statement in that order", () => {
+  const out = target();
+  const r = write({ name: "PL", outPath: out, source: { path: bed({ "pl.csv": csv(PL_ROWS) }) }, pages: "propose" });
+  const files = tree(out);
+  const t = T.parseTree(files["PL.SemanticModel/definition/tables/pl.tmdl"].toString("utf8"));
+  const line = t.nodes.find((n) => n.type === "column" && n.name === "Line");
+  assert.strictEqual(T.propValue(line, "sortByColumn"), "LineNo");
+  const vis = Object.entries(files).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8"))).filter((x) => x.visual.visualType !== "slicer");
+  const onLine = vis.find((x) => x.visual.query.queryState.Category.projections[0].field.Column.Property === "Line");
+  assert.ok(onLine, "no page by Line");
+  const s = onLine.visual.objects.sortSettings[0].properties;
+  assert.strictEqual(s.categorySort.expr.Literal.Value, "0D");
+  assert.ok(!("columnName" in s), "still sorted by a value column");
+  assert.ok(r.assumptions.some((a) => /follow pl\[LineNo\] \(sortByColumn/.test(a)), r.assumptions.join(" | "));
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+});
+check("an order column that gives one line two orders is not used, and says so", () => {
+  const rows = PL_ROWS.map((r, i) => (i === 3 ? [r[0], r[1], 9, r[3], r[4]] : r));
+  const r = write({ name: "PL", outPath: target(), source: { path: bed({ "pl.csv": csv(rows) }) }, pages: "propose" });
+  assert.ok(r.assumptions.some((a) => /pl\[LineNo\] reads like an order column, but some Line values carry two different orders/.test(a)), r.assumptions.join(" | "));
+});
+check("with no order column the value sort is kept and the assumption says why", () => {
+  assert.ok(r1.assumptions.some((a) => /sorted by value, as propose_pages sorts them; sales has no order column/.test(a)), r1.assumptions.join(" | "));
 });
 
 // --- the fiscal year ------------------------------------------------------------------------
@@ -496,7 +581,8 @@ check("reserved, dotted, spaced, duplicate and colliding names are made safe and
       ["2025-01-01", "a", "b", "c", "Actual", 1, 7], ["2025-02-01", "a", "b", "c", "Budget", 2, 8]]),
     "Measures.csv": csv([["Code", "Label"], ["x1", "One"], ["x2", "Two"]]),
     "sub/kpi.csv": csv([["Code", "Label"], ["y1", "One"], ["y2", "Two"]]),
-  }) }, metrics: [{ name: "Amount", column: "Amount" }] });
+  }) }, metrics: [{ name: "Amount", column: "Amount" }],
+    tables: [{ source: "Measures" }, { source: "kpi" }] });
   const names = r.model.tables.map((t) => t.name);
   assert.ok(names.includes("KPI Data") && names.includes("kpi Data 2") && names.includes("Measures Data"), names.join(", "));
   assert.ok(!r.model.tables.filter((t) => t.source).some((t) => /^(kpi|measures|calendar)$/i.test(t.name)));
@@ -672,7 +758,39 @@ check("a keep-list brings a table under the ceiling, and skip leaves a file out"
   const r = write({ name: "Kept", outPath: target(), source: { path: bed({ "big.csv": head + line.repeat(26000), "other.csv": "X,Y\n1,2\n" }) },
     scenarios: { form: "none" }, tables: [{ source: "big", columns: ["Date", "A", "Amount"] }, { source: "other.csv", role: "skip" }] });
   assert.deepStrictEqual(r.model.tables.map((t) => [t.name, t.rows]), [["big", 26000], ["Calendar", null]]);
-  assert.ok(r.assumptions.some((a) => /Skipped as asked: other\.csv/.test(a)));
+  assert.deepStrictEqual(r.skipped, [{ file: "other.csv", reason: "skipped as asked (role: skip)" }]);
+});
+
+// --- a working folder with more than data in it ----------------------------------------------
+
+const WORKDIR = {
+  "sales.csv": csv([["Date", "RegionKey", "Scenario", "Amount"], ["2025-01-01", 1, "Actual", 10], ["2025-01-01", 2, "Budget", 12], ["2025-02-01", 2, "Actual", 20]]),
+  "regions.csv": csv([["RegionKey", "Region Name"], [1, "North"], [2, "South"]]),
+  "start.txt": "1795344658\n",
+  "README.txt": "These files are the October export.\nAsk the finance team before changing them, please, because the totals are reconciled.\nNotes, drafts and logs live here too.\n",
+  "settings.json": JSON.stringify({ owner: "someone", refreshed: true }),
+  "notes.csv": "Item,Comment\nfirst,checked\nsecond,pending\n",
+};
+check("from a folder, only files that read as data become tables; the rest are listed with a reason", () => {
+  const r = write({ name: "Work", outPath: target(), source: { path: bed(WORKDIR) } });
+  assert.deepStrictEqual(r.model.tables.map((t) => t.name).sort(), ["Calendar", "regions", "sales"]);
+  const why = Object.fromEntries(r.skipped.map((s) => [s.file, s.reason]));
+  assert.deepStrictEqual(Object.keys(why).sort(), ["README.txt", "notes.csv", "settings.json", "start.txt"]);
+  assert.ok(/one column and no header row/.test(why["start.txt"]), why["start.txt"]);
+  assert.ok(/not readable as a table/.test(why["README.txt"]), why["README.txt"]);
+  assert.ok(/joins no other file, and has no date or amount column; name it in tables to load it/.test(why["notes.csv"]), why["notes.csv"]);
+  assert.ok(/not a table/.test(why["settings.json"]), why["settings.json"]);
+  assert.ok(r.assumptions[0] === "Loaded as tables: regions.csv, sales.csv.", r.assumptions[0]);
+  assert.ok(r.assumptions.some((a) => /^Not loaded: README\.txt, settings\.json, notes\.csv, start\.txt \(reasons under skipped\)\.$/.test(a)), r.assumptions.join(" | "));
+  assert.ok(r.model.relationships.some((x) => /sales\[RegionKey\] -> regions\[RegionKey\]/.test(x)), "the joined file did not load or relate");
+});
+check("a file named in tables is always loaded, and a single file as source.path always loads", () => {
+  const r = write({ name: "Work", outPath: target(), source: { path: bed(WORKDIR) }, tables: [{ source: "start.txt" }] });
+  assert.ok(r.model.tables.some((t) => t.name === "start"), "a named file was not loaded");
+  assert.ok(!r.skipped.some((s) => s.file === "start.txt"));
+  const dir = bed({ "one.csv": csv([["Code", "Label"], ["a", "A"], ["b", "B"]]) });
+  refuses({ name: "One", outPath: target(), source: { path: path.join(dir, "one.csv") } }, /No table reads as a fact table/);
+  refuses({ name: "Work", outPath: target(), source: { path: bed(WORKDIR) }, tables: [{ source: "settings.json" }] }, /settings\.json was not read/);
 });
 
 // --- the server -----------------------------------------------------------------------------
