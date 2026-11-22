@@ -133,12 +133,12 @@ before it builds instead of deciding for you.
 | **`/zebra-bi:setup-doctor`** | Checks this machine can do the job: Power BI Desktop, your project, the visuals, your licence, your model, and what it can verify. Ten checks, each with a fix. |
 | **`/zebra-bi:report-authoring`** | The authoring itself. Planning a page, binding data, variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates. |
 | **`/zebra-bi:report-publishing`** | The Zebra-specific parts of putting a finished report in a workspace. Microsoft's own skill does the upload; this covers the choice of visuals you have to make before you publish, and the refresh without which the report arrives empty. |
-| **The checker** | Reads your project and reports faults before you open it: 73 of them, each one a real problem we have hit and fixed. Recommended; needs Node.js, see below. |
+| **The checker** | Reads your project and reports faults before you open it: 76 of them, each one a real problem we have hit and fixed. Recommended; needs Node.js, see below. |
 
 ### About the checker
 
 The checker needs **Node.js**, a free download from **https://nodejs.org**. If you have it, you
-get 73 checks that catch things Power BI itself does not mention: a comment that will blank a whole
+get 76 checks that catch things Power BI itself does not mention: a comment that will blank a whole
 visual, colours that will be silently ignored, a computed row that will quietly inflate your grand
 total, a sort that will make a table render empty.
 

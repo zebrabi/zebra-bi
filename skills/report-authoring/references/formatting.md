@@ -324,8 +324,10 @@ not a default, not blank. Write all of them, using `""` where you want nothing.
 `showAsTable` is an **integer enum**, not a boolean — `2` is the in-cell chart. Inside a blob colour
 is a plain hex string (`"#0078D4"`), never the nested `solid`/`expr` shape used outside one.
 
-**`chartSettings.calculations` decides which column keys are legal**, so set it first: a key that
-names a comparison the calculations do not declare is dropped.
+**`chartSettings.calculations` is a list of comparison pairs only**, one per variance slot, in display
+order (`["actual-previousYear","actual-plan"]`). Each pair brings its absolute and percent column; never
+list a `-percent` entry. A repeated pair draws the same variance twice. Style a percent column in
+`columnSettings` under `<pair>-percent`.
 
 If the checker tools are available, `encode_table_columns` emits this key set for you and warns on an
 illegal key — prefer it. But the key set is here so the blob is writable without it.
