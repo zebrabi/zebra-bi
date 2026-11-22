@@ -83,10 +83,16 @@ const RESERVED_TABLE_NAMES = new Set(["measures", "measure", "goal", "calculatio
 /** File names Windows refuses whatever their extension. */
 const DEVICE_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
-// A column whose name says it is not an additive amount is not summed by default.
-const NOT_ADDITIVE = /rate|ratio|percent|pct|%|share|price|average|avg|mean|index|score|rank|margin ?%|level|age\b/i;
+/** The words of a column name: split on separators and on camelCase, lower-cased. */
+const words = (s) => String(s).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9%]+/).filter(Boolean);
+// A column whose name says it is not an additive amount is not summed by default. Matched on whole
+// words, so "generation" is not read as "ratio".
+const NOT_ADDITIVE_WORDS = new Set(["rate", "rates", "ratio", "percent", "percentage", "pct", "%", "share",
+  "price", "average", "avg", "mean", "index", "score", "rank", "level", "age"]);
+const notAdditive = (s) => words(s).some((w) => NOT_ADDITIVE_WORDS.has(w) || w.includes("%"));
 const DATE_PART = /^(year|yr|month|month ?no|month ?num(ber)?|day|week|quarter|qtr|period|fy|fiscal.*|calendar ?year|semester)$/i;
-const KEYISH = /(key|id|code|no|number)$/i;
+const KEY_WORDS = new Set(["key", "id", "code", "no", "nr", "number"]);
+const keyish = (s) => { const w = words(s); return w.length > 0 && KEY_WORDS.has(w[w.length - 1]); };
 const AMOUNT_HINT = /amount|value|sales|revenue|cost|expense|qty|quantity|units|count|total|net|gross|profit|generation|volume|spend|income|balance|budget|actual|forecast/i;
 
 const INPUT_KEYS = new Set(["name", "outPath", "source", "tables", "date", "scenarios", "metrics", "pages"]);
@@ -584,6 +590,7 @@ function resolveScenarios(input, fact, tables, joins, dateCol, assumptions) {
         + Object.entries(detected.members).map(([v, c]) => `${v} = ${c}`).join(", ")
         + `${detected.labels ? ` (keys labelled by ${detected.labels})` : ""}.`);
       for (const v of detected.unmapped) assumptions.push(`Scenarios: rows with ${fact.name}[${detected.column.name}] = ${v} are in no measure; its name is not a scenario this tool recognises.`);
+      for (const v of detected.empty) assumptions.push(`Scenarios: ${v} is declared in ${detected.labels} and has no rows in ${fact.name}, so it has no measure.`);
     } else {
       const wide = fact.cols.filter((c) => (c.kind === "integer" || c.kind === "number") && codeOf(c.source));
       need(wide.length < 2, "No scenario column was found, but the columns "
@@ -675,6 +682,7 @@ function detectLong(fact, tables, joins) {
   const values = [...new Set(fact.rows.map((r) => String(r[column.index] === undefined ? "" : r[column.index]).trim()))].filter(Boolean);
   let labelOf = (v) => v;
   let labels = null;
+  const empty = [];
   const j = joins.find((x) => x.fromTable === fact.stem && x.fromColumn === column.source);
   if (j) {
     const dim = tables.find((t) => t.rec.table === j.toTable);
@@ -684,6 +692,7 @@ function detectLong(fact, tables, joins) {
       const map = new Map(dim.rec.rows.map((r) => [String(r[ki]).trim(), String(r[ni]).trim()]));
       labelOf = (v) => map.get(v) || v;
       labels = `${dim.name}[${dim.rec.header[ni]}]`;
+      for (const [k, label] of map) if (!values.includes(k) && codeOf(label)) empty.push(`${label} (${k})`);
     }
   }
   const members = {};
@@ -694,7 +703,7 @@ function detectLong(fact, tables, joins) {
     if (code && !used.has(code)) { members[v] = code; used.add(code); } else unmapped.push(labels ? `${v} (${labelOf(v)})` : v);
   }
   if (!used.has("AC")) return null;
-  return { column, members, unmapped, labels };
+  return { column, members, unmapped, labels, empty };
 }
 
 function defaultFormat(col) {
@@ -715,9 +724,9 @@ function resolveMetrics(input, fact, sc, assumptions) {
       assumptions.push(`Metric: one, named Value, from ${Object.entries(sc.columns).map(([k, c]) => `${k} = ${c.source}`).join(", ")}. Pass metrics to name it.`);
     } else {
       const numeric = fact.cols.filter((c) => (c.kind === "integer" || c.kind === "number")
-        && c !== scenarioCol && !KEYISH.test(c.source) && !DATE_PART.test(c.source.trim()));
-      const picked = numeric.filter((c) => AMOUNT_HINT.test(c.source) && !NOT_ADDITIVE.test(c.source));
-      const chosen = picked.length ? picked : numeric.filter((c) => !NOT_ADDITIVE.test(c.source));
+        && c !== scenarioCol && !keyish(c.source) && !DATE_PART.test(c.source.trim()));
+      const picked = numeric.filter((c) => AMOUNT_HINT.test(c.source) && !notAdditive(c.source));
+      const chosen = picked.length ? picked : numeric.filter((c) => !notAdditive(c.source));
       need(chosen.length, `No additive amount column was found on ${fact.name}. Pass metrics: [{"name": "<name>", "column": "<column>"}].`);
       for (const c of chosen) list.push({ name: c.name, column: c, agg: "sum", format: defaultFormat(c) });
       assumptions.push(`Metrics: ${chosen.map((c) => c.source).join(", ")}, each summed. Pass metrics to choose others.`);
@@ -1021,6 +1030,15 @@ function writeAll(outPath, files) {
 
 // --- the tool ------------------------------------------------------------------------------
 
+/** Refuses a model above the cell ceiling. `dates` per table: date columns, written as three cells. */
+function checkCells(list) {
+  const cells = list.reduce((s, { t, dates }) => s + t.rows.length * (t.header.length + 2 * dates), 0);
+  need(cells <= LIMITS.cells, `The tables hold ${cells} cells as embedded rows, above the ${LIMITS.cells}-cell `
+    + "ceiling for a model that opens reliably. Pass a keep-list of the columns you need (tables: "
+    + "[{source, columns: [...]}]), skip tables you do not need (role: \"skip\"), or pre-aggregate the "
+    + `source. Rows per table: ${list.map(({ t }) => `${t.file} ${t.rows.length} x ${t.header.length}`).join(", ")}.`);
+}
+
 function writeProject(args = {}, deps = {}) {
   need(args && typeof args === "object" && !Array.isArray(args), "write_project takes an object of arguments.");
   knownKeys(args, INPUT_KEYS, "write_project");
@@ -1072,6 +1090,13 @@ function writeProject(args = {}, deps = {}) {
       t.header = idx.map((i) => t.header[i]);
       t.rows = t.rows.map((r) => idx.map((i) => (r[i] === undefined ? "" : r[i])));
     }
+  }
+  // The size ceiling, first on the plain cell count so a source far too large is refused before it
+  // is profiled; again below once each date counts as its three parts. A file named like a date
+  // table is left out of this first count, because a date table is set aside by default.
+  checkCells(src.tables.filter((t) => !/date|calendar|period|time/i.test(t.stem)
+    || (t.override && t.override.role)).map((t) => ({ t, dates: 0 })));
+  for (const t of src.tables) {
     const columns = ps.profileColumns(t.header, t.rows);
     const keyColumn = ps.keyColumnOf(t.stem, columns);
     const rec = { table: t.stem, file: t.file, header: t.header, rows: t.rows, columns, keyColumn };
@@ -1090,16 +1115,8 @@ function writeProject(args = {}, deps = {}) {
   }
   const kept = src.tables.filter((t) => !t.dropped);
 
-  // The size ceiling, checked on the cells before any text is built.
-  let cells = 0;
-  for (const t of kept) {
-    const dateCols = t.rec.columns.filter((c) => c.type === "date").length;
-    cells += t.rows.length * (t.header.length + 2 * dateCols);
-  }
-  need(cells <= LIMITS.cells, `The tables hold ${cells} cells as embedded rows, above the ${LIMITS.cells}-cell `
-    + "ceiling for a model that opens reliably. Pass a keep-list of the columns you need (tables: "
-    + "[{source, columns: [...]}]), skip tables you do not need (role: \"skip\"), or pre-aggregate the "
-    + `source. Rows per table: ${kept.map((t) => `${t.file} ${t.rows.length} x ${t.header.length}`).join(", ")}.`);
+  // The size ceiling, on the cells as written (each date is three), before any text is built.
+  checkCells(kept.map((t) => ({ t, dates: t.rec.columns.filter((c) => c.type === "date").length })));
 
   // Model names: cleaned, reserved names renamed, unique.
   const tableNames = new Set([CALENDAR.toLowerCase()]);
@@ -1129,7 +1146,7 @@ function writeProject(args = {}, deps = {}) {
     // profile_source reads a small table with a scenario-like column as a scenario list, and a
     // table without keys as unknown. With no fact found, the largest table that has a date and a
     // number is the fact, and the assumption says so.
-    const numeric = (m) => m.cols.some((c) => (c.kind === "integer" || c.kind === "number") && !KEYISH.test(c.source));
+    const numeric = (m) => m.cols.some((c) => (c.kind === "integer" || c.kind === "number") && !keyish(c.source));
     const cand = models.filter((m) => !(m.override && m.override.role === "dimension") && numeric(m)
       && m.cols.some((c) => c.kind === "date")).sort((a, b) => b.rows.length - a.rows.length);
     if (cand.length) {

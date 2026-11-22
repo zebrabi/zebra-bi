@@ -450,6 +450,7 @@ check("long form with keyed scenarios is read through the scenario table", () =>
   assert.strictEqual(by["Amount AC"], "CALCULATE ( SUM ( 'FactLedger'[Amount] ), 'FactLedger'[ScenarioKey] = 1 )");
   assert.strictEqual(by["Amount PL"], "CALCULATE ( SUM ( 'FactLedger'[Amount] ), 'FactLedger'[ScenarioKey] = 2 )");
   assert.ok(!by["Amount FC"], "a measure for a scenario with no rows");
+  assert.ok(r.assumptions.some((a) => /Forecast \(3\) is declared in DimScenario\[ScenarioName\] and has no rows/.test(a)), r.assumptions.join(" | "));
   assert.ok(r.model.relationships.some((x) => /FactLedger\[AccountKey\] -> DimAccount\[AccountKey\]/.test(x)));
   assert.ok(r.assumptions.some((a) => /no categorical column|none could be proposed/i.test(a)) || r.files.some((f) => /visual\.json$/.test(f.path)));
   assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
@@ -551,6 +552,14 @@ check("numbers are written culture-invariant with their digits kept", () => {
   assert.strictEqual(project.plainNumber("123456789012345678"), "123456789012345678");
 });
 
+check("default metrics are read from whole words of the column name", () => {
+  const rows = [["Date", "source", "net_generation", "growthRate", "unit_price", "StoreKey"]];
+  for (let m = 1; m <= 3; m++) rows.push([`2025-0${m}-01`, m % 2 ? "Wind" : "Gas", m * 10, 0.5, 3, m]);
+  const r = write({ name: "G", outPath: target(), source: { path: bed({ "gen.csv": csv(rows) }) }, scenarios: { form: "none" } });
+  assert.deepStrictEqual(r.model.measures, ["gen[net_generation AC]"]);
+  assert.ok(r.assumptions.some((a) => /Not made a metric: growthRate, unit_price/.test(a)), r.assumptions.join(" | "));
+});
+
 check("a JSON array source is read like a CSV", () => {
   const data = [];
   for (let m = 1; m <= 14; m++) data.push({ series: m % 2 ? "Retail" : "Mining", count: m * 7, rate: 1.5, date: `20${m > 12 ? 25 : 24}-${String(((m - 1) % 12) + 1).padStart(2, "0")}-01T08:00:00.000Z` });
@@ -641,6 +650,16 @@ check("over the cell ceiling is refused with the way out named", () => {
   refuses({ name: "Big", outPath: out, source: { path: bed({ "big.csv": head + line.repeat(26000) }) }, scenarios: { form: "none" } },
     /above the 300000-cell ceiling.*keep-list/);
   assert.ok(!fs.existsSync(out));
+});
+check("a date table that is set aside does not count towards the ceiling", () => {
+  const dates = ["DateKey,Date,Year,Month,A,B,C,D,E,F,G,H"];
+  for (let i = 0; i < 26000; i++) {
+    const d = new Date(Date.UTC(2000, 0, 1 + i)).toISOString().slice(0, 10);
+    dates.push(`${d.replace(/-/g, "")},${d},${d.slice(0, 4)},${+d.slice(5, 7)},a,b,c,d,e,f,g,h`);
+  }
+  const r = write({ name: "DT", outPath: target(), source: { path: bed({ "DimDate.csv": `${dates.join("\n")}\n`,
+    "sales.csv": csv([["Date", "Region", "Amount"], ["2025-01-01", "N", 1], ["2025-02-01", "S", 2]]) }) }, scenarios: { form: "none" } });
+  assert.ok(r.assumptions.some((a) => /DimDate\.csv reads as a date table and is left out/.test(a)), r.assumptions.join(" | "));
 });
 check("over the 2 MB ceiling is refused even under the cell ceiling", () => {
   const long = "x".repeat(1100);
