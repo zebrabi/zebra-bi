@@ -167,7 +167,7 @@ server does.
 ### Other hosts
 
 The server starts under Node 24 with no dependencies, answers MCP protocol `2025-06-18`, and lists
-its 18 tools. That is the interface every host on this route talks to. The skills are Markdown with no
+its 20 tools. That is the interface every host on this route talks to. The skills are Markdown with no
 Claude-specific syntax in the bodies. If your host does not load the skills or the checker,
 [open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose) telling us which host and
 what broke.
