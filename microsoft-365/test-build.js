@@ -152,6 +152,13 @@ try {
     assert.ok(out.findings.length > 0, "a project with no version.json must have findings");
   });
 
+  check("the package's mcp.json carries the hosted server only, whatever mcp.json lists besides it", () => {
+    const packaged = JSON.parse(read("mcp.json"));
+    assert.deepStrictEqual(Object.keys(packaged.mcpServers), [CONFIG.app.connector.id]);
+    assert.ok(/^https:/.test(packaged.mcpServers[CONFIG.app.connector.id].url), "the connector is not an HTTPS server");
+    assert.strictEqual(packaged.$schema, JSON.parse(fs.readFileSync(path.join(ROOT, "mcp.json"), "utf8")).$schema);
+  });
+
   check("the plugin's own files are unchanged by the build", () => {
     const r = spawnSync("git", ["status", "--porcelain", "--", "skills", "mcp", "plugin.json", "mcp.json"], { cwd: ROOT, encoding: "utf8" });
     if (r.status === 0) assert.strictEqual(r.stdout.trim(), "");

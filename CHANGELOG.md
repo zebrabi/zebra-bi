@@ -49,6 +49,11 @@ though they shipped would misrepresent what anyone could have installed.
 - `validate_report` returns `clean` (true only when there are no findings) and `counts` (findings per
   severity, and the total) beside `ok`. `ok` is unchanged and means the check ran; the tool description
   now says so.
+- `INSTALL.md` section 1b gives the one command that registers the checker as `zebra-bi-reports`
+  in GitHub Copilot CLI, with the path inside the installed plugin, and states what was verified.
+  Copilot CLI reads a plugin's servers from `mcp.json` only, which lists the hosted server alone, so
+  the install commands do not register the checker.
+- The Microsoft 365 package build writes a `mcp.json` with the hosted server only, and a test checks it.
 
 ## 0.3.2 — 2026-11-04
 
