@@ -452,7 +452,16 @@ check("long form with keyed scenarios is read through the scenario table", () =>
   assert.ok(!by["Amount FC"], "a measure for a scenario with no rows");
   assert.ok(r.assumptions.some((a) => /Forecast \(3\) is declared in DimScenario\[ScenarioName\] and has no rows/.test(a)), r.assumptions.join(" | "));
   assert.ok(r.model.relationships.some((x) => /FactLedger\[AccountKey\] -> DimAccount\[AccountKey\]/.test(x)));
-  assert.ok(r.assumptions.some((a) => /no categorical column|none could be proposed/i.test(a)) || r.files.some((f) => /visual\.json$/.test(f.path)));
+  // A star: the fact holds only keys, so the page is cut by the related dimension's column, never by
+  // the scenario table's.
+  const v = Object.entries(tree(out)).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8")));
+  assert.ok(v.length >= 1, `no page proposed: ${r.assumptions.join(" | ")}`);
+  const cats = v.map((x) => x.visual.query.queryState.Category.projections[0].field.Column);
+  assert.ok(cats.some((c) => c.Expression.SourceRef.Entity === "DimAccount" && c.Property === "AccountName"), JSON.stringify(cats));
+  assert.ok(!cats.some((c) => c.Expression.SourceRef.Entity === "DimScenario"), "a page is cut by the scenario table");
+  assert.ok(v.every((x) => x.visual.query.queryState.Plan), "the comparison was not bound");
+  assert.ok(r.assumptions.some((a) => /profile_project ran on the model text in memory/.test(a)));
+  assert.ok(r.assumptions.some((a) => /narrowed to those on the actuals.*leaving out FactLedger\[ScenarioKey\] and the columns of dimscenario.*a direct propose_pages call does not narrow them/.test(a)), r.assumptions.join(" | "));
   assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
 });
 
@@ -472,6 +481,37 @@ check("a ratio metric divides the two metrics per scenario", () => {
   const m = t.measures.find((x) => x.name === "Cost ratio AC");
   assert.strictEqual(m.expression, "DIVIDE ( [Cost AC], [Revenue AC] )");
   assert.strictEqual(m.formatString, "0.0%");
+});
+
+// --- statement order ------------------------------------------------------------------------
+
+const PL_ROWS = [["Date", "Line", "LineNo", "Scenario", "Amount"],
+  ...[1, 2, 3].flatMap((m) => [["Revenue", 1, 500], ["Cost of sales", 2, -200], ["Opex", 3, -150], ["Tax", 4, -40]]
+    .flatMap(([l, no, a]) => [[`2025-0${m}-01`, l, no, "Actual", a * m], [`2025-0${m}-01`, l, no, "Budget", a * m + 7]]))];
+
+check("an order column on the category's table sorts the proposed statement in that order", () => {
+  const out = target();
+  const r = write({ name: "PL", outPath: out, source: { path: bed({ "pl.csv": csv(PL_ROWS) }) }, pages: "propose" });
+  const files = tree(out);
+  const t = T.parseTree(files["PL.SemanticModel/definition/tables/pl.tmdl"].toString("utf8"));
+  const line = t.nodes.find((n) => n.type === "column" && n.name === "Line");
+  assert.strictEqual(T.propValue(line, "sortByColumn"), "LineNo");
+  const vis = Object.entries(files).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8")));
+  const onLine = vis.find((x) => x.visual.query.queryState.Category.projections[0].field.Column.Property === "Line");
+  assert.ok(onLine, "no page by Line");
+  const s = onLine.visual.objects.sortSettings[0].properties;
+  assert.strictEqual(s.categorySort.expr.Literal.Value, "0D");
+  assert.ok(!("columnName" in s), "still sorted by a value column");
+  assert.ok(r.assumptions.some((a) => /follow pl\[LineNo\] \(sortByColumn/.test(a)), r.assumptions.join(" | "));
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+});
+check("an order column that gives one line two orders is not used, and says so", () => {
+  const rows = PL_ROWS.map((r, i) => (i === 3 ? [r[0], r[1], 9, r[3], r[4]] : r));
+  const r = write({ name: "PL", outPath: target(), source: { path: bed({ "pl.csv": csv(rows) }) }, pages: "propose" });
+  assert.ok(r.assumptions.some((a) => /pl\[LineNo\] reads like an order column, but some Line values carry two different orders/.test(a)), r.assumptions.join(" | "));
+});
+check("with no order column the value sort is kept and the assumption says why", () => {
+  assert.ok(r1.assumptions.some((a) => /sorted by value, as propose_pages sorts them; sales has no order column/.test(a)), r1.assumptions.join(" | "));
 });
 
 // --- the fiscal year ------------------------------------------------------------------------

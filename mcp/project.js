@@ -506,7 +506,7 @@ function tableText(mt, lay, stats) {
     } else {
       const c = d.col;
       declared.push(columnBlock(c.name, dataColumnProps(TMDL_TYPE[c.kind], {
-        hidden: c.hidden, source: c.name, formatString: c.kind === "integer" ? "0" : null })));
+        hidden: c.hidden, source: c.name, formatString: c.kind === "integer" ? "0" : null, sortBy: c.sortBy })));
     }
   }
   for (const c of lay.added) {
@@ -980,22 +980,80 @@ function modelFromTexts(files) {
   return model;
 }
 
-function proposeSpec(model, fact, metrics, sc, assumptions) {
-  const profile = prof.profileProject({ model });
+function proposeSpec(model, fact, metrics, sc, rels, assumptions) {
+  // Every question is ranked here, not the top 25 propose_pages sees, because the narrowing below
+  // would otherwise start from a list that key and date-part columns have already filled.
+  const profile = prof.profileProject({ model }, { rankLimit: 1e6 });
   if (!profile.ok) return { error: profile.error };
+  assumptions.push("Pages: profile_project ran on the model text in memory, before anything was written; the same files are on disk now.");
   // Pages cut by the actuals: keep the questions that rank an AC source column, and never use the
-  // scenario column as a page's category.
+  // scenario column, or a table it relates to, as a page's category.
   const acCols = new Set(metrics.filter((m) => !m.ratio).map((m) => `${fact.name}[${(m.column || m.columns.AC).name}]`));
   const scenarioDim = sc.form === "long" ? `${fact.name}[${sc.column.name}]` : null;
+  const scenarioTables = new Set(sc.form === "long" ? rels.filter((x) => x.fromTable === fact.name && x.fromColumn === sc.column.name).map((x) => x.toTable.toLowerCase()) : []);
   const ranked = (profile.signal && profile.signal.ranked) || [];
-  const keep = ranked.filter((q) => q.dimension !== scenarioDim);
+  const keep = ranked.filter((q) => q.dimension !== scenarioDim && !scenarioTables.has(q.dimension.replace(/\[.*$/, "").toLowerCase()));
   const onActuals = keep.filter((q) => acCols.has(q.measureColumn));
-  profile.signal = { ...profile.signal, ranked: onActuals.length ? onActuals : keep };
+  profile.signal = { ...profile.signal, ranked: onActuals.length ? onActuals : keep, rankedCount: (onActuals.length ? onActuals : keep).length };
+  assumptions.push(`Pages: before propose_pages, the ranked questions were narrowed to those on the actuals (${[...acCols].join(", ")})`
+    + `${scenarioDim ? `, leaving out ${scenarioDim}${scenarioTables.size ? ` and the columns of ${[...scenarioTables].join(", ")}` : ""} as page categories` : ""}; a direct propose_pages call does not narrow them.`);
   const r = propose.proposePages(profile, {});
   if (!r.ok) return { error: r.error };
   assumptions.push(`Pages: proposed from the written model, ${r.spec.pages.length} page(s) of ${r.subjectMeasure}`
     + `${r.comparisonBound ? ` against ${[r.comparisonBound.plan, r.comparisonBound.previousYear].filter(Boolean).join(" and ")}` : " with no comparison"}, ordered by measured effect.`);
   return { spec: r.spec, rationale: r.rationale };
+}
+
+/** A column that gives the order of the rows of a statement: Sort, Order, LineNo, AccountSort. */
+const ORDER_LAST_WORDS = new Set(["sort", "order", "ordinal", "sequence", "seq", "position"]);
+function isOrderName(name) {
+  const w = words(name);
+  if (!w.length) return false;
+  if (ORDER_LAST_WORDS.has(w[w.length - 1])) return true;
+  return w.length === 2 && w[0] === "line" && ["no", "nr", "number", "num"].includes(w[1]);
+}
+
+/**
+ * Statement order. For each proposed table whose category's own table carries an order column, that
+ * column is bound as the category's sortByColumn in the model and the table sorts by the model's
+ * order (sortSettings.categorySort 0) instead of by value. An order column counts only when every
+ * category value has exactly one order value. Without one the sort is left as proposed and said.
+ */
+function applyStatementOrder(spec, models, assumptions) {
+  const touched = new Set();
+  for (const page of spec.pages || []) {
+    for (const v of page.visuals || []) {
+      const cat = v.bindings && v.bindings.Category && v.bindings.Category[0];
+      if (!cat || typeof cat !== "object") continue;
+      const m = models.find((x) => x.name === cat.entity);
+      const c = m && m.cols.find((x) => x.name === cat.property);
+      if (!c) continue;
+      const cands = m.cols.filter((x) => x !== c && (x.kind === "integer" || x.kind === "number") && isOrderName(x.source));
+      let order = null;
+      for (const o of cands) {
+        const seen = new Map();
+        let ok = true;
+        for (const r of m.rows) {
+          const k = String(r[c.index] === undefined ? "" : r[c.index]).trim();
+          const val = String(r[o.index] === undefined ? "" : r[o.index]).trim();
+          if (seen.has(k) && seen.get(k) !== val) { ok = false; break; }
+          seen.set(k, val);
+        }
+        if (ok) { order = o; break; }
+        assumptions.push(`Pages: ${m.name}[${o.name}] reads like an order column, but some ${c.name} values carry two different orders in it, so it is not used.`);
+      }
+      if (!order) {
+        assumptions.push(`Pages: the rows of ${m.name}[${c.name}] on page ${page.displayName} are sorted by value, as propose_pages sorts them; ${m.name} has no order column (such as Sort, Order or LineNo) to keep a statement order.`);
+        continue;
+      }
+      c.sortBy = order.name;
+      touched.add(m);
+      delete v.properties["sortSettings.columnName"];
+      v.properties["sortSettings.categorySort"] = 0;
+      assumptions.push(`Pages: the rows of ${m.name}[${c.name}] on page ${page.displayName} follow ${m.name}[${order.name}] (sortByColumn in the model; the table sorts by the model's order, categorySort 0), not value.`);
+    }
+  }
+  return [...touched];
 }
 
 // --- writing --------------------------------------------------------------------------------
@@ -1245,7 +1303,8 @@ function writeProject(args = {}, deps = {}) {
     const lay = layout(m, assumptions);
     const text = tableText(m, lay, stats);
     datatableBytes += Buffer.byteLength(text, "utf8");
-    modelFiles[`${S}/definition/tables/${tableFile(m.name)}.tmdl`] = text;
+    m.fileRel = `${S}/definition/tables/${tableFile(m.name)}.tmdl`;
+    modelFiles[m.fileRel] = text;
     m.lay = lay;
     modelSummary.push({ name: m.name, source: m.file, role: m.rec.role === "fact" ? "fact" : "dimension",
       rows: m.rows.length, columns: lay.dt.length + lay.added.length, measures: m.measures.map((x) => x.name) });
@@ -1275,13 +1334,15 @@ function writeProject(args = {}, deps = {}) {
     spec = { pages: [{ name: "p1", displayName: "Page 1" }] };
     assumptions.push("Pages: one empty page, so the project opens. Pass pages as a write_report spec, or \"propose\".");
   } else if (args.pages === "propose") {
-    const p = proposeSpec(model, fact, metrics, sc, assumptions);
+    const p = proposeSpec(model, fact, metrics, sc, rels, assumptions);
     if (p.error) {
       spec = { pages: [{ name: "p1", displayName: "Page 1" }] };
       assumptions.push(`Pages: none could be proposed, so the report has one empty page. propose_pages said: ${p.error}`);
     } else {
       spec = p.spec;
       rationale = p.rationale;
+      // A sortByColumn changes the category's table file, which is rebuilt before anything is written.
+      for (const m of applyStatementOrder(spec, models, assumptions)) modelFiles[m.fileRel] = tableText(m, m.lay, { lineBreaks: 0 });
     }
   } else {
     spec = args.pages;
