@@ -642,6 +642,178 @@ check("with no order column the value sort is kept and the assumption says why",
   assert.ok(r1.assumptions.some((a) => /sorted by value, as propose_pages sorts them; sales has no order column/.test(a)), r1.assumptions.join(" | "));
 });
 
+// --- order as input -------------------------------------------------------------------------
+
+/** A ledger in miniature: lines in no useful order in the file, each line in one group. */
+const LEDGER_LINES = [["Travel", "Overheads", -30], ["Sales", "Income", 900], ["Interest", "Finance", -12],
+  ["Staff", "Overheads", -240], ["Cost of goods", "Direct cost", -410]];
+const LEDGER_ROWS = [["Date", "Line", "Group", "Scenario", "Amount"],
+  ...[1, 2, 3].flatMap((m) => LEDGER_LINES.flatMap(([l, g, a]) => [[`2025-0${m}-01`, l, g, "Actual", a * m], [`2025-0${m}-01`, l, g, "Budget", a * m + 5]]))];
+const LINE_ORDER = ["Sales", "Cost of goods", "Staff", "Travel", "Interest"];
+const GROUP_ORDER = ["Income", "Direct cost", "Overheads", "Finance"];
+const ledgerSrc = (rows = LEDGER_ROWS) => bed({ "ledger.csv": csv(rows) });
+/** The embedded rows of a written table, each parsed into its cells. */
+function embeddedRows(text) {
+  return text.split("\n").filter((l) => /^\t+\{.*\},?$/.test(l)).map((l) => JSON.parse(`[${l.trim().replace(/,$/, "").slice(1, -1)}]`));
+}
+const tableTree = (files, rel) => T.parseTree(files[rel].toString("utf8"));
+const colNode = (t, name) => t.nodes.find((x) => x.type === "column" && x.name === name);
+
+check("order writes a hidden order column into the embedded rows and sets sortByColumn", () => {
+  const out = target();
+  const r = write({ name: "L", outPath: out, source: { path: ledgerSrc() }, order: [{ column: "Line", values: LINE_ORDER }] });
+  const files = tree(out);
+  const rel = "L.SemanticModel/definition/tables/ledger.tmdl";
+  const t = tableTree(files, rel);
+  assert.strictEqual(T.propValue(colNode(t, "Line"), "sortByColumn"), "'Line Order'");
+  const oc = colNode(t, "Line Order");
+  assert.ok(oc, "no order column");
+  assert.strictEqual(T.propValue(oc, "dataType"), "int64");
+  assert.ok(T.propBool(oc, "isHidden"), "the order column is not hidden");
+  const rows = embeddedRows(files[rel].toString("utf8"));
+  assert.strictEqual(rows.length, LEDGER_ROWS.length - 1);
+  for (const row of rows) assert.strictEqual(row[row.length - 1], LINE_ORDER.indexOf(row[3]) + 1, JSON.stringify(row));
+  const read = tmdl.readModel(out).tables.find((x) => x.name === "ledger");
+  assert.ok(read.columns.some((c) => c.name === "Line Order"));
+  assert.ok(r.validation.readBack.every((x) => x.ok), JSON.stringify(r.validation.readBack));
+  assert.strictEqual(r.validation.findings.length, 0, JSON.stringify(r.validation.findings));
+  assert.ok(r.assumptions.some((a) => /ledger\[Line\] is sorted by ledger\[Line Order\] \(sortByColumn\).*Sales 1, Cost of goods 2, Staff 3, Travel 4, Interest 5\./.test(a)), r.assumptions.join(" | "));
+  assert.ok(!r.next.some((x) => /write the project again into a new, empty folder/.test(x)), "the rerun advice is given although order was passed");
+  // Negative control: the same file with the sort column written as a DAX reference fires the named rule.
+  const bad = path.join(TMP, `neg${++n}`);
+  for (const [k, b] of Object.entries(files)) {
+    const p = path.join(bad, ...k.split("/"));
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, k === rel ? b.toString("utf8").replace("sortByColumn: 'Line Order'", "sortByColumn: 'ledger'[Line Order]") : b);
+  }
+  const v = srv.validateReport({ projectPath: bad });
+  assert.ok(v.findings.some((f) => f.code === "tmdl-column-name-property-not-a-plain-name"), JSON.stringify(v.findings.map((f) => f.code)));
+});
+check("members not listed in order go last in source order, and the assumptions name them", () => {
+  const out = target();
+  const r = write({ name: "L", outPath: out, source: { path: ledgerSrc() }, order: [{ column: "Line", values: ["Sales", "Cost of goods"] }] });
+  const rows = embeddedRows(tree(out)["L.SemanticModel/definition/tables/ledger.tmdl"].toString("utf8"));
+  // Source order of the unlisted lines: Travel, Interest, Staff.
+  const want = { Sales: 1, "Cost of goods": 2, Travel: 3, Interest: 4, Staff: 5 };
+  for (const row of rows) assert.strictEqual(row[row.length - 1], want[row[3]], JSON.stringify(row));
+  assert.ok(r.assumptions.some((a) => /3 member\(s\) of ledger\[Line\] are not listed in order and go last, in the order they first appear in the source: Travel, Interest, Staff\./.test(a)), r.assumptions.join(" | "));
+  assert.strictEqual(r.validation.findings.length, 0, JSON.stringify(r.validation.findings));
+});
+check("order refuses a value that never occurs, a value listed twice and one member listed in two spellings", () => {
+  const src = ledgerSrc();
+  const args = (order) => ({ name: "L", outPath: target(), source: { path: src }, order });
+  refuses(args([{ column: "Line", values: ["Sales", "Rebates"] }]), /lists 'Rebates', which never occurs in ledger\[Line\]\. Members: Travel, Sales, Interest, Staff, Cost of goods\./);
+  refuses(args([{ column: "Line", values: ["Sales", "Staff", "Sales"] }]), /lists 'Sales' twice\. Power BI sorts ledger\[Line\] by one value per member/);
+  refuses(args([{ column: "Line", values: ["Sales", "SALES "] }]), /lists 'Sales' and 'SALES ', which Power BI compares as one member of ledger\[Line\].*cannot take two positions/);
+  refuses(args([{ column: "Line", values: ["Sales"] }, { column: "ledger[Line]", values: ["Staff"] }]), /order names ledger\[Line\] in entries 0 and 1/);
+  refuses(args([{ column: "Amount", values: ["1"] }]), /ledger\[Amount\] is a number column, which sorts by its own value/);
+  refuses(args([{ column: "Account", values: ["Sales"] }]), /order\[0\]\.column 'Account' is not a column of ledger/);
+  refuses(args([{ column: "other[Line]", values: ["Sales"] }]), /names a table that is not loaded/);
+  refuses(args([{ column: "Line", values: [] }]), /non-empty array of the column's members/);
+  refuses(args([{ column: "Line", values: ["Sales"], sort: "asc" }]), /unknown order\[0\] field\(s\): sort/);
+  refuses(args({ column: "Line" }), /order must be a non-empty array/);
+  const n0 = fs.readdirSync(TMP).length;
+  refuses(args([{ column: "Line", values: ["Nope"] }]), /never occurs/);
+  assert.strictEqual(fs.readdirSync(TMP).length, n0, "a refusal wrote something");
+});
+check("a column that exists on two tables needs its table named", () => {
+  const src = bed({
+    "sales.csv": csv([["Date", "RegionKey", "Line", "Scenario", "Amount"], ["2025-01-01", "1", "Sales", "Actual", "10"], ["2025-01-01", "2", "Staff", "Actual", "-4"], ["2025-01-01", "1", "Sales", "Budget", "11"]]),
+    "regions.csv": csv([["RegionKey", "Line"], ["1", "North"], ["2", "South"]]),
+  });
+  refuses({ name: "L", outPath: target(), source: { path: src }, order: [{ column: "Line", values: ["Sales"] }] }, /'Line' is a column of (sales and regions|regions and sales)\. Name the table/);
+  const r = write({ name: "L", outPath: target(), source: { path: src }, order: [{ column: "regions[Line]", values: ["South", "North"] }] });
+  assert.ok(r.assumptions.some((a) => /regions\[Line\] is sorted by regions\[Line Order\]/.test(a)), r.assumptions.join(" | "));
+});
+check("a member spelled two ways in the source takes one position, and the assumption says so", () => {
+  // The fourth data row is the first Budget row of Sales; written here in lower case.
+  const rows = LEDGER_ROWS.map((r, i) => (i === 4 ? [r[0], "sales", r[2], r[3], r[4]] : r));
+  assert.strictEqual(LEDGER_ROWS[4][1], "Sales");
+  const out = target();
+  const r = write({ name: "L", outPath: out, source: { path: ledgerSrc(rows) }, order: [{ column: "Line", values: LINE_ORDER }] });
+  const cells = embeddedRows(tree(out)["L.SemanticModel/definition/tables/ledger.tmdl"].toString("utf8"));
+  assert.ok(cells.filter((c) => c[3].toLowerCase() === "sales").every((c) => c[c.length - 1] === 1));
+  assert.ok(r.assumptions.some((a) => /Sales, sales are one member of ledger\[Line\] to Power BI/.test(a)), r.assumptions.join(" | "));
+});
+check("a group column takes its own order entry, and without one the assumptions say it sorts alphabetically", () => {
+  const out = target();
+  const r = write({ name: "L", outPath: out, source: { path: ledgerSrc() },
+    order: [{ column: "Group", values: GROUP_ORDER }, { column: "Line", values: LINE_ORDER }] });
+  const files = tree(out);
+  const rel = "L.SemanticModel/definition/tables/ledger.tmdl";
+  const t = tableTree(files, rel);
+  assert.strictEqual(T.propValue(colNode(t, "Group"), "sortByColumn"), "'Group Order'");
+  assert.strictEqual(T.propValue(colNode(t, "Line"), "sortByColumn"), "'Line Order'");
+  const decl = files[rel].toString("utf8").split("\n").find((l) => l.includes("\"Group Order\", INTEGER"));
+  assert.ok(decl && decl.indexOf("\"Group Order\"") < decl.indexOf("\"Line Order\""), "the order columns are not in the order entries' order");
+  for (const row of embeddedRows(files[rel].toString("utf8"))) {
+    assert.strictEqual(row[row.length - 2], GROUP_ORDER.indexOf(row[4]) + 1, JSON.stringify(row));
+    assert.strictEqual(row[row.length - 1], LINE_ORDER.indexOf(row[3]) + 1, JSON.stringify(row));
+  }
+  assert.ok(!r.assumptions.some((a) => /keeps the model's default order, alphabetical/.test(a)), r.assumptions.join(" | "));
+  assert.strictEqual(r.validation.findings.length, 0, JSON.stringify(r.validation.findings));
+  const r2 = write({ name: "L", outPath: target(), source: { path: ledgerSrc() }, order: [{ column: "Line", values: LINE_ORDER }] });
+  assert.ok(r2.assumptions.some((a) => a.includes("each Line belongs to one Group. A two-level category (Group, then Line) sorts each level by its own sortByColumn, "
+    + "so Group keeps the model's default order, alphabetical, unless order has an entry for it too, for example "
+    + JSON.stringify({ column: "Group", values: GROUP_ORDER }))), r2.assumptions.join(" | "));
+});
+check("a two-level statement table (group, then line) over both orders validates clean", () => {
+  const out = target();
+  const ref = (p) => ({ entity: "ledger", property: p, kind: "Measure" });
+  const r = write({ name: "L", outPath: out, source: { path: ledgerSrc() },
+    order: [{ column: "Group", values: GROUP_ORDER }, { column: "Line", values: LINE_ORDER }],
+    pages: { pages: [{ name: "pl", displayName: "P&L", visuals: [{ name: "statement", visualType: "ZebraBITablesPlus3E6085701D7B426980C3859B16327993",
+      position: { x: 16, y: 16, z: 1000, width: 1000, height: 600, tabOrder: 1000 },
+      bindings: { Category: [{ entity: "ledger", property: "Group", kind: "Column" }, { entity: "ledger", property: "Line", kind: "Column" }],
+        Values: [ref("Amount AC")], Plan: [ref("Amount PL")] },
+      properties: { "sortSettings.categorySort": 0, "sortSettings.chartSort": 0 } }] }] } });
+  assert.strictEqual(r.validation.findings.length, 0, JSON.stringify(r.validation.findings));
+  assert.ok(!(r.warnings || []).some((w) => /no sortSettings/.test(w)), JSON.stringify(r.warnings));
+});
+check("proposed pages sort an ordered column by its order, not by value", () => {
+  const out = target();
+  const r = write({ name: "L", outPath: out, source: { path: ledgerSrc() }, order: [{ column: "Line", values: LINE_ORDER }], pages: "propose" });
+  const vis = Object.entries(tree(out)).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8"))).filter((x) => x.visual.visualType !== "slicer");
+  const onLine = vis.find((x) => x.visual.query.queryState.Category.projections[0].field.Column.Property === "Line");
+  assert.ok(onLine, "no page by Line");
+  const s = onLine.visual.objects.sortSettings[0].properties;
+  assert.strictEqual(s.categorySort.expr.Literal.Value, "0D");
+  assert.strictEqual(s.chartSort.expr.Literal.Value, "0D");
+  assert.ok(!("columnName" in s), "still sorted by a value column");
+  assert.ok(r.assumptions.some((a) => /rows of ledger\[Line\] on page Line follow the order passed in order \(ledger\[Line Order\], sortByColumn/.test(a)), r.assumptions.join(" | "));
+  assert.ok(!vis.some((x) => x.visual.query.queryState.Category.projections.some((p) => /Order$/.test(p.field.Column.Property))), "a page is cut by the order column");
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+});
+check("an explicit order wins over the source's own order column, and the result says so", () => {
+  const out = target();
+  const reversed = ["Tax", "Opex", "Cost of sales", "Revenue"];
+  const r = write({ name: "PL", outPath: out, source: { path: bed({ "pl.csv": csv(PL_ROWS) }) }, order: [{ column: "Line", values: reversed }], pages: "propose" });
+  const t = tableTree(tree(out), "PL.SemanticModel/definition/tables/pl.tmdl");
+  assert.strictEqual(T.propValue(colNode(t, "Line"), "sortByColumn"), "'Line Order'");
+  assert.ok(r.assumptions.some((a) => /pl\[LineNo\] reads like an order column; pl\[Line\] follows the order passed in order instead\./.test(a)), r.assumptions.join(" | "));
+  assert.ok(!r.assumptions.some((a) => /follow pl\[LineNo\]/.test(a)), r.assumptions.join(" | "));
+});
+check("the same arguments with order write byte-identical projects", () => {
+  const args = (outPath) => ({ name: "L", outPath, source: { path: ledgerSrc() },
+    order: [{ column: "Group", values: GROUP_ORDER }, { column: "Line", values: LINE_ORDER }], pages: "propose" });
+  const a = target(), b = target();
+  write(args(a));
+  write(args(b));
+  const ta = tree(a), tb = tree(b);
+  assert.deepStrictEqual(Object.keys(ta).sort(), Object.keys(tb).sort());
+  for (const k of Object.keys(ta)) assert.ok(ta[k].equals(tb[k]), `${k} differs between two runs`);
+});
+check("without order the result says to write the project again with order for a statement", () => {
+  const r = write({ name: "L", outPath: target(), source: { path: ledgerSrc() } });
+  assert.ok(r.next.some((x) => /write the project again into a new, empty folder with order/.test(x) && /circular dependency/.test(x)), r.next.join(" | "));
+});
+check("the server schema lists order with column and values", () => {
+  const o = srv.CALLABLE.write_project.schema.properties.order;
+  assert.ok(o && o.type === "array");
+  assert.deepStrictEqual(o.items.required, ["column", "values"]);
+  assert.ok(/statement/.test(srv.CALLABLE.write_project.description));
+});
+
 // --- the fiscal year ------------------------------------------------------------------------
 
 check("a fiscal start month adds Fiscal Year and Fiscal Period to the calendar", () => {

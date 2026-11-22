@@ -848,7 +848,11 @@ const PROJECT_WRITER = {
       + "too long for Windows, or more than 300,000 cells or 2 MB of embedded rows. The result lists "
       + "the files written with their sizes, the model's tables, measures and relationships, every "
       + "assumption made (one line each), and validate_report's findings on the written project; it "
-      + "never returns the data. The project has not been rendered: open it in Power BI Desktop, "
+      + "never returns the data. For a statement (a P&L, a cash flow) pass order with the members of "
+      + "the line column, and of its group column, in statement order: the tool writes each order as "
+      + "a hidden column in the embedded rows and sets sortByColumn, so add no order or calculated "
+      + "column afterwards; for a project already written, write it again into a new folder with "
+      + "order. The project has not been rendered: open it in Power BI Desktop, "
       + "refresh and save before handing it over.",
     schema: {
       type: "object",
@@ -906,6 +910,16 @@ const PROJECT_WRITER = {
           numerator: { type: "string", description: "Ratio: the metric divided ..." },
           denominator: { type: "string", description: "... by this metric, per scenario, with DIVIDE." },
         } } },
+        order: { type: "array", description: "Optional. The order of a text column's members, for the "
+          + "rows of a statement. Each entry adds a hidden whole-number column '<column> Order' to that "
+          + "column's table, inside the embedded rows, and makes it the column's sortByColumn; members "
+          + "not listed go last in source order. Give a group column (Account group above Account) its "
+          + "own entry: each level of a two-level category sorts by its own column. Refused when a "
+          + "listed value never occurs or one member is listed twice. Proposed pages sort such a "
+          + "column by this order, not by value.", items: { type: "object", properties: {
+          column: { type: "string", description: "'Column' or 'Table[Column]'." },
+          values: { type: "array", items: { type: "string" }, description: "The members, first row first." },
+        }, required: ["column", "values"] } },
         pages: { description: "A write_report spec ({pages: [...]}) whose bindings must resolve in the "
           + "written model; or \"propose\", which runs profile_project and propose_pages on the model "
           + "just written; or omitted, for one empty page so the project opens." },

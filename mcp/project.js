@@ -97,7 +97,8 @@ const KEY_WORDS = new Set(["key", "id", "code", "no", "nr", "number"]);
 const keyish = (s) => { const w = words(s); return w.length > 0 && KEY_WORDS.has(w[w.length - 1]); };
 const AMOUNT_HINT = /amount|value|sales|revenue|cost|expense|qty|quantity|units|count|total|net|gross|profit|generation|volume|spend|income|balance|budget|actual|forecast/i;
 
-const INPUT_KEYS = new Set(["name", "outPath", "source", "tables", "date", "scenarios", "metrics", "pages"]);
+const INPUT_KEYS = new Set(["name", "outPath", "source", "tables", "date", "scenarios", "metrics", "order", "pages"]);
+const ORDER_KEYS = new Set(["column", "values"]);
 const TABLE_KEYS = new Set(["source", "name", "role", "types", "hidden", "columns"]);
 const SCENARIO_KEYS = new Set(["form", "column", "members", "columns", "py"]);
 const METRIC_KEYS = new Set(["name", "column", "columns", "agg", "format", "numerator", "denominator"]);
@@ -485,6 +486,11 @@ function datatableText(mt, lay, stats) {
   for (const r of mt.rows) {
     const cells = [];
     for (const d of lay.dt) {
+      if (d.col.orderOf) {
+        // An order column: the position of this row's member, a constant looked up per row.
+        cells.push(String(d.col.orderOf.positions.get(orderKey(r[d.col.orderOf.index]))));
+        continue;
+      }
       const raw = (r[d.col.index] === undefined ? "" : String(r[d.col.index])).trim();
       const blank = isBlank(raw);
       if (d.part !== undefined) {
@@ -1193,7 +1199,16 @@ function applyStatementOrder(spec, models, assumptions) {
       const m = models.find((x) => x.name === cat.entity);
       const c = m && m.cols.find((x) => x.name === cat.property);
       if (!c) continue;
-      const cands = m.cols.filter((x) => x !== c && (x.kind === "integer" || x.kind === "number") && isOrderName(x.source));
+      if (c.explicitOrder) {
+        // The order passed in `order` is already the category's sortByColumn; the page sorts by it.
+        touched.add(m);
+        delete v.properties["sortSettings.columnName"];
+        v.properties["sortSettings.categorySort"] = 0;
+        v.properties["sortSettings.chartSort"] = 0;
+        assumptions.push(`Pages: the rows of ${m.name}[${c.name}] on page ${page.displayName} follow the order passed in order (${m.name}[${c.explicitOrder.name}], sortByColumn in the model; the table sorts by the model's order, categorySort and chartSort 0), not value.`);
+        continue;
+      }
+      const cands = m.cols.filter((x) => x !== c && !x.generated && (x.kind === "integer" || x.kind === "number") && isOrderName(x.source));
       let order = null;
       for (const o of cands) {
         const seen = new Map();
@@ -1215,10 +1230,140 @@ function applyStatementOrder(spec, models, assumptions) {
       touched.add(m);
       delete v.properties["sortSettings.columnName"];
       v.properties["sortSettings.categorySort"] = 0;
-      assumptions.push(`Pages: the rows of ${m.name}[${c.name}] on page ${page.displayName} follow ${m.name}[${order.name}] (sortByColumn in the model; the table sorts by the model's order, categorySort 0), not value.`);
+      v.properties["sortSettings.chartSort"] = 0;
+      assumptions.push(`Pages: the rows of ${m.name}[${c.name}] on page ${page.displayName} follow ${m.name}[${order.name}] (sortByColumn in the model; the table sorts by the model's order, categorySort and chartSort 0), not value.`);
     }
   }
   return [...touched];
+}
+
+/** A cell as a member of its column, the way Power BI compares text: trimmed, without case; a blank is "". */
+function orderKey(v) {
+  const raw = String(v === undefined || v === null ? "" : v).trim();
+  return isBlank(raw) ? "" : memberKey(raw);
+}
+
+/**
+ * The `order` input: for each named text column, the position of every member, checked before
+ * anything is built. Power BI sorts a column by another only when each member has exactly one sort
+ * value, so a listed value that never occurs, a value listed twice, and two listed values that
+ * Power BI compares as one member (they differ only in case or surrounding spaces) are refused.
+ * Members not listed take the positions after the listed ones, in the order they first appear in
+ * the source.
+ */
+function resolveOrders(input, models) {
+  if (input === undefined) return [];
+  need(Array.isArray(input) && input.length, "order must be a non-empty array: [{\"column\": \"<column>\", "
+    + "\"values\": [\"<first member>\", \"<second member>\", ...]}], one entry per column whose rows keep a fixed order.");
+  const out = [];
+  for (const [i, o] of input.entries()) {
+    need(o && typeof o === "object" && !Array.isArray(o), `order[${i}] must be an object: {column, values}.`);
+    knownKeys(o, ORDER_KEYS, `order[${i}]`);
+    need(typeof o.column === "string" && o.column.trim(), `order[${i}].column is required: 'Column' or 'Table[Column]'.`);
+    need(Array.isArray(o.values) && o.values.length && o.values.every((v) => typeof v === "string"),
+      `order[${i}].values must be a non-empty array of the column's members, as text, in the order the rows take.`);
+    const ref = o.column.trim();
+    const mm = /^(.+)\[(.+)\]$/.exec(ref);
+    const tname = mm ? mm[1].replace(/^'|'$/g, "").replace(/''/g, "'").toLowerCase() : null;
+    const cname = (mm ? mm[2] : ref).toLowerCase();
+    const pool = tname ? models.filter((x) => x.stem.toLowerCase() === tname || x.name.toLowerCase() === tname) : models;
+    need(pool.length, `order[${i}].column '${ref}' names a table that is not loaded. Tables: ${models.map((x) => x.name).join(", ")}.`);
+    const hits = pool.flatMap((x) => {
+      const c = x.cols.find((y) => y.source.toLowerCase() === cname) || x.cols.find((y) => y.name.toLowerCase() === cname);
+      return c ? [{ mt: x, c }] : [];
+    });
+    need(hits.length, `order[${i}].column '${ref}' is not a column of ${pool.length === 1 ? pool[0].name : "any loaded table"}. `
+      + `Columns: ${pool.map((x) => `${x.name}: ${x.cols.map((y) => y.source).join(", ")}`).join("; ")}.`);
+    need(hits.length === 1, `order[${i}].column '${ref}' is a column of ${hits.map((h) => h.mt.name).join(" and ")}. `
+      + `Name the table, for example '${hits[0].mt.name}[${hits[0].c.source}]'.`);
+    const { mt, c } = hits[0];
+    need(c.kind === "text", `order[${i}]: ${mt.name}[${c.name}] is a ${c.kind === "date" ? "date" : "number"} column, which sorts by its own value. `
+      + "An order applies to a text column, such as the account or line of a statement.");
+    const twice = out.find((x) => x.c === c);
+    need(!twice, `order names ${mt.name}[${c.name}] in entries ${twice && twice.at} and ${i}. Give each column one order.`);
+    // The members as Power BI compares them, in the order they first appear in the source.
+    const members = new Map();
+    for (const r of mt.rows) {
+      const raw = String(r[c.index] === undefined ? "" : r[c.index]).trim();
+      const k = orderKey(raw);
+      if (!members.has(k)) members.set(k, { shown: isBlank(raw) ? "(blank)" : raw, variants: new Set() });
+      if (!isBlank(raw)) members.get(k).variants.add(raw);
+    }
+    const positions = new Map();
+    const listedAs = new Map();
+    o.values.forEach((v, j) => {
+      const k = orderKey(v);
+      const prev = listedAs.get(k);
+      need(prev === undefined, prev === v
+        ? `order[${i}].values lists '${v}' twice. Power BI sorts ${mt.name}[${c.name}] by one value per member, so each member takes one position: list it once.`
+        : `order[${i}].values lists '${prev}' and '${v}', which Power BI compares as one member of ${mt.name}[${c.name}] (text is compared without case or surrounding spaces). `
+          + "Power BI sorts a column by one value per member, so that member cannot take two positions: list it once.");
+      need(members.has(k), `order[${i}].values lists '${v}', which never occurs in ${mt.name}[${c.name}]. `
+        + `Members: ${[...members.values()].map((x) => x.shown).slice(0, 40).join(", ")}.`);
+      listedAs.set(k, v);
+      positions.set(k, j + 1);
+    });
+    const unlisted = [...members.entries()].filter(([k]) => !positions.has(k));
+    unlisted.forEach(([k], j) => positions.set(k, o.values.length + j + 1));
+    out.push({ at: i, mt, c, positions, values: o.values, members, unlisted: unlisted.map(([, x]) => x.shown) });
+  }
+  return out;
+}
+
+/**
+ * Adds each resolved order as a hidden whole-number column of the same table, written into the
+ * embedded rows, and makes it the category's sortByColumn. Called after the metrics, measures and
+ * relationships are settled, so the new column is never read as an amount, a key or a scenario.
+ */
+function attachOrders(orders, assumptions) {
+  const say = (list) => (list.length > 30 ? `${list.slice(0, 30).join(", ")}, ...` : list.join(", "));
+  for (const o of orders) {
+    const { mt, c } = o;
+    for (const x of mt.measures) mt.taken.add(x.name.toLowerCase());
+    const name = uniqueName(`${c.name} Order`, mt.taken);
+    const col = { source: name, index: -1, name, kind: "integer", blanks: 0, hidden: true, generated: true,
+      orderOf: { index: c.index, positions: o.positions } };
+    mt.cols.push(col);
+    c.sortBy = name;
+    c.explicitOrder = col;
+    assumptions.push(`Order: ${mt.name}[${c.name}] is sorted by ${mt.name}[${name}] (sortByColumn), a hidden whole-number column `
+      + `written into the embedded rows: ${say(o.values.map((v, j) => `${v} ${j + 1}`))}.`);
+    if (o.unlisted.length) {
+      assumptions.push(`Order: ${o.unlisted.length} member(s) of ${mt.name}[${c.name}] are not listed in order and go last, in the order they first `
+        + `appear in the source: ${say(o.unlisted)}.`);
+    }
+    for (const [, x] of o.members) {
+      if (x.variants.size > 1) assumptions.push(`Order: ${[...x.variants].join(", ")} are one member of ${mt.name}[${c.name}] to Power BI, which compares text without case, so they take one position.`);
+    }
+    const detected = mt.cols.filter((x) => x !== c && !x.generated && (x.kind === "integer" || x.kind === "number") && isOrderName(x.source));
+    if (detected.length) {
+      assumptions.push(`Order: ${detected.map((x) => `${mt.name}[${x.name}]`).join(", ")} ${detected.length > 1 ? "read" : "reads"} like an order column; `
+        + `${mt.name}[${c.name}] follows the order passed in order instead.`);
+    }
+    // A column that groups this one (each member in one group) is the outer level of a two-level
+    // category such as group then account, and sorts by its own sortByColumn, not by this one.
+    for (const g of mt.cols) {
+      if (g === c || g.generated || g.kind !== "text" || orders.some((x) => x.c === g)) continue;
+      const groupOf = new Map();
+      let nested = true;
+      for (const r of mt.rows) {
+        const k = orderKey(r[c.index]);
+        const gv = String(r[g.index] === undefined ? "" : r[g.index]).trim();
+        if (groupOf.has(k) && orderKey(groupOf.get(k)) !== orderKey(gv)) { nested = false; break; }
+        if (!groupOf.has(k)) groupOf.set(k, gv);
+      }
+      const groups = new Set([...groupOf.values()].map(orderKey));
+      if (!nested || groups.size < 2 || groups.size >= groupOf.size) continue;
+      const suggested = [];
+      for (const k of [...groupOf.keys()].sort((a, b) => o.positions.get(a) - o.positions.get(b))) {
+        const gv = groupOf.get(k);
+        if (!suggested.some((s) => orderKey(s) === orderKey(gv))) suggested.push(gv);
+      }
+      assumptions.push(`Order: each ${c.name} belongs to one ${g.name}. A two-level category (${g.name}, then ${c.name}) sorts each level by its own `
+        + `sortByColumn, so ${g.name} keeps the model's default order, alphabetical, unless order has an entry for it too, for example `
+        + `${JSON.stringify({ column: g.source, values: suggested })}.`);
+    }
+  }
 }
 
 // --- writing --------------------------------------------------------------------------------
@@ -1280,7 +1425,7 @@ function checkFileNames(files) {
 
 /** Refuses a model above the cell ceiling. `dates` per table: date columns, written as three cells. */
 function checkCells(list) {
-  const cells = list.reduce((s, { t, dates }) => s + t.rows.length * (t.header.length + 2 * dates), 0);
+  const cells = list.reduce((s, { t, dates, extra = 0 }) => s + t.rows.length * (t.header.length + 2 * dates + extra), 0);
   need(cells <= LIMITS.cells, `The tables hold ${cells} cells as embedded rows, above the ${LIMITS.cells}-cell `
     + "ceiling for a model that opens reliably. Pass a keep-list of the columns you need (tables: "
     + "[{source, columns: [...]}]), skip tables you do not need (role: \"skip\"), or pre-aggregate the "
@@ -1436,6 +1581,8 @@ function writeProject(args = {}, deps = {}) {
     models.push(modelTable(t, n, assumptions));
   }
   for (const m of models) m.rec = src.tables.find((t) => t.stem === m.stem).rec;
+  // The order input is checked here, against the loaded tables, so a refusal writes nothing.
+  const orders = resolveOrders(args.order, models);
 
   // The fact the measures live on.
   let dateRef = args.date && args.date.column;
@@ -1524,6 +1671,11 @@ function writeProject(args = {}, deps = {}) {
     assumptions.push("PY measures read the same days one year earlier: each date of the prior year counts in its date one year later (the Calendar's Next year date column, TREATAS, with the calendar filter removed), and 29 February counts in 28 February. A period that stops mid-month is compared with the same days a year earlier, and the months of previous year add up to its year.");
   }
   const rels = buildRelationships(models, joins, fact, dateInfo, assumptions);
+  if (orders.length) {
+    attachOrders(orders, assumptions);
+    checkCells(kept.map((t) => ({ t, dates: t.rec.columns.filter((c) => c.type === "date").length,
+      extra: orders.filter((o) => o.mt.stem === t.stem).length })));
+  }
 
   // Column and cell encodings the reader must know.
   const stats = { lineBreaks: 0 };
@@ -1702,6 +1854,10 @@ function writeProject(args = {}, deps = {}) {
       `This project has not been rendered. Open ${name}.pbip in Power BI Desktop, refresh, and look at every page before you hand it over.`,
       "A changed model opens empty until refreshed and saved: after any change to the model, refresh in Power BI Desktop and save before the project is opened again or handed over.",
       ...(sev("wont-open") || sev("blank") ? ["Fix every wont-open and blank finding in validation before opening the project."] : []),
+      ...(orders.length ? [] : ["If the rows of a statement (a P&L, a cash flow) must keep a fixed order, write the project again into a new, empty folder "
+        + "with order; this tool never edits a project it wrote, so measures added since with write_measures and any hand edits are "
+        + "not carried over and must be added again. Do not add an order column by hand: a calculated order column that reads the "
+        + "column it sorts is refused by Power BI as a circular dependency."]),
     ],
   };
 }
