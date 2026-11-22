@@ -187,8 +187,7 @@ function readDelimited(file, notes) {
     rows.push(r);
   }
   if (padded) notes.push(`${path.basename(file)}: ${padded} row(s) had fewer fields than the header; the missing trailing fields were read as blank.`);
-  if (headerless) notes.push(`${path.basename(file)} has no header row, so its columns are named col1..col${header.length}.`);
-  return { header, rows, delimiter };
+  return { header, rows, delimiter, headerless };
 }
 
 function readSource(root, overrides) {
@@ -196,18 +195,25 @@ function readSource(root, overrides) {
     + "folder of flat files (CSV, TSV, pipe or semicolon text, or JSON arrays) or to one file.");
   need(path.isAbsolute(root), `source.path must be absolute, not '${root}'.`);
   need(fs.existsSync(root), `source.path ${root} does not exist.`);
+  const isFolder = fs.statSync(root).isDirectory();
   const files = ps.listFiles(root);
   need(files.length, `no .csv, .txt, .tsv, .psv or .json file was found under ${root}.`);
   const notes = [];
   const tables = [];
+  // Every file that is not loaded, with the reason. Nothing is left out in silence.
   const skipped = [];
+  const skip = (file, reason) => skipped.push({ file: path.basename(file), reason });
   for (const file of files) {
     const ext = path.extname(file).toLowerCase();
     const stem = path.basename(file, ext);
     const ov = overrides.find((o) => sameSource(o.source, file));
-    if (ov && ov.role === "skip") { skipped.push(path.basename(file)); continue; }
+    if (ov && ov.role === "skip") { skip(file, "skipped as asked (role: skip)"); continue; }
+    // A file the caller named, or the one file source.path points at, must load or refuse; any other
+    // file in a folder that cannot be read as a table is skipped with the reason.
+    const required = Boolean(ov) || !isFolder;
     if (/^\.(xlsx|xls|xlsb|parquet|pbix|accdb)$/.test(ext)) {
-      notes.push(`${path.basename(file)} is a binary file and was not read. Export it to CSV to include it.`);
+      need(!required, `${path.basename(file)} is a binary file; export it to CSV.`);
+      skip(file, "a binary file; export it to CSV to include it");
       continue;
     }
     const size = fs.statSync(file).size;
@@ -218,20 +224,29 @@ function readSource(root, overrides) {
     let t;
     if (ext === ".json") {
       t = ps.readJsonTable(file);
-      if (t.unreadable) { notes.push(`${path.basename(file)} was not read: ${t.unreadable}.`); continue; }
+      if (t.unreadable) {
+        need(!required, `${path.basename(file)} was not read: ${t.unreadable}.`);
+        skip(file, `not a table: ${t.unreadable}`);
+        continue;
+      }
     } else {
-      t = readDelimited(file, notes);
+      try { t = readDelimited(file, notes); } catch (e) {
+        if (required) throw e;
+        skip(file, `not readable as a table: ${e.message}`);
+        continue;
+      }
     }
-    if (!t.rows.length) { notes.push(`${path.basename(file)} has no data rows and was left out.`); continue; }
-    tables.push({ file: path.basename(file), stem, header: t.header, rows: t.rows, override: ov || null });
+    if (!t.rows.length) { skip(file, "no data rows"); continue; }
+    tables.push({ file: path.basename(file), stem, header: t.header, rows: t.rows, override: ov || null,
+      headerless: Boolean(t.headerless), required });
   }
   for (const o of overrides) {
     const hit = files.some((f) => sameSource(o.source, f));
     need(hit, `tables: no source file matches '${o.source}'. Files read: `
       + files.map((f) => path.basename(f)).join(", "));
   }
-  need(tables.length, `nothing readable was found under ${root}.${notes.length ? ` ${notes.join(" ")}` : ""}`);
-  return { tables, notes, skipped };
+  need(tables.length, `nothing readable was found under ${root}.${skipped.length ? ` ${skipped.map((s) => `${s.file}: ${s.reason}`).join("; ")}` : ""}`);
+  return { tables, notes, skipped, isFolder };
 }
 
 function sameSource(name, file) {
@@ -1164,11 +1179,37 @@ function writeProject(args = {}, deps = {}) {
     t.rec = rec;
   }
 
+  // From a folder, a file becomes a table only when it is plausibly data: it reads as a fact, has a
+  // date or an amount column, or joins another file in the folder. A headerless file with one column
+  // never is. A file the caller names in `tables` is always loaded.
+  if (src.isFolder) {
+    const joins0 = ps.joinSignals(src.tables.map((t) => t.rec));
+    for (const t of src.tables) {
+      if (t.required) continue;
+      const r = t.rec;
+      const hasDate = r.columns.some((c) => c.type === "date");
+      const hasAmount = r.columns.some((c) => (c.type === "integer" || c.type === "number") && !keyish(c.name));
+      const joined = joins0.some((j) => j.fromTable === r.table || j.toTable === r.table);
+      let reason = null;
+      if (t.headerless && t.header.length === 1) reason = "one column and no header row, so not a table of data";
+      else if (r.role === "date") reason = null;                       // set aside below, with its own note
+      else if (r.role === "fact" || hasDate || hasAmount || joined) reason = null;
+      else reason = `reads as ${r.role === "unknown" ? "neither a fact nor a dimension" : `a ${r.role} table`}, joins no other file, and has no date or amount column`;
+      if (reason) { t.notData = true; src.skipped.push({ file: t.file, reason: `${reason}; name it in tables to load it` }); }
+    }
+    src.tables = src.tables.filter((t) => !t.notData);
+    need(src.tables.length, `no file under ${args.source.path} reads as data: ${src.skipped.map((s) => `${s.file}: ${s.reason}`).join("; ")}.`);
+  }
+  for (const t of src.tables) {
+    if (t.headerless) src.notes.push(`${t.file} has no header row, so its columns are named col1..col${t.header.length}.`);
+  }
+
   // Calendar-like source tables are set aside by default: the model's own Calendar replaces them.
   for (const t of src.tables) {
     if (t.rec.role === "date") {
       t.dropped = true;
       assumptions.push(`${t.file} reads as a date table and is left out: the model's Calendar replaces it. Pass tables: [{source: "${t.stem}", role: "dimension"}] to keep it.`);
+      src.skipped.push({ file: t.file, reason: "a date table; the model's Calendar replaces it. Pass it with role: \"dimension\" to keep it" });
     }
   }
   const kept = src.tables.filter((t) => !t.dropped);
@@ -1412,7 +1453,10 @@ function writeProject(args = {}, deps = {}) {
       measures: fact.measures.map((m) => `${fact.name}[${m.name}]`),
       relationships: rels.map((r) => `${r.fromTable}[${r.fromColumn}] -> ${r.toTable}[${r.toColumn}]${r.active ? "" : " (inactive)"}`),
     },
-    assumptions: [...src.notes, ...(src.skipped.length ? [`Skipped as asked: ${src.skipped.join(", ")}.`] : []), ...assumptions],
+    assumptions: [`Loaded as tables: ${models.map((m) => (m.name === m.stem ? m.file : `${m.file} as ${m.name}`)).join(", ")}.`,
+      ...(src.skipped.length ? [`Not loaded: ${src.skipped.map((s) => s.file).join(", ")} (reasons under skipped).`] : []),
+      ...src.notes, ...assumptions],
+    skipped: src.skipped,
     ...(rationale ? { pageRationale: rationale } : {}),
     ...(rep.warnings ? { warnings: rep.warnings } : {}),
     validation: {

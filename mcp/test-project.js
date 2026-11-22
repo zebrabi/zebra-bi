@@ -536,7 +536,8 @@ check("reserved, dotted, spaced, duplicate and colliding names are made safe and
       ["2025-01-01", "a", "b", "c", "Actual", 1, 7], ["2025-02-01", "a", "b", "c", "Budget", 2, 8]]),
     "Measures.csv": csv([["Code", "Label"], ["x1", "One"], ["x2", "Two"]]),
     "sub/kpi.csv": csv([["Code", "Label"], ["y1", "One"], ["y2", "Two"]]),
-  }) }, metrics: [{ name: "Amount", column: "Amount" }] });
+  }) }, metrics: [{ name: "Amount", column: "Amount" }],
+    tables: [{ source: "Measures" }, { source: "kpi" }] });
   const names = r.model.tables.map((t) => t.name);
   assert.ok(names.includes("KPI Data") && names.includes("kpi Data 2") && names.includes("Measures Data"), names.join(", "));
   assert.ok(!r.model.tables.filter((t) => t.source).some((t) => /^(kpi|measures|calendar)$/i.test(t.name)));
@@ -712,7 +713,39 @@ check("a keep-list brings a table under the ceiling, and skip leaves a file out"
   const r = write({ name: "Kept", outPath: target(), source: { path: bed({ "big.csv": head + line.repeat(26000), "other.csv": "X,Y\n1,2\n" }) },
     scenarios: { form: "none" }, tables: [{ source: "big", columns: ["Date", "A", "Amount"] }, { source: "other.csv", role: "skip" }] });
   assert.deepStrictEqual(r.model.tables.map((t) => [t.name, t.rows]), [["big", 26000], ["Calendar", null]]);
-  assert.ok(r.assumptions.some((a) => /Skipped as asked: other\.csv/.test(a)));
+  assert.deepStrictEqual(r.skipped, [{ file: "other.csv", reason: "skipped as asked (role: skip)" }]);
+});
+
+// --- a working folder with more than data in it ----------------------------------------------
+
+const WORKDIR = {
+  "sales.csv": csv([["Date", "RegionKey", "Scenario", "Amount"], ["2025-01-01", 1, "Actual", 10], ["2025-01-01", 2, "Budget", 12], ["2025-02-01", 2, "Actual", 20]]),
+  "regions.csv": csv([["RegionKey", "Region Name"], [1, "North"], [2, "South"]]),
+  "start.txt": "1795344658\n",
+  "README.txt": "These files are the October export.\nAsk the finance team before changing them, please, because the totals are reconciled.\nNotes, drafts and logs live here too.\n",
+  "settings.json": JSON.stringify({ owner: "someone", refreshed: true }),
+  "notes.csv": "Item,Comment\nfirst,checked\nsecond,pending\n",
+};
+check("from a folder, only files that read as data become tables; the rest are listed with a reason", () => {
+  const r = write({ name: "Work", outPath: target(), source: { path: bed(WORKDIR) } });
+  assert.deepStrictEqual(r.model.tables.map((t) => t.name).sort(), ["Calendar", "regions", "sales"]);
+  const why = Object.fromEntries(r.skipped.map((s) => [s.file, s.reason]));
+  assert.deepStrictEqual(Object.keys(why).sort(), ["README.txt", "notes.csv", "settings.json", "start.txt"]);
+  assert.ok(/one column and no header row/.test(why["start.txt"]), why["start.txt"]);
+  assert.ok(/not readable as a table/.test(why["README.txt"]), why["README.txt"]);
+  assert.ok(/joins no other file, and has no date or amount column; name it in tables to load it/.test(why["notes.csv"]), why["notes.csv"]);
+  assert.ok(/not a table/.test(why["settings.json"]), why["settings.json"]);
+  assert.ok(r.assumptions[0] === "Loaded as tables: regions.csv, sales.csv.", r.assumptions[0]);
+  assert.ok(r.assumptions.some((a) => /^Not loaded: README\.txt, settings\.json, notes\.csv, start\.txt \(reasons under skipped\)\.$/.test(a)), r.assumptions.join(" | "));
+  assert.ok(r.model.relationships.some((x) => /sales\[RegionKey\] -> regions\[RegionKey\]/.test(x)), "the joined file did not load or relate");
+});
+check("a file named in tables is always loaded, and a single file as source.path always loads", () => {
+  const r = write({ name: "Work", outPath: target(), source: { path: bed(WORKDIR) }, tables: [{ source: "start.txt" }] });
+  assert.ok(r.model.tables.some((t) => t.name === "start"), "a named file was not loaded");
+  assert.ok(!r.skipped.some((s) => s.file === "start.txt"));
+  const dir = bed({ "one.csv": csv([["Code", "Label"], ["a", "A"], ["b", "B"]]) });
+  refuses({ name: "One", outPath: target(), source: { path: path.join(dir, "one.csv") } }, /No table reads as a fact table/);
+  refuses({ name: "Work", outPath: target(), source: { path: bed(WORKDIR) }, tables: [{ source: "settings.json" }] }, /settings\.json was not read/);
 });
 
 // --- the server -----------------------------------------------------------------------------
