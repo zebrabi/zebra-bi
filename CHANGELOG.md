@@ -102,8 +102,8 @@ though they shipped would misrepresent what anyone could have installed.
   relationship, a path over 240 characters, and models above 300,000 cells or 2 MB of embedded
   rows, each with the column or the way out named. Every other choice it makes is returned as a
   one-line assumption, and it runs `validate_report` and `profile_project` over what it wrote.
-- `SECURITY.md`, `README.md` and the tool descriptions say that `write_project` is the one tool
-  that writes to disk.
+- `SECURITY.md`, `README.md` and the tool descriptions say which two tools write to disk,
+  `write_project` and `write_measures`, and what each may write.
 - `propose_pages` binds a measure whose DAX quotes its table (`SUM ( 'Sales'[Amount] )`); before,
   such a measure left every ranked question unbindable.
 - The Microsoft 365 Copilot package names `write_project` as the way to create the project and

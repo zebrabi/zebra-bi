@@ -821,7 +821,7 @@ const WRITERS = {
 };
 
 // --- the project writer -----------------------------------------------------------------------
-// The one tool that writes to disk. It creates a new project in a folder that does not exist or is
+// One of the two tools that write to disk (write_measures is the other). It creates a new project in a folder that does not exist or is
 // empty, never overwrites or deletes a file, and returns the list of files it wrote rather than
 // their content. It validates what it wrote with the same validateReport and resolveProject as
 // validate_report, so the two cannot disagree.
