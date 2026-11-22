@@ -22,6 +22,10 @@ though they shipped would misrepresent what anyone could have installed.
   seen to draw its own automatic title instead of the authored text, while Charts+ draws it. Nothing
   is rewritten: the text is written as asked. `titleSettings.show: false` hides the automatic title,
   and a text box above the visual carries a title that draws.
+- `write_visual`, `write_page` and `write_report` warn when a Tables or Tables+ visual has a
+  `Category` and no `sortSettings`. A table with none has been seen to sort its rows by the first
+  `Values` column, descending, which separates subtotals from their components. Nothing is added to
+  the file.
 
 ## 0.3.2 — 2026-11-04
 

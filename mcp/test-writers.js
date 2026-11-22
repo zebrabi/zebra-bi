@@ -688,6 +688,28 @@ check("Charts+ and certified Tables/Charts/Cards titles are not warned about", (
   }
 });
 
+// A Tables visual with a Category and no sortSettings has been seen to sort by the first Values column,
+// descending. The writer says so and writes nothing it was not asked to.
+const sortWarned = (r) => (r.warnings || []).some((x) => /no sortSettings/.test(x));
+const CAT = { Category: [{ entity: "Sales", property: "Region", kind: "Column" }] };
+check("Tables and Tables+ with a Category and no sortSettings warn; nothing is added", () => {
+  for (const t of ["tables", "tables+"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t, bindings: CAT });
+    assert.ok(sortWarned(r), `${t}: ${JSON.stringify(r.warnings)}`);
+    assert.ok(!JSON.parse(r.content).visual.objects, `${t}: the writer invented properties`);
+  }
+});
+check("no sort warning when sortSettings is set, there is no Category, or the visual is not Tables", () => {
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+", bindings: CAT,
+    properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+", bindings: CAT,
+    rawObjects: { sortSettings: [{ properties: {} }] } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+",
+    bindings: { Values: [{ entity: "Sales", property: "AC", kind: "Measure" }] } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "charts+", bindings: CAT })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "cards", bindings: CAT })));
+});
+
 // --- file hygiene -----------------------------------------------------------------------------------
 
 check("output is UTF-8 with no BOM, LF only, and no trailing newline", () => {

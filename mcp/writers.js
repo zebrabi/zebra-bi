@@ -649,6 +649,17 @@ function writeVisual(spec = {}) {
   const titleWarning = tablesPlusTitleWarning(objects, visualType);
   if (titleWarning) warnings.push(titleWarning);
 
+  // Tables and Tables+ with a Category and no sortSettings: the rows are not in the model's order.
+  // Observed on certified Tables (no sortSettings object at all, reproduced), with one matching
+  // sighting on Tables+. The default is stated as observed, not as a documented guarantee.
+  if (visualType.startsWith("ZebraBITables") && (spec.bindings?.Category?.length ?? 0) > 0
+      && !objects.sortSettings) {
+    warnings.push("This Tables visual has a Category and no sortSettings. A table with none has been seen "
+      + "to sort its rows by the first Values column, descending, which separates subtotals from their "
+      + "components and moves rows inserted after a named row. Set sortSettings.columnName and "
+      + "sortSettings.categorySort (0 keeps the model's own order, 1 descending, 2 ascending).");
+  }
+
   // A licence key in the spec is written with a fresh appliedTimestamp (Tables+ and Charts+), then
   // the licence groups of the visual being replaced are carried through unchanged. Applied last and
   // per group, so a group the spec itself provides wins and no old timestamp rides on a new key.
