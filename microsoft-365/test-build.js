@@ -79,9 +79,21 @@ try {
       assert.ok(kept.split("\n").some((l) => l.startsWith(h)), `${h} heading not kept in SKILL.md`);
     }
     const src = fs.readFileSync(path.join(ROOT, "skills", "report-authoring", "SKILL.md"), "utf8");
+    // A paragraph the overlay drops on purpose is not a lost line.
+    const dropped = (CONFIG.skills["report-authoring"].overlay || []).filter((o) => o.op === "drop-paragraph").map((o) => o.startsWith);
+    let inDropped = false;
     for (const line of src.split("\n")) {
-      if (line.trim()) assert.ok(kept.includes(line) || moved.includes(line), `line lost: ${line.slice(0, 60)}`);
+      if (!line.trim()) { inDropped = false; continue; }
+      if (dropped.some((d) => line.startsWith(d))) inDropped = true;
+      if (!inDropped) assert.ok(kept.includes(line) || moved.includes(line), `line lost: ${line.slice(0, 60)}`);
     }
+  });
+
+  check("the packaged skill points to scripts/zbi.js and not to the plugin's mcp/cli.js", () => {
+    const kept = read("skills/report-authoring/SKILL.md");
+    assert.ok(kept.includes("scripts/zbi.js"), "the overlay's instruction is missing");
+    assert.ok(!kept.includes("mcp/cli.js"), "the plugin's instruction to call mcp/cli.js reached the package");
+    assert.ok(!fs.existsSync(path.join(dir, "skills", "report-authoring", "scripts", "cli.js")), "cli.js reached the package");
   });
 
   check("every overlay is applied", () => {
