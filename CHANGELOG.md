@@ -14,6 +14,16 @@ though they shipped would misrepresent what anyone could have installed.
 
 ## Unreleased
 
+- `write_project` takes `order`: the members of a text column in the order its rows take, such as the
+  accounts of a P&L and, in its own entry, their groups. Each entry adds a hidden whole-number column
+  `<column> Order` inside the embedded rows and makes it the column's `sortByColumn`; members not listed
+  go last in source order and the assumptions name them. It refuses a listed value that never occurs,
+  a value listed twice, and two values Power BI compares as one member. An explicit order wins over an
+  order column found in the source, and says so. Proposed pages sort such a column by its order
+  (`categorySort` and `chartSort` 0), never by value; the existing statement-order path now writes
+  `chartSort` 0 too. For a project already written, the result's `next` says to write it again into a
+  new folder with `order`: the tool still never edits a project it wrote.
+- The Microsoft 365 Copilot package names `order` as the way to keep a statement's row order.
 - `write_visual`, `write_page` and `write_report` no longer warn "not a Zebra visual type" for page
   furniture: `textbox`, `slicer`, `actionButton`, `shape`, `image` and `pageNavigator`. Any other
   visual type that is not a Zebra BI visual still gets the warning.
