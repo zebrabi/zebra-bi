@@ -144,6 +144,32 @@ though they shipped would misrepresent what anyone could have installed.
   measure as returning a date only when the date is its result; resolves `[Name]` to a measure, a
   column of a table in scope or a column the expression introduces; quotes non-ASCII table names; and
   writes through a temporary file, refusing if the file changed since it was read.
+- A Tables or Tables+ visual with computed rows (`addedFormulas`) that is sorted by a value column draws
+  the computed rows among the lines by size, so the gross profit and margin rows land between cost of
+  sales and revenue. `write_visual`, `write_page` and `write_report` now warn in one sentence, with the
+  fix, when the written visual has computed rows and sorts by a value column: `categorySort` 1 or 2,
+  or `categorySort` 0 with a value `columnName` and no `chartSort`. The fix is `categorySort` and
+  `chartSort` 0 with `columnName` left out or `category`, or an order column that is hidden in
+  `columnSettings`. The file is written as asked. `propose_pages` never writes computed rows.
+- New check `computed-rows-sorted-by-value` (severity `looks-fine`: the numbers are right) for an
+  existing project with that combination. It stays silent on the 20 shipped templates and on every
+  further project it was measured on. The `categorySort` 0 branch rests on one Power BI Desktop
+  render and cannot be tested against the templates; it is kept narrow for that reason.
+- New script `mcp/cli.js`: `node <plugin folder>/mcp/cli.js list` names the Zebra BI tools and
+  `node <plugin folder>/mcp/cli.js <tool> @args.json` calls one with its arguments from a JSON file,
+  in the same process, with no server and nothing to install beyond Node.js. It prints exactly the
+  tool's JSON result and exits 1 when the tool reports an error, 2 when the call is not made (an
+  unknown tool, an arguments file that is missing or not a JSON object). The authoring skill tells
+  the agent to use it when the tools are not in its tool list, which is the case on GitHub Copilot CLI,
+  Codex and other hosts that load the skills without registering the local server. `INSTALL.md` makes
+  `copilot mcp add` optional and says what the script gives without it. `server.js` exports
+  `callTool` and `listTools`, which the stdio server uses too. The Microsoft 365 package does not
+  bundle `cli.js`; it has `scripts/zbi.js`.
+- The previous-year pattern in `references/model-layer.md` maps each calendar date to its next-year
+  date (29 February to 28 February) and keeps the prior dates whose next-year date is selected. The
+  pattern it replaces mapped the selected dates one year back, so no selected date reached a prior-year
+  29 February: with month-end data that is the whole of February in the year after a leap year, and
+  the year was short by that month. The measure is still additive.
 
 ## 0.3.2 — 2026-11-04
 
@@ -220,7 +246,7 @@ thing you can do is tell us when it does not.
 | **`setup-doctor`** | Ten checks on the machine, each with a fix. Two are about your model — scenario measures and a marked date table — and they are the ones that decide whether the report comes out right |
 | **`report-authoring`** | Planning, data binding, IBCS variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates |
 | **`report-publishing`** | The Zebra-specific parts of publishing. Microsoft's own skill does the upload; this covers the visual-track choice and the refresh without which the report arrives empty |
-| **The checker** | 76 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
+| **The checker** | 77 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
 | **18 MCP tools** | Profiling, page proposal, the encoders for the property blobs that cannot be written by hand, and the report writers |
 
 Ten on-demand reference layers sit behind the authoring skill and load only when they are needed:

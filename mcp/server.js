@@ -1095,6 +1095,54 @@ function respondError(id, code, message) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
 }
 
+/** Every tool, as tools/list answers it. */
+function listTools() {
+  return [...TOOLS, ...Object.entries(CALLABLE).map(([name, e]) => ({
+    name, description: e.description, inputSchema: e.schema,
+  }))].map(annotate);
+}
+
+/**
+ * Run one tool: `{ text, isError }`, where `text` is the JSON the tool returned, or null when there
+ * is no such tool. The stdio server and the script front end (cli.js) both answer through this.
+ */
+function callTool(name, args) {
+  const a = args || {};
+  const reply = (out, isError) => ({ text: JSON.stringify(out, null, 2), isError });
+  if (Object.prototype.hasOwnProperty.call(CALLABLE, name)) {
+    try {
+      // A tool that answers with ok: false (write_project when a write fails partway, with the
+      // list of files already on disk) is an error to the host, with its full answer attached.
+      const result = CALLABLE[name].fn(a);
+      return reply(result, Boolean(result && result.ok === false));
+    } catch (err) {
+      // A refused encode is a useful answer, not a crash: the message names the field and
+      // says what it prevents, so the caller can fix the call rather than guess.
+      return reply({ ok: false, error: String(err && err.message) }, true);
+    }
+  }
+  if (name === "propose_pages") {
+    const pr = resolveProject(a.projectPath);
+    const out = (!pr || pr.fatal)
+      ? { ok: false, error: (pr && pr.fatal) || "the project could not be read" }
+      : propose.proposePages(prof.profileProject(pr), a);
+    return reply(out, out.ok === false);
+  }
+  if (name === "profile_project") {
+    const out = profileProjectTool(a);
+    return reply(out, out.ok === false);
+  }
+  if (name === "profile_source") {
+    const out = profSource.profileSource(a);
+    return reply(out, out.ok === false);
+  }
+  if (name === "validate_report") {
+    const out = validateReport(a);
+    return reply(out, !out.ok);
+  }
+  return null;
+}
+
 function handle(msg) {
   const { id, method, params } = msg;
   // A notification has no id and takes no reply. Answering one is a protocol error.
@@ -1108,62 +1156,12 @@ function handle(msg) {
         serverInfo: SERVER,
       });
     case "tools/list":
-      return respond(id, { tools: [...TOOLS, ...Object.entries(CALLABLE).map(([name, e]) => ({
-        name, description: e.description, inputSchema: e.schema,
-      }))].map(annotate) });
+      return respond(id, { tools: listTools() });
     case "tools/call": {
       const name = params && params.name;
-      if (CALLABLE[name]) {
-        try {
-          const result = CALLABLE[name].fn(params.arguments || {});
-          // A tool that answers with ok: false (write_project when a write fails partway, with the
-          // list of files already on disk) is an error to the host, with its full answer attached.
-          return respond(id, {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-            isError: Boolean(result && result.ok === false),
-          });
-        } catch (err) {
-          // A refused encode is a useful answer, not a crash: the message names the field and
-          // says what it prevents, so the caller can fix the call rather than guess.
-          return respond(id, {
-            content: [{ type: "text", text: JSON.stringify(
-              { ok: false, error: String(err && err.message) }, null, 2) }], isError: true,
-          });
-        }
-      }
-      if (name === "propose_pages") {
-        const a = params.arguments || {};
-        const pr = resolveProject(a.projectPath);
-        const out = (!pr || pr.fatal)
-          ? { ok: false, error: (pr && pr.fatal) || "the project could not be read" }
-          : propose.proposePages(prof.profileProject(pr), a);
-        return respond(id, {
-          content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
-          isError: out.ok === false,
-        });
-      }
-      if (name === "profile_project") {
-        const out = profileProjectTool(params.arguments || {});
-        return respond(id, {
-          content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
-          isError: out.ok === false,
-        });
-      }
-      if (name === "profile_source") {
-        const out = profSource.profileSource(params.arguments || {});
-        return respond(id, {
-          content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
-          isError: out.ok === false,
-        });
-      }
-      if (name !== "validate_report") {
-        return respondError(id, -32601, `Unknown tool: ${name}`);
-      }
-      const out = validateReport(params.arguments || {});
-      return respond(id, {
-        content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
-        isError: !out.ok,
-      });
+      const out = callTool(name, params && params.arguments);
+      if (!out) return respondError(id, -32601, `Unknown tool: ${name}`);
+      return respond(id, { content: [{ type: "text", text: out.text }], isError: out.isError });
     }
     case "ping":
       return respond(id, {});
@@ -1196,6 +1194,6 @@ process.stdin.on("data", (chunk) => {
 
 if (require.main === module) listen();
 
-module.exports = { validateReport, resolveProject, checkers, loadRules, listen,
+module.exports = { validateReport, resolveProject, checkers, loadRules, listen, callTool, listTools,
                    ENCODERS, WRITERS, PROJECT_WRITER, MEASURE_WRITER, CALLABLE, TOOLS, profileProjectTool,
                    profileSourceTool: profSource.profileSource };

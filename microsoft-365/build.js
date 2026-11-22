@@ -158,7 +158,8 @@ function moveSections(body, move, skill) {
 // bundle sits in the skill's scripts/ folder, so the path points one folder up.
 function bundleChecker() {
   const mcp = path.join(ROOT, "mcp");
-  const files = fs.readdirSync(mcp).filter((f) => f.endsWith(".js") && !f.startsWith("test-")).sort();
+  // cli.js is the plugin's own front end; the package has zbi.js.
+  const files = fs.readdirSync(mcp).filter((f) => f.endsWith(".js") && !f.startsWith("test-") && f !== "cli.js").sort();
   if (!files.includes("server.js")) fail("mcp/server.js not found");
   const parts = files.map((f) => {
     let src = fs.readFileSync(path.join(mcp, f), "utf8").replace(/^#!.*/, "");

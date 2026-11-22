@@ -443,6 +443,20 @@ check("a pair on a different metric is reported, not drawn", () => {
     "no notice that a pair exists elsewhere");
 });
 
+check("propose_pages never writes computed rows, so it cannot propose a value sort over them", () => {
+  const enc = require("./encoders.js");
+  const r = propose.proposePages(prof({ fact: SIGNAL_FACT, measures: MEASURES }), { maxPages: 4 });
+  assert.strictEqual(r.ok, true, r.error);
+  assert.ok(r.spec.pages.length > 0);
+  for (const page of r.spec.pages) for (const v of page.visuals) {
+    assert.ok(!v.addedFormulas && !JSON.stringify(v).includes("addedFormulas"), "a proposed visual carries computed rows");
+    // the writer agrees: the proposed spec draws no computed-row sort warning
+    const written = require("./writers.js").writeVisual(v);
+    assert.ok(!(written.warnings || []).some((x) => /computed row/.test(x)), "the writer warned about a proposed visual");
+    assert.strictEqual(enc.computedRowsSortedByValue({}, []), null);
+  }
+});
+
 check("Values binds a MEASURE that exists in the model, never a raw column", () => {
   const p = prof({ fact: SIGNAL_FACT, measures: MEASURES });
   const r = propose.proposePages(p, { maxPages: 4 });
