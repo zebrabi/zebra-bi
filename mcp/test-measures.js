@@ -228,6 +228,77 @@ check("replace: true replaces only that measure's block and returns what it remo
   assert.strictEqual(t.measures.find((x) => x.name === "Amount PL").formatString, "#,0.0");
 });
 
+check("replace ends at the measure's own last line, keeps its lineageTag and annotation, and keeps a table property after it", () => {
+  const p = base();
+  const f = tablePath(p, "sales.tmdl");
+  const old = "\tmeasure Old =\n\t\t\t1\n\t\tformatString: 0\n\t\tlineageTag: 11111111-1111-1111-1111-111111111111\n\n\t\tannotation PBI_FormatHint = {\"isGeneralNumber\":true}";
+  fs.writeFileSync(f, `${fs.readFileSync(f, "utf8")}\n${old}\n\n\tisHidden\n`);
+  const before = fs.readFileSync(f, "utf8");
+  const r = add({ projectPath: p, table: "sales", replace: true, measures: [{ name: "Old", expression: "2", formatString: "#,0" }] });
+  const [rep] = r.replaced;
+  assert.strictEqual(rep.removed, old);
+  assert.strictEqual(rep.added, "\tmeasure Old =\n\t\t\t2\n\t\tformatString: #,0\n\t\tlineageTag: 11111111-1111-1111-1111-111111111111\n\n\t\tannotation PBI_FormatHint = {\"isGeneralNumber\":true}");
+  assert.deepStrictEqual(rep.kept, ["lineageTag", "annotation PBI_FormatHint = {\"isGeneralNumber\":true}"]);
+  const after = fs.readFileSync(f, "utf8");
+  assert.strictEqual(after, before.replace(old, rep.added));
+  assert.ok(after.endsWith("\n\n\tisHidden\n"), "the table property after the measure was lost");
+});
+
+/** Extra tables whose names are DAX words, and one with a non-ASCII name. */
+function wordTables(p) {
+  const t = (n, col) => [`table ${n.includes("ä") ? `'${n}'` : n}`, "", `\tcolumn ${col}`, "\t\tdataType: string", "\t\tsummarizeBy: none", "\t\tisNameInferred", `\t\tsourceColumn: [${col}]`, "",
+    `\tpartition ${n.includes("ä") ? `'${n}'` : n} = calculated`, "\t\tmode: import", "\t\tsource =", `\t\t\t\tDATATABLE ( "${col}", STRING, { {"a"} } )`, ""].join("\n");
+  fs.writeFileSync(tablePath(p, "Words.tmdl"), [t("Year", "Y"), t("Currency", "C"), t("Dense", "D"), t("Umsätze", "U")].join("\n"));
+}
+check("a DAX keyword that shares a table's name is left as written and reported; a non-ASCII table name is quoted", () => {
+  const p = base();
+  wordTables(p);
+  const r = add({ projectPath: p, table: "sales", measures: [
+    { name: "Shifted", expression: "CALCULATE ( [Amount AC], DATEADD ( 'Calendar'[Date], -1, YEAR ) )", formatString: "#,0" },
+    { name: "Ranked", expression: "RANKX ( ALL ( 'sales'[Region] ), [Amount AC], , DESC, DENSE )", formatString: "0" },
+    { name: "Turnover rows", expression: "COUNTROWS ( Umsätze )", formatString: "0" }] });
+  assert.ok(r.added.includes("DATEADD ( 'Calendar'[Date], -1, YEAR )"), "YEAR was rewritten");
+  assert.ok(r.added.includes("DESC, DENSE )"), "DENSE was rewritten");
+  assert.ok(r.added.includes("COUNTROWS ( 'Umsätze' )"), "the non-ASCII table was not quoted");
+  assert.ok(r.leftAsWritten.some((x) => /^Shifted: YEAR was left as written: it is a DAX keyword; write 'Year' to mean the table$/.test(x)), JSON.stringify(r.leftAsWritten));
+  assert.ok(r.leftAsWritten.some((x) => /^Ranked: DENSE was left as written/.test(x)));
+  assert.ok(r.quoted.includes("Turnover rows: Umsätze -> 'Umsätze'"), JSON.stringify(r.quoted));
+});
+check("a rolling sum over a MAX of a date is not read as a date; a measure whose result is a date is", () => {
+  const p = base();
+  const r = add({ projectPath: p, table: "sales", measures: [
+    { name: "AC 3M", expression: "CALCULATE ( [Amount AC], DATESINPERIOD ( 'Calendar'[Date], MAX ( 'Calendar'[Date] ), -3, MONTH ) )", formatString: "#,0" },
+    { name: "AC running", expression: "CALCULATE ( [Amount AC], FILTER ( ALL ( 'Calendar' ), 'Calendar'[Date] <= MAX ( 'Calendar'[Date] ) ) )", formatString: "#,0" }] });
+  assert.strictEqual(r.measures.length, 2);
+  refuses(() => add({ projectPath: p, table: "sales", measures: [{ name: "Last", expression: "VAR d = MAX ( 'sales'[Date] )\nRETURN d", formatString: "#,0" }] }), /Last returns a date/);
+});
+check("[Name] resolves only to a measure, a column of a table in scope, or a column the expression introduces", () => {
+  const p = base({ extra: true });
+  refuses(() => add({ projectPath: p, table: "sales", measures: [{ name: "W", expression: "\"Whatever\" & [Whatever]", formatString: "General" }] }),
+    /\[Whatever\]: no measure or column/);
+  refuses(() => add({ projectPath: p, table: "sales", measures: [{ name: "N", expression: "MAX ( [Name] )", formatString: "General" }] }),
+    /\[Name\]: a column of KPI, which the expression does not name; write 'KPI'\[Name\]/);
+  const r = add({ projectPath: p, table: "sales", measures: [
+    { name: "Regions", expression: "COUNTROWS ( VALUES ( [Region] ) )", formatString: "0" },
+    { name: "Names", expression: "COUNTX ( KPI, [Name] )", formatString: "0" }] });
+  assert.strictEqual(r.measures.length, 2);
+});
+check("the file is written through a temporary file and refused if it changed since it was read", () => {
+  const p = base();
+  const f = tablePath(p, "sales.tmdl");
+  let err = null;
+  try {
+    measures.writeMeasures({ projectPath: p, table: "sales", measures: [{ name: "Z", expression: "1", formatString: "0" }] },
+      { ...deps, beforeCommit: (abs) => fs.appendFileSync(abs, "\n") });
+  } catch (e) { err = e; }
+  assert.ok(err && /changed on disk while the measures were being prepared/.test(err.message), err && err.message);
+  assert.ok(fs.readFileSync(f, "utf8").endsWith("\n\n"), "the other program's save was lost");
+  const names = () => fs.readdirSync(path.dirname(f)).sort();
+  const was = names();
+  add({ projectPath: p, table: "sales", measures: [{ name: "Z", expression: "1", formatString: "0" }] });
+  assert.deepStrictEqual(names(), was, "a temporary file was left behind");
+});
+
 // --- refusals that keep the file loading --------------------------------------------------------
 
 check("formatString is required, a multi-line string and a fence are refused", () => {

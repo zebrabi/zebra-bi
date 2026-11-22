@@ -37,6 +37,19 @@ const INPUT_KEYS = new Set(["projectPath", "table", "measures", "replace"]);
 const MEASURE_KEYS = new Set(["name", "expression", "formatString", "description", "displayFolder"]);
 const KEYWORDS = new Set(["var", "return", "true", "false", "in", "and", "or", "not", "asc", "desc",
   "define", "evaluate", "measure", "order", "by", "start", "at", "column", "table"]);
+/**
+ * Words DAX reads as an enumeration value where a function takes one: DATEADD ( ..., -1, YEAR ),
+ * CONVERT ( ..., CURRENCY ), RANKX ( ..., DESC, DENSE ). A bare one is never rewritten, even when a
+ * table shares the name: quoting it would turn valid DAX into a table reference. It is left as
+ * written, and the result says so, because the caller may have meant the table.
+ */
+const ENUM_WORDS = new Set(["day", "month", "quarter", "year", "week", "hour", "minute", "second",
+  "integer", "int64", "double", "decimal", "string", "text", "boolean", "logical", "currency", "datetime",
+  "dense", "skip", "abs", "rel", "first", "last", "none", "both", "oneway", "twoway", "left", "right"]);
+/** Functions whose string arguments name new columns, so `[Name]` may refer to one of them. */
+const INTRODUCERS = new Set(["addcolumns", "selectcolumns", "summarize", "summarizecolumns", "groupby",
+  "row", "datatable", "addmissingitems", "substitutewithindex", "topnskip"]);
+const AGGREGATES_OF_DATES = new Set(["max", "min", "lastdate", "firstdate", "lastnonblank", "firstnonblank", "eomonth", "edate"]);
 
 const tmdlName = (n) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? n : `'${n.replace(/'/g, "''")}'`);
 const daxTable = (n) => `'${n.replace(/'/g, "''")}'`;
@@ -88,8 +101,9 @@ function tokenize(expr) {
         j++;
       }
       take("bracket", j + 1);
-    } else if (/[A-Za-z_]/.test(ch)) {
-      let j = i; while (j < n && /[A-Za-z0-9_]/.test(expr[j])) j++;
+    } else if (/[\p{L}_]/u.test(ch)) {
+      // Letters of any script: a bare table name such as Umsätze is a reference to check and quote.
+      let j = i; while (j < n && /[\p{L}\p{N}_]/u.test(expr[j])) j++;
       take("ident", j);
     } else if (/[0-9]/.test(ch)) {
       let j = i; while (j < n && /[0-9A-Za-z_.]/.test(expr[j])) j++;
@@ -125,47 +139,79 @@ const nearest = (name, pool) => [...new Set(pool)]
 
 /**
  * Resolves every reference in one expression against the model, and returns the expression with
- * each bare table reference single-quoted, plus a note per quoted name.
+ * each bare table reference single-quoted, plus a note per quoted name and per word left as written.
+ *
+ *   'Table'[Column] and Table[Column]   the table must exist, and the column or measure be on it.
+ *   bare Table                          a table reference when it names a table and is not a variable,
+ *                                       a keyword or an enumeration value; quoted.
+ *   [Name]                              a measure anywhere in the model; or a column of the home table
+ *                                       or of a table the expression names (the tables in scope); or a
+ *                                       column the expression itself introduces as a string argument
+ *                                       of ADDCOLUMNS, SELECTCOLUMNS, SUMMARIZE and the like.
  */
 function resolveReferences(measureName, expr, index, batch) {
   const toks = tokenize(expr);
-  const significant = (k, dir) => { let j = k + dir; while (toks[j] && (toks[j].type === "space" || toks[j].type === "comment")) j += dir; return toks[j]; };
+  const sig = toks.map((t, k) => k).filter((k) => toks[k].type !== "space" && toks[k].type !== "comment");
+  const at = new Map(sig.map((k, i) => [k, i]));
+  const next = (k) => { const i = at.get(k); return i === undefined || i + 1 >= sig.length ? undefined : toks[sig[i + 1]]; };
+  const prevOf = (k) => { const i = at.get(k); return i === undefined || i === 0 ? undefined : toks[sig[i - 1]]; };
   const varNames = new Set();
-  toks.forEach((t, k) => {
+  for (const k of sig) {
+    const t = toks[k];
     if (t.type === "ident" && t.text.toLowerCase() === "var") {
-      const nx = significant(k, 1);
+      const nx = next(k);
       if (nx && nx.type === "ident") varNames.add(nx.text.toLowerCase());
     }
-  });
-  const introduced = new Set(toks.filter((t) => t.type === "string").map((t) => t.text.slice(1, -1).replace(/""/g, "\"").toLowerCase()));
+  }
+  // The innermost open function at each token, to know which strings introduce a column name.
+  const introduced = new Set();
+  const stack = [];
+  for (const k of sig) {
+    const t = toks[k];
+    if (t.type === "char" && t.text === "(") {
+      const p = prevOf(k);
+      stack.push(p && p.type === "ident" ? p.text.toLowerCase() : "");
+    } else if (t.type === "char" && t.text === ")") stack.pop();
+    else if (t.type === "string" && stack.length && INTRODUCERS.has(stack[stack.length - 1])) {
+      introduced.add(t.text.slice(1, -1).replace(/""/g, "\"").toLowerCase());
+    }
+  }
   const problems = [];
   const quoted = new Map();
+  const leftAsWritten = new Map();
   const edits = [];
-  const columnTypes = [];
+  const inScope = new Set([index.home.toLowerCase()]);
   const tableNames = [...index.tables.values()].map((t) => t.name);
   const allMeasures = [...index.measures.values()].map((m) => m.name).concat(batch);
-  const allColumns = [...index.tables.values()].flatMap((t) => [...t.columns]);
+  const brackets = [];
 
-  for (let k = 0; k < toks.length; k++) {
+  for (let i = 0; i < sig.length; i++) {
+    const k = sig[i];
     const t = toks[k];
     if (t.type === "qtable" || t.type === "ident") {
-      const nx = significant(k, 1);
+      const nx = next(k);
       if (t.type === "ident" && nx && nx.type === "char" && nx.text === "(") continue;      // a function
-      const prev = significant(k, -1);
+      const prev = prevOf(k);
       if (t.type === "ident" && prev && prev.type === "char" && prev.text === ".") continue;
       const name = t.type === "qtable" ? quotedName(t) : t.text;
+      const lower = name.toLowerCase();
       const followedByColumn = nx && nx.type === "bracket";
       if (t.type === "ident" && !followedByColumn) {
         // A bare word: a table reference only when it names a table and is not a variable or keyword.
-        if (varNames.has(name.toLowerCase()) || KEYWORDS.has(name.toLowerCase())) continue;
-        if (!index.tables.has(name.toLowerCase())) continue;
+        if (varNames.has(lower) || KEYWORDS.has(lower)) continue;
+        if (ENUM_WORDS.has(lower)) {
+          if (index.tables.has(lower)) leftAsWritten.set(name, index.tables.get(lower).name);
+          continue;
+        }
+        if (!index.tables.has(lower)) continue;
       }
-      const table = index.tables.get(name.toLowerCase());
+      const table = index.tables.get(lower);
       if (!table) {
         problems.push(`${t.type === "qtable" ? t.text : name}${followedByColumn ? nx.text : ""}: no table '${name}' in the model (nearest: ${nearest(name, tableNames).join(", ")})`);
-        if (followedByColumn) k = toks.indexOf(nx);
+        if (followedByColumn) i++;
         continue;
       }
+      inScope.add(table.name.toLowerCase());
       if (t.type === "ident") {
         edits.push({ start: t.start, end: t.end, text: daxTable(table.name) });
         quoted.set(name, daxTable(table.name));
@@ -173,46 +219,91 @@ function resolveReferences(measureName, expr, index, batch) {
       if (followedByColumn) {
         const col = bracketName(nx);
         const own = batch.some((b) => b.toLowerCase() === col.toLowerCase()) && table.name.toLowerCase() === index.home.toLowerCase();
-        if (table.columns.has(col.toLowerCase())) columnTypes.push(table.types.get(col.toLowerCase()));
-        else if (table.measures.has(col.toLowerCase()) || own) columnTypes.push("measure");
         if (!table.columns.has(col.toLowerCase()) && !table.measures.has(col.toLowerCase()) && !own) {
           problems.push(`${daxTable(table.name)}${nx.text}: ${table.name} has no column or measure '${col}' (nearest: ${nearest(col, [...table.columnNames, ...table.measureNames]).join(", ")})`);
         }
-        k = toks.indexOf(nx);
+        i++;
       }
       continue;
     }
-    if (t.type === "bracket") {
-      const name = bracketName(t);
-      if (name.toLowerCase() === measureName.toLowerCase()) { problems.push(`[${name}]: the measure refers to itself`); continue; }
-      const ok = index.measures.has(name.toLowerCase()) || batch.some((b) => b.toLowerCase() === name.toLowerCase())
-        || allColumns.includes(name.toLowerCase()) || introduced.has(name.toLowerCase());
-      if (!ok) problems.push(`[${name}]: no measure or column '${name}' in the model (nearest: ${nearest(name, [...allMeasures, ...[...index.tables.values()].flatMap((x) => x.columnNames)]).join(", ")})`);
-    }
+    if (t.type === "bracket") brackets.push(t);
+  }
+  // Unqualified names, once every table the expression names is known.
+  for (const t of brackets) {
+    const name = bracketName(t);
+    const lower = name.toLowerCase();
+    if (lower === measureName.toLowerCase()) { problems.push(`[${name}]: the measure refers to itself`); continue; }
+    if (index.measures.has(lower) || batch.some((b) => b.toLowerCase() === lower) || introduced.has(lower)) continue;
+    const scoped = [...inScope].map((s) => index.tables.get(s)).filter(Boolean);
+    if (scoped.some((tb) => tb.columns.has(lower))) continue;
+    const elsewhere = [...index.tables.values()].filter((tb) => tb.columns.has(lower)).map((tb) => tb.name);
+    problems.push(elsewhere.length
+      ? `[${name}]: a column of ${elsewhere.join(", ")}, which the expression does not name; write ${daxTable(elsewhere[0])}[${name}], or name the table it iterates`
+      : `[${name}]: no measure or column '${name}' in the model (nearest: ${nearest(name, [...allMeasures, ...[...index.tables.values()].flatMap((x) => x.columnNames)]).join(", ")})`);
   }
   let out = expr;
   for (const e of edits.sort((a, b) => b.start - a.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end);
-  // A date-valued measure: an aggregate that returns a date (MAX, MIN, LASTDATE, ...) whose first
-  // argument is a dateTime column, and nothing in the expression that turns the date into a number or
-  // text. Its format must be a date format, or the date shows as a serial number.
-  const AGG = new Set(["max", "min", "lastdate", "firstdate", "lastnonblank", "firstnonblank", "eomonth", "edate"]);
-  const NOT_A_DATE = /\b(FORMAT|DATEDIFF|YEAR|MONTH|DAY|QUARTER|WEEKNUM|COUNT|COUNTA|COUNTROWS|DISTINCTCOUNT|INT|VALUE|CONCATENATE|COMBINEVALUES|IF|SWITCH|DIVIDE)\s*\(/i;
-  let dateValued = false;
-  for (let k = 0; k < toks.length; k++) {
-    const t = toks[k];
-    if (t.type !== "ident" || !AGG.has(t.text.toLowerCase())) continue;
-    const open = significant(k, 1);
-    if (!open || open.text !== "(") continue;
-    const arg = significant(toks.indexOf(open), 1);
-    if (!arg || (arg.type !== "qtable" && arg.type !== "ident")) continue;
-    const br = significant(toks.indexOf(arg), 1);
-    if (!br || br.type !== "bracket") continue;
-    const tb = index.tables.get((arg.type === "qtable" ? quotedName(arg) : arg.text).toLowerCase());
-    if (tb && tb.types.get(bracketName(br).toLowerCase()) === "datetime") dateValued = true;
-  }
-  const code = toks.filter((t) => t.type !== "string" && t.type !== "comment").map((t) => t.text).join("");
-  if (NOT_A_DATE.test(code)) dateValued = false;
-  return { expression: out, problems, dateValued, quoted: [...quoted.entries()].map(([from, to]) => `${from} -> ${to}`) };
+  return { expression: out, problems, dateValued: returnsDate(toks, sig, index),
+    quoted: [...quoted.entries()].map(([from, to]) => `${from} -> ${to}`),
+    leftAsWritten: [...leftAsWritten.entries()].map(([w, tb]) => `${w} was left as written: it is a DAX keyword; write ${daxTable(tb)} to mean the table`) };
+}
+
+/**
+ * Whether the measure's result is a date: the result (the whole expression, the part after the last
+ * top-level RETURN, or CALCULATE's first argument) is one aggregate that returns a date (MAX, MIN,
+ * LASTDATE and the like) over a dateTime column. A MAX of a date used as an argument, as in a rolling
+ * DATESINPERIOD window, is not the result and does not count.
+ */
+function returnsDate(toks, sig, index) {
+  const all = sig.map((k) => toks[k]);
+  // After the last RETURN at depth 0; and each depth-0 VAR's definition, to follow `RETURN d`.
+  let depth = 0, from = 0;
+  const vars = new Map();
+  let open = null;
+  all.forEach((t, i) => {
+    if (t.type === "char" && t.text === "(") depth++;
+    else if (t.type === "char" && t.text === ")") depth--;
+    else if (depth === 0 && t.type === "ident" && /^(var|return)$/i.test(t.text)) {
+      if (open) vars.set(open.name, all.slice(open.start, i));
+      open = null;
+      if (/^return$/i.test(t.text)) from = i + 1;
+      else if (all[i + 1] && all[i + 2] && all[i + 2].text === "=") open = { name: all[i + 1].text.toLowerCase(), start: i + 3 };
+    }
+  });
+  let s = all.slice(from);
+  if (s.length === 1 && s[0].type === "ident" && vars.has(s[0].text.toLowerCase())) s = vars.get(s[0].text.toLowerCase());
+  const strip = (a) => {
+    // Drop parentheses that wrap the whole sequence.
+    while (a.length >= 2 && a[0].text === "(" && a[a.length - 1].text === ")") {
+      let d = 0, wraps = true;
+      for (let i = 0; i < a.length - 1; i++) { if (a[i].text === "(") d++; else if (a[i].text === ")") d--; if (d === 0) { wraps = false; break; } }
+      if (!wraps) break;
+      a = a.slice(1, -1);
+    }
+    return a;
+  };
+  /** The argument list of a call starting at a[0] (ident) a[1] "(", if the call is the whole of a. */
+  const callArgs = (a) => {
+    if (a.length < 3 || a[0].type !== "ident" || a[1].text !== "(" || a[a.length - 1].text !== ")") return null;
+    let d = 0;
+    const args = [[]];
+    for (let i = 1; i < a.length; i++) {
+      const t = a[i];
+      if (t.text === "(") { d++; if (d === 1) continue; }
+      if (t.text === ")") { d--; if (d === 0) { if (i !== a.length - 1) return null; continue; } }
+      if (d === 1 && t.text === ",") { args.push([]); continue; }
+      args[args.length - 1].push(t);
+    }
+    return args;
+  };
+  s = strip(s);
+  let args = callArgs(s);
+  if (args && s[0].text.toLowerCase() === "calculate") { s = strip(args[0]); args = callArgs(s); }
+  if (!args || !AGGREGATES_OF_DATES.has(s[0].text.toLowerCase())) return false;
+  const a0 = args[0];
+  if (a0.length !== 2 || (a0[0].type !== "qtable" && a0[0].type !== "ident") || a0[1].type !== "bracket") return false;
+  const tb = index.tables.get((a0[0].type === "qtable" ? quotedName(a0[0]) : a0[0].text).toLowerCase());
+  return Boolean(tb && tb.types.get(bracketName(a0[1]).toLowerCase()) === "datetime");
 }
 
 // --- the model -------------------------------------------------------------------------------
@@ -260,7 +351,7 @@ function lastNonBlank(lines, from, stop) {
 /** First line (0-based) of a node, counting the `///` description above it. */
 const startOf = (node) => (node.desc && node.desc.length && node.descLine >= 0 ? node.descLine : node.line - 1);
 
-function layoutBlock(m, unit, eol) {
+function layoutBlock(m, unit, eol, keep = null) {
   const L1 = unit, L2 = unit + unit, L3 = unit + unit + unit;
   const raw = m.expression.replace(/\r\n?/g, "\n").split("\n").map((l) => l.replace(/[ \t]+$/, ""));
   while (raw.length && !raw[0].trim()) raw.shift();
@@ -276,7 +367,25 @@ function layoutBlock(m, unit, eol) {
   for (const l of rest) lines.push(`${L3}${l.slice(min)}`);
   lines.push(`${L2}formatString: ${m.formatString}`);
   if (m.displayFolder) lines.push(`${L2}displayFolder: ${m.displayFolder}`);
+  if (keep && keep.lineageTag) lines.push(`${L2}lineageTag: ${keep.lineageTag}`);
+  if (keep && keep.lines.length) lines.push("", ...keep.lines);
   return lines.join(eol);
+}
+
+/**
+ * The last line (0-based) that belongs to a measure: its body, its properties and its children.
+ * A line belongs while it is blank, part of an expression body or fence, or indented deeper than
+ * the measure; the first other line (a sibling, a table property, the next table) ends it.
+ */
+function measureEnd(tree, lines, m) {
+  let last = m.line - 1;
+  for (let i = m.line; i < lines.length; i++) {
+    const L = tree.lines[i];
+    if (!lines[i].trim()) continue;
+    if (L && (L.inExpr || L.kind === "body" || L.kind === "fence-close" || L.ind > m.ind)) { last = i; continue; }
+    break;
+  }
+  return last;
 }
 
 // --- the tool ------------------------------------------------------------------------------
@@ -331,6 +440,7 @@ function writeMeasures(args = {}, deps = {}) {
 
   // References.
   const quoted = [];
+  const leftAsWritten = [];
   const problems = [];
   const formats = [];
   const batch = specs.map((s) => s.name);
@@ -344,6 +454,7 @@ function writeMeasures(args = {}, deps = {}) {
       }
     }
     for (const q of r.quoted) quoted.push(`${s.name}: ${q}`);
+    for (const q of r.leftAsWritten) leftAsWritten.push(`${s.name}: ${q}`);
     for (const p of r.problems) problems.push(`${s.name}: ${p}`);
   }
   need(!problems.length, `the expression(s) name things the model does not have, so the measure would `
@@ -380,14 +491,18 @@ function writeMeasures(args = {}, deps = {}) {
   for (const s of replacing) {
     const m = node.children.find((c) => c.type === "measure" && c.name.toLowerCase() === s.name.toLowerCase());
     need(m, `the measure '${s.name}' to replace is declared in another file than ${src.rel}.`);
-    const sibling = node.children[node.children.indexOf(m) + 1];
     const from = startOf(m);
-    const to = lastNonBlank(lines, m.line - 1, sibling ? startOf(sibling) : tableEnd + 1);
+    const to = measureEnd(tree, lines, m);
     const a = starts[from];
     const b = to + 1 < starts.length ? starts[to + 1] - (text[starts[to + 1] - 2] === "\r" ? 2 : 1) : text.length;
-    const block = layoutBlock(s, unit, eol);
+    // The identity Desktop gave the measure and its annotations carry over to the replacement.
+    const lineageTag = T.propValue(m, "lineageTag");
+    const keepLines = m.children.filter((c) => c.type === "annotation" || c.type === "extendedproperty" || c.type === "changedproperty")
+      .map((c) => lines[c.line - 1]);
+    const block = layoutBlock(s, unit, eol, { lineageTag, lines: keepLines });
     edits.push({ a, b, text: block });
-    removed.push({ name: s.name, removed: text.slice(a, b), added: block });
+    removed.push({ name: s.name, removed: text.slice(a, b), added: block,
+      kept: [...(lineageTag ? ["lineageTag"] : []), ...keepLines.map((l) => l.trim())] });
   }
   const appended = specs.filter((s) => !s.existing);
   if (appended.length) {
@@ -430,7 +545,16 @@ function writeMeasures(args = {}, deps = {}) {
   }
   need(!gained.length, `the measures would add ${gained.length} validator finding(s), so nothing was written: ${gained.join(" | ")}`);
 
-  fs.writeFileSync(abs, Buffer.from(out, "utf8"));
+  // The file is written beside itself and renamed over the original, so a failure part-way never
+  // leaves a truncated model file; and it is read again first, so a save made by another program
+  // since it was read is not lost.
+  if (deps.beforeCommit) deps.beforeCommit(abs);
+  need(fs.readFileSync(abs).equals(buf), `${src.rel} changed on disk while the measures were being prepared (another program saved it). Nothing was written; call again.`);
+  const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.write_measures-${process.pid}.tmp`);
+  fs.writeFileSync(tmp, Buffer.from(out, "utf8"), { flag: "wx" });
+  try { fs.renameSync(tmp, abs); } catch (e) {
+    need(false, `writing ${src.rel} failed while replacing it (${e.code || e.message}); the original is unchanged and the new content is in ${tmp}.`);
+  }
 
   const validateReport = deps.validateReport || require("./server.js").validateReport;
   const v = validateReport({ projectPath });
@@ -444,6 +568,7 @@ function writeMeasures(args = {}, deps = {}) {
     added: addedEdit ? addedEdit.text : "",
     ...(removed.length ? { replaced: removed } : {}),
     quoted,
+    ...(leftAsWritten.length ? { leftAsWritten } : {}),
     lineEnding: eol === "\r\n" ? "CRLF" : "LF",
     validation: { rulesRun: v.ok ? v.rulesRun : 0, wontOpen: sev("wont-open"), blank: sev("blank"), findings },
     next: [

@@ -926,14 +926,18 @@ const MEASURE_WRITER = {
       + "lays each measure out with its body below the `=` line, requires a formatString (a date format "
       + "when the measure returns a date, such as a last actual date for a title), refuses a "
       + "name already used by a column or measure of the table or by a measure anywhere in the model, "
-      + "checks every Table[Column], 'Table'[Column] and [Measure] reference outside strings and "
-      + "comments against the model (naming the nearest existing names when one does not resolve), "
-      + "single-quotes every bare table reference and lists each one it quoted, and runs every "
-      + "validator rule on the model before and after the edit, refusing a write that adds a finding "
-      + "(a VAR named after a DAX function, a swallowed formatString). It changes one file: the "
-      + "measures are inserted at the end of the table's block, or replace a measure of the same "
-      + "name when replace is true; every other byte of the file is kept and the exact text added is "
-      + "returned. Close Power BI Desktop first; afterwards refresh and save in Desktop.",
+      + "checks every Table[Column], 'Table'[Column] and [Name] reference outside strings and "
+      + "comments against the model ([Name] must be a measure, a column of the home table or of a "
+      + "table the expression names, or a column the expression introduces), naming the nearest "
+      + "existing names when one does not resolve; single-quotes every bare table reference and lists "
+      + "each one it quoted, except a DAX keyword such as YEAR or CURRENCY, which it leaves as written "
+      + "and lists; and runs every validator rule on the model before and after the edit, refusing a "
+      + "write that adds a finding (a VAR named after a DAX function, a swallowed formatString). It "
+      + "changes one file: the measures are inserted at the end of the table's block, or replace a "
+      + "measure of the same name when replace is true (its lineageTag and annotations are kept); "
+      + "every other byte of the file is kept, the file is written through a temporary file and "
+      + "refused if it changed since it was read, and the exact text added and removed is returned. "
+      + "Close Power BI Desktop first; afterwards refresh and save in Desktop.",
     schema: {
       type: "object",
       properties: {
