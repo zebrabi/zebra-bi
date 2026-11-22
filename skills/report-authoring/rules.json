@@ -536,6 +536,54 @@
       "message": "Every value in a DATATABLE row is a constant: a number, text or an ISO date string, never a function\ncall. `DATE(2025,1,1)` in a row makes the calculated table fail on load with \"The tuple at index '1'\nfrom the table definition of the DATATABLE function does not have a constant expression in the column\nat index '1'\", and every visual on it is blank. Carry a date as an ISO string constant\n(`\"yyyy-mm-dd\"`) in a `DATETIME` column, or build it outside the rows with `ADDCOLUMNS ( DATATABLE (\n... ), \"Date\", DATE ( [Year], [MonthNo], 1 ) )`.",
       "source": "validator",
       "held": true
+    },
+    {
+      "id": "dax-unquoted-kpi-table",
+      "severity": "blank",
+      "check": "dax-kpi-table-must-be-quoted",
+      "message": "`KPI` is a reserved word in DAX, like `Calculations`. A table named `KPI` loads, but every reference to\nit without quotes, such as `SELECTEDVALUE ( KPI[Name] )`, fails with \"The syntax for 'KPI' is\nincorrect\", and every visual that uses the measure shows \"Something's wrong with one or more fields\".\nWrite the reference with single quotes, `'KPI'[Name]`, or give the table another name.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "zebra-visual-type-not-registered",
+      "severity": "blank",
+      "check": "zebra-visual-type-must-be-registered",
+      "message": "Every Zebra BI visual a page uses must be registered in `report.json`. List its exact `visualType` in\n`publicCustomVisuals` (a bare GUID such as `ZebraBITablesPlus3E6085701D7B426980C3859B16327993`), or\nregister it through `resourcePackages` when the visual is embedded in the report. A visual whose type is\nregistered nowhere is an unresolved placeholder and the page draws without it. Copy the GUID from the\n`visualType` of the visual itself.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "textbox-paragraphs-in-container-objects",
+      "severity": "wont-open",
+      "check": "textbox-paragraphs-must-be-in-objects",
+      "message": "A textbox keeps its `paragraphs` in `visual.objects.general`, not in `visual.visualContainerObjects.general`.\nThe container section takes the title, background and border, and Desktop refuses a `paragraphs` property\nthere: \"An additional property 'paragraphs' was included\". Move the property to `objects.general`.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "charts-vertical-orientation-on-time",
+      "severity": "looks-fine",
+      "check": "charts-vertical-orientation-needs-a-non-time-category",
+      "message": "Time runs along the X axis of a Charts or Charts+ visual. When `Category` holds a date column or a level\nof a date table (year, quarter, month, day), leave `chartSettings.showVerticalCharts` off. `true` turns\nthe chart on its side and puts the periods down the page, against the IBCS rule that time is\nhorizontal. Use the vertical orientation for an account, product or region category.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "tmdl-calculated-source-space-indented",
+      "severity": "wont-open",
+      "check": "calculated-source-lines-must-be-tab-indented",
+      "message": "Indent every line of a calculated table's expression with tabs, as `source =` is: one level deeper than\n`source`, and the same style down to the last row. DATATABLE rows indented with spaces under a\ntab-indented `source =` are refused: \"Invalid indentation was detected! Document - './tables/<Table>'\",\nwith the first such row as the line.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "tmdl-calculated-table-column-without-sourcecolumn",
+      "severity": "wont-open",
+      "check": "calculated-table-column-must-declare-sourcecolumn",
+      "message": "Every column a calculated table declares carries `sourceColumn: [Name]`, the column name in square\nbrackets, beside `isNameInferred`. A column without it is refused: \"Column 'Year' in calculated table\n'Financials' is missing the SourceColumn property\". A calculated column, `column X = <expression>`,\ncarries its expression instead and takes no `sourceColumn`.",
+      "source": "validator",
+      "held": true
     }
   ]
 }

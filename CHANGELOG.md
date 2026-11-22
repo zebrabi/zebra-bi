@@ -35,6 +35,20 @@ though they shipped would misrepresent what anyone could have installed.
   `propose_pages` already proposes an AC against PL page from a model with a measure over each of
   those columns; when the measures are missing it now names the wide scenario columns in its notes
   and in its refusal.
+- Six new checks, each for a fault found in a project Power BI Desktop refused or drew empty:
+  `dax-unquoted-kpi-table` (a table named `KPI` referenced without quotes, which blanks the visuals that
+  use the measure), `zebra-visual-type-not-registered` (a Zebra BI visual type that `report.json` does
+  not register, by `publicCustomVisuals`, an embedded resource package or the organization's store),
+  `textbox-paragraphs-in-container-objects` (a textbox whose `paragraphs` sit under
+  `visualContainerObjects.general`), `charts-vertical-orientation-on-time` (`showVerticalCharts: true` on a
+  Charts or Charts+ visual whose `Category` is a date column or a date-table level),
+  `tmdl-calculated-source-space-indented` (DATATABLE rows indented with spaces under a tab-indented
+  `source =`) and `tmdl-calculated-table-column-without-sourcecolumn` (a calculated-table column with no
+  `sourceColumn`). Each stays silent on the 20 shipped templates and on the further working projects it was
+  measured on.
+- `validate_report` returns `clean` (true only when there are no findings) and `counts` (findings per
+  severity, and the total) beside `ok`. `ok` is unchanged and means the check ran; the tool description
+  now says so.
 
 ## 0.3.2 — 2026-11-04
 
@@ -111,7 +125,7 @@ thing you can do is tell us when it does not.
 | **`setup-doctor`** | Ten checks on the machine, each with a fix. Two are about your model — scenario measures and a marked date table — and they are the ones that decide whether the report comes out right |
 | **`report-authoring`** | Planning, data binding, IBCS variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates |
 | **`report-publishing`** | The Zebra-specific parts of publishing. Microsoft's own skill does the upload; this covers the visual-track choice and the refresh without which the report arrives empty |
-| **The checker** | 67 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
+| **The checker** | 73 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
 | **18 MCP tools** | Profiling, page proposal, the encoders for the property blobs that cannot be written by hand, and the report writers |
 
 Ten on-demand reference layers sit behind the authoring skill and load only when they are needed:

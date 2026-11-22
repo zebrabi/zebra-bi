@@ -72,7 +72,9 @@ function project(mutate = () => {}) {
     // definition.pbism: a project Desktop opens carries 4.2 beside a TMDL definition/ folder.
     pbism: { $schema: PBISM_SCHEMA, version: "4.2", settings: {} },
     pbir: { version: "1.0", datasetReference: { byPath: { path: "../Demo.SemanticModel" } } },
-    reportJson: { $schema: "https://x", themeCollection: { baseTheme: { name: "CY24SU10" } } },
+    // A report that opens registers every Zebra BI visual type its pages use.
+    reportJson: { $schema: "https://x", themeCollection: { baseTheme: { name: "CY24SU10" } },
+                  publicCustomVisuals: Object.values(GUID) },
     versionJson: { $schema: "https://x/versionMetadata/1.0.0/schema.json", version: "2.0.0" },
     pagesJson: { pageOrder: ["P1"], activePageName: "P1" },
     page: { name: "P1", visualInteractions: [] },
@@ -752,6 +754,140 @@ try {
 } catch (e) {
   results.push(["FAIL", "a correctly marked tooltip page is silent", String(e.message).slice(0, 80)]);
 }
+
+// --- registration, textbox paragraphs and chart orientation (22 Nov 2026) -------------------------------
+// Fixtures are invented. Each rule has a firing case and the otherwise identical case that stays silent.
+
+// A Zebra BI visual type used on a page must be registered in report.json.
+rule("zebra-visual-type-not-registered", "a Tables+ visual whose GUID is not in publicCustomVisuals", (s) => {
+  s.reportJson.publicCustomVisuals = ["ZebraBITablesPlus7E7C97F00CD14F299A17F402F1D219B5"];
+  s.visuals.V1.visual.visualType = GUID.tablesPlus;
+});
+
+check("a visual registered by GUID, by an embedded resource package or by the organization's store is NOT flagged", () => {
+  const id = "zebraBiCards2C860CFAA9944091B75F0DBD117F20FA";
+  const listed = project((s) => { s.reportJson.publicCustomVisuals = [id.toUpperCase()]; s.visuals.V1.visual.visualType = id; });
+  assert.ok(!codes(listed).has("zebra-visual-type-not-registered"), "fired on a GUID listed in another case");
+  const embedded = project((s) => {
+    s.reportJson.publicCustomVisuals = [];
+    s.reportJson.resourcePackages = [{ name: "RegisteredResources", type: "RegisteredResources",
+      items: [{ name: `${id}.pbiviz.json`, path: `${id}.pbiviz.json`, type: "CustomVisual" }] }];
+    s.visuals.V1.visual.visualType = id;
+  });
+  assert.ok(!codes(embedded).has("zebra-visual-type-not-registered"), "fired on a visual embedded in the report");
+  const store = project((s) => {
+    s.reportJson.publicCustomVisuals = [];
+    s.reportJson.resourcePackages = [{ name: `${id}_OrgStore`, type: "OrganizationalStoreCustomVisual", items: [] }];
+    s.visuals.V1.visual.visualType = `${id}_OrgStore`;
+  });
+  assert.ok(!codes(store).has("zebra-visual-type-not-registered"), "fired on an organizational-store visual");
+});
+
+check("native visuals and an unreadable report.json are NOT flagged; one finding names every unregistered type", () => {
+  assert.ok(!codes(project((s) => { s.reportJson.publicCustomVisuals = []; s.visuals.V1.visual.visualType = "tableEx"; }))
+    .has("zebra-visual-type-not-registered"), "fired on a native visual");
+  const bad = project();
+  fs.writeFileSync(path.join(bad, "Demo.Report", "definition", "report.json"), "{ not json");
+  assert.ok(!codes(bad).has("zebra-visual-type-not-registered"), "judged an unreadable report.json");
+  const two = project((s) => {
+    s.reportJson.publicCustomVisuals = [];
+    s.visuals.V2 = { name: "V2", position: { x: 0, y: 0, width: 600, height: 400 },
+      visual: { visualType: GUID.tables, objects: {}, query: { queryState: {} } } };
+  });
+  const hits = srv.validateReport({ projectPath: two }).findings.filter((f) => f.code === "zebra-visual-type-not-registered");
+  assert.strictEqual(hits.length, 1, `one finding for the registration list, got ${hits.length}`);
+  assert.ok(hits[0].detail.includes(`'${GUID.tables}' (2 visuals)`), hits[0].detail);
+  // two different unregistered types still make one finding, and it names both
+  const mixed = project((s) => {
+    s.reportJson.publicCustomVisuals = [];
+    s.visuals.V2 = { name: "V2", position: { x: 0, y: 0, width: 600, height: 400 },
+      visual: { visualType: GUID.charts, objects: {}, query: { queryState: {} } } };
+  });
+  const both = srv.validateReport({ projectPath: mixed }).findings.filter((f) => f.code === "zebra-visual-type-not-registered");
+  assert.strictEqual(both.length, 1);
+  assert.ok(both[0].detail.includes(GUID.tables) && both[0].detail.includes(GUID.charts), both[0].detail);
+});
+
+// A textbox's paragraphs live in objects.general; under visualContainerObjects.general Desktop refuses them.
+const PARAGRAPHS = [{ paragraphs: [{ textRuns: [{ value: "Revenue by month" }] }] }];
+rule("textbox-paragraphs-in-container-objects", "a textbox with paragraphs under visualContainerObjects.general", (s) => {
+  s.visuals.T1 = { name: "T1", position: { x: 0, y: 0, width: 400, height: 80 },
+    visual: { visualType: "textbox",
+      visualContainerObjects: { general: [{ properties: { paragraphs: PARAGRAPHS } }] } } };
+});
+
+check("a textbox with paragraphs in objects.general (and title and background in the container) is NOT flagged", () => {
+  const root = project((s) => {
+    s.visuals.T1 = { name: "T1", position: { x: 0, y: 0, width: 400, height: 80 },
+      visual: { visualType: "textbox",
+        objects: { general: [{ properties: { paragraphs: PARAGRAPHS } }] },
+        visualContainerObjects: { general: [{ properties: { keepLayerOrder: { expr: { Literal: { Value: "true" } } } } }],
+          background: [{ properties: { show: { expr: { Literal: { Value: "false" } } } } }] } } };
+    // a non-textbox may carry any container property; the rule reads textboxes only
+    s.visuals.V1.visual.visualContainerObjects = { general: [{ properties: { paragraphs: PARAGRAPHS } }] };
+  });
+  assert.ok(!codes(root).has("textbox-paragraphs-in-container-objects"), "fired on the shape Desktop writes");
+});
+
+check("the paragraph rule and the font-floor rule read the same place: a textbox with the paragraphs in the container is also sized from them", () => {
+  const root = project((s) => {
+    s.visuals.T1 = { name: "T1", position: { x: 0, y: 0, width: 400, height: 40 },
+      visual: { visualType: "textbox", visualContainerObjects: { general: [{ properties: {
+        paragraphs: [{ textRuns: [{ textStyle: { fontSize: "22pt" } }] }] } }] } } };
+  });
+  const c = codes(root);
+  assert.ok(c.has("textbox-paragraphs-in-container-objects") && c.has("textbox-too-short-for-font"),
+    "the two rules disagree on where a textbox's paragraphs are");
+});
+
+// Charts and Charts+ on their side with a time Category.
+const writeModel = (root, tmdl) => fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), tmdl);
+const CAL_MODEL = [
+  "table Calendar", "\tdataCategory: Time", "", "\tcolumn Date", "\t\tdataType: dateTime", "\t\tisKey", "",
+  "\tcolumn Month", "\t\tdataType: string", "",
+  "table Accounts", "", "\tcolumn Account", "\t\tdataType: string", "",
+  "table Orders", "", "\tcolumn 'Ship date'", "\t\tdataType: dateTime", "", "\tcolumn Region", "\t\tdataType: string", "",
+  "table Financials", "\tmeasure 'Value AC' = 1", "\t\tformatString: #,0", "\tmeasure 'Value PL' = 1", "\t\tformatString: #,0", "",
+].join("\n");
+const TRUE_ = { expr: { Literal: { Value: "true" } } };
+const col = (entity, prop) => ({ Column: { Expression: { SourceRef: { Entity: entity } }, Property: prop } });
+const chartOn = (guid, field, vertical = TRUE_) => (s) => {
+  s.visuals.C1 = { name: "C1", position: { x: 0, y: 0, width: 600, height: 400 },
+    visual: { visualType: guid, query: { queryState: { Category: { projections: [{ field, queryRef: "x" }] } } },
+      objects: { chartSettings: [{ properties: { showVerticalCharts: vertical } }] } } };
+};
+const verticalCodes = (mutate, model = CAL_MODEL) => {
+  const root = project(mutate); writeModel(root, model); return codes(root);
+};
+const V = "charts-vertical-orientation-on-time";
+
+check("showVerticalCharts: true on a date-table level or a dateTime column is caught, on Charts and Charts+", () => {
+  for (const g of [GUID.charts, GUID.chartsPlus]) {
+    assert.ok(verticalCodes(chartOn(g, col("Calendar", "Month"))).has(V), `missed a date-table level on ${g}`);
+    assert.ok(verticalCodes(chartOn(g, col("Calendar", "Date"))).has(V), `missed the date column on ${g}`);
+    assert.ok(verticalCodes(chartOn(g, col("Orders", "Ship date"))).has(V), `missed a dateTime column outside the date table on ${g}`);
+  }
+  const level = { HierarchyLevel: { Level: "Month", Expression: { Hierarchy: { Hierarchy: "Date Hierarchy",
+    Expression: { PropertyVariationSource: { Name: "Variation", Property: "Date", Expression: { SourceRef: { Entity: "Orders" } } } } } } } };
+  assert.ok(verticalCodes(chartOn(GUID.chartsPlus, level)).has(V), "missed a level of the Date Hierarchy");
+});
+
+check("showVerticalCharts on an account category, or off, or on a time category with another visual, is NOT flagged", () => {
+  for (const g of [GUID.charts, GUID.chartsPlus]) {
+    assert.ok(!verticalCodes(chartOn(g, col("Accounts", "Account"))).has(V), `fired on an account axis on ${g}`);
+    assert.ok(!verticalCodes(chartOn(g, col("Orders", "Region"))).has(V), `fired on a region axis on ${g}`);
+    assert.ok(!verticalCodes(chartOn(g, col("Calendar", "Month"), { expr: { Literal: { Value: "false" } } })).has(V),
+      `fired with showVerticalCharts false on ${g}`);
+  }
+  assert.ok(!verticalCodes(chartOn(GUID.tables, col("Calendar", "Month"))).has(V), "fired on a Tables visual");
+  assert.ok(!verticalCodes(chartOn(GUID.charts, col("Nowhere", "Month"))).has(V), "judged a table the model does not declare");
+});
+
+check("showVerticalCharts: true with a time category is not judged when the project has no model", () => {
+  const root = project(chartOn(GUID.charts, col("Calendar", "Month")));
+  fs.rmSync(path.join(root, "Demo.SemanticModel"), { recursive: true, force: true });
+  assert.ok(!codes(root).has(V), "judged a report with no model");
+});
 
 // --- the silence bar -----------------------------------------------------------------------
 // The acceptance test the held catalogue paid for: a rule that fires on a good report is worse than
