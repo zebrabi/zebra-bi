@@ -794,6 +794,45 @@ check("a folder that is not empty is refused and left untouched", () => {
   assert.deepStrictEqual(fs.readdirSync(out), ["keep.txt"]);
   assert.strictEqual(fs.readFileSync(path.join(out, "keep.txt"), "utf8"), "mine");
 });
+check("pages or visuals whose names differ only in case are refused before anything is written", () => {
+  const out = target();
+  const pos = { x: 0, y: 0, width: 100, height: 100 };
+  refuses({ name: "Case", outPath: out, source: { path: longSrc }, pages: { pages: [
+    { name: "p1", displayName: "One" }, { name: "P1", displayName: "Two" }] } }, /pages\/p1\/page\.json and .*pages\/P1\/page\.json differ only in case/);
+  refuses({ name: "Case", outPath: out, source: { path: longSrc }, pages: { pages: [{ name: "p1", displayName: "One", visuals: [
+    { name: "t1", visualType: "textbox", position: pos }, { name: "T1", visualType: "textbox", position: pos }] }] } }, /differ only in case/);
+  refuses({ name: "CON", outPath: out, source: { path: longSrc } }, /'CON\.pbip' is a name Windows reserves/);
+  assert.ok(!fs.existsSync(out), "a refusal wrote files");
+});
+check("a write that fails partway returns every file already written, says the folder is incomplete, deletes nothing", () => {
+  const out = target();
+  let theirs = null;
+  const r = project.writeProject({ name: "Half", outPath: out, source: { path: longSrc } }, {
+    validateReport: srv.validateReport, resolveProject: srv.resolveProject,
+    // Another process creates the 4th file just before this call writes it.
+    beforeWrite: (rel, abs, i) => { if (i === 3) { theirs = abs; fs.writeFileSync(abs, "another process"); } },
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.incomplete, true);
+  assert.strictEqual(r.written.length, 3);
+  assert.ok(/INCOMPLETE/.test(r.error) && /Nothing was deleted/.test(r.error) && /EEXIST/.test(r.error), r.error);
+  for (const f of r.written) assert.strictEqual(fs.statSync(path.join(out, f.path)).size, f.bytes, f.path);
+  assert.ok(r.notWritten.length > 0 && r.notWritten.every((p) => !fs.existsSync(path.join(out, p)) || path.join(out, p) === theirs));
+  // The no-overwrite flag: the other process's file is exactly as it left it.
+  assert.strictEqual(fs.readFileSync(theirs, "utf8"), "another process");
+});
+check("a file that appears in the folder before the first write stops the write; only that file is there", () => {
+  const out = target();
+  let err = null;
+  try {
+    project.writeProject({ name: "Race", outPath: out, source: { path: longSrc } }, {
+      validateReport: srv.validateReport, resolveProject: srv.resolveProject,
+      beforeFinalCheck: (dir) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, "theirs.txt"), "x"); },
+    });
+  } catch (e) { err = e; }
+  assert.ok(err && /is not empty/.test(err.message), `not refused: ${err && err.message}`);
+  assert.deepStrictEqual(fs.readdirSync(out), ["theirs.txt"]);
+});
 check("an empty existing folder is accepted", () => {
   const out = target();
   fs.mkdirSync(out);

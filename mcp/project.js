@@ -1192,18 +1192,43 @@ function checkOutPath(outPath) {
   }
 }
 
-function writeAll(outPath, files) {
-  fs.mkdirSync(outPath, { recursive: true });
+/**
+ * Writes every file, or stops at the first one that cannot be written and says exactly what is on
+ * disk. Nothing written is removed again: the tool never deletes a file.
+ */
+function writeAll(outPath, files, deps = {}) {
   const written = [];
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(outPath, ...rel.split("/"));
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    const buf = Buffer.from(content, "utf8");
-    // `wx` fails if the file exists, so nothing is ever overwritten.
-    fs.writeFileSync(abs, buf, { flag: "wx" });
-    written.push({ path: rel, bytes: buf.length });
+  let current = null;
+  try {
+    fs.mkdirSync(outPath, { recursive: true });
+    for (const [rel, content] of Object.entries(files)) {
+      current = rel;
+      const abs = path.join(outPath, ...rel.split("/"));
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      const buf = Buffer.from(content, "utf8");
+      if (deps.beforeWrite) deps.beforeWrite(rel, abs, written.length);
+      // `wx` fails if the file exists, so nothing is ever overwritten.
+      fs.writeFileSync(abs, buf, { flag: "wx" });
+      written.push({ path: rel, bytes: buf.length });
+    }
+  } catch (e) {
+    return { failed: { path: current, error: e.code ? `${e.code}: ${e.message}` : String(e.message || e) }, written };
   }
-  return written;
+  return { written };
+}
+
+/** Paths that would be one file on a case-insensitive file system, and names Windows refuses. */
+function checkFileNames(files) {
+  const seen = new Map();
+  for (const rel of Object.keys(files)) {
+    const k = rel.toLowerCase();
+    need(!seen.has(k), `${seen.get(k)} and ${rel} differ only in case, so on Windows they are one file and `
+      + "the second write would fail. Give the pages, visuals or tables names that differ in more than case.");
+    seen.set(k, rel);
+    for (const part of rel.split("/")) {
+      need(!DEVICE_NAMES.test(part.replace(/\.[^.]*$/, "")), `${rel}: '${part}' is a name Windows reserves for a device. Choose another name.`);
+    }
+  }
 }
 
 // --- the tool ------------------------------------------------------------------------------
@@ -1521,9 +1546,27 @@ function writeProject(args = {}, deps = {}) {
   need(longest.length <= LIMITS.pathLength, `The deepest file would be ${longest.length} characters long `
     + `(${longest}), above the ${LIMITS.pathLength}-character limit past which Windows tools and Power BI `
     + "Desktop's Save As fail. Choose a shorter outPath or name.");
+  checkFileNames(files);
 
+  // The folder is checked again just before the first write: something else may have written into
+  // it while the project was being built.
+  if (deps.beforeFinalCheck) deps.beforeFinalCheck(outPath);
   checkOutPath(outPath);
-  const written = writeAll(outPath, files);
+  const w = writeAll(outPath, files, deps);
+  if (w.failed) {
+    return {
+      ok: false,
+      incomplete: true,
+      outPath,
+      error: `Writing ${w.failed.path} failed (${w.failed.error}), so the project in ${outPath} is INCOMPLETE `
+        + `and will not open: ${w.written.length} of ${Object.keys(files).length} file(s) were written before it. `
+        + "Nothing was deleted; the files listed under written are on disk. Write the project again into a new, "
+        + "empty folder, and remove the incomplete folder yourself if you do not need it.",
+      written: w.written,
+      notWritten: Object.keys(files).filter((p) => !w.written.some((x) => x.path === p)),
+    };
+  }
+  const written = w.written;
 
   // Self-check: the validator, then an independent read-back of what is on disk.
   const validateReport = deps.validateReport || require("./server.js").validateReport;

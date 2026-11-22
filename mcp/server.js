@@ -1112,8 +1112,11 @@ function handle(msg) {
       if (CALLABLE[name]) {
         try {
           const result = CALLABLE[name].fn(params.arguments || {});
+          // A tool that answers with ok: false (write_project when a write fails partway, with the
+          // list of files already on disk) is an error to the host, with its full answer attached.
           return respond(id, {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }], isError: false,
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            isError: Boolean(result && result.ok === false),
           });
         } catch (err) {
           // A refused encode is a useful answer, not a crash: the message names the field and
