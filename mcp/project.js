@@ -549,8 +549,12 @@ function calendarText(cal) {
   col("Quarter", "string", "\"Q\" & QUARTER ( [Date] )", { sortBy: "QuarterNo" });
   col("YearMonth", "string", "YEAR ( [Date] ) & \"-\" & FORMAT ( MONTH ( [Date] ), \"00\" )");
   if (cal.pyDate) {
-    col("PY date", "dateTime", "IF ( MONTH ( [Date] ) = 2 && DAY ( [Date] ) = 29, BLANK (), "
-      + "DATE ( YEAR ( [Date] ) - 1, MONTH ( [Date] ), DAY ( [Date] ) ) )", { hidden: true, formatString: "yyyy-MM-dd" });
+    // Each date's date one year later, 29 February going to 28 February. The PY measure keeps the
+    // prior dates whose next-year date is selected, so every prior date counts in exactly one
+    // selected date: a whole month always gets the whole month a year earlier, 29 February included.
+    col("Next year date", "dateTime", "IF ( MONTH ( [Date] ) = 2 && DAY ( [Date] ) = 29, "
+      + "DATE ( YEAR ( [Date] ) + 1, 2, 28 ), DATE ( YEAR ( [Date] ) + 1, MONTH ( [Date] ), DAY ( [Date] ) ) )",
+      { hidden: true, formatString: "yyyy-MM-dd" });
   }
   if (cal.fiscalStart !== 1) {
     col("Fiscal Year", "int64", `YEAR ( EDATE ( [Date], ${(13 - cal.fiscalStart) % 12} ) )`, { formatString: "0" });
@@ -829,9 +833,9 @@ function buildMeasures(fact, metrics, sc, dateCol, assumptions) {
     }
     if (sc.py === "timeIntelligence") {
       codes.PY = [
-        `VAR PYDates = VALUES ( ${daxCol(CALENDAR, "PY date")} )`,
+        `VAR SelectedDates = VALUES ( ${daxCol(CALENDAR, "Date")} )`,
         "RETURN",
-        `\tCALCULATE ( ${daxBracket(`${m.name} AC`)}, REMOVEFILTERS ( ${daxTable(CALENDAR)} ), TREATAS ( PYDates, ${daxCol(CALENDAR, "Date")} ) )`,
+        `\tCALCULATE ( ${daxBracket(`${m.name} AC`)}, REMOVEFILTERS ( ${daxTable(CALENDAR)} ), TREATAS ( SelectedDates, ${daxCol(CALENDAR, "Next year date")} ) )`,
       ].join("\n");
     }
     byMetric.set(m.name.toLowerCase(), Object.keys(codes));
@@ -1055,6 +1059,8 @@ function reportingWindow(fact, sc, dateCol, fiscalStart, bound) {
   const limits = [];
   for (const role of bound) {
     let have;
+    // Exact by month: the PY measure counts each prior date in its next-year date, which is always in
+    // the same month a year later (29 February in 28 February), so prior month m covers month m + 12.
     if (role === "PY" && sc.py === "timeIntelligence") have = new Set([...ac].map((m) => shiftMonths(m, 12)));
     else have = covers(role);
     if (!have) continue;
@@ -1412,7 +1418,7 @@ function writeProject(args = {}, deps = {}) {
 
   fact.measures = buildMeasures(fact, metrics, sc, dateInfo, assumptions);
   if (sc.py === "timeIntelligence") {
-    assumptions.push("PY measures shift the selected dates back one year day by day (the Calendar's PY date column, TREATAS, with the calendar filter removed), so a period that stops mid-month is compared with the same days a year earlier; 29 February has no counterpart.");
+    assumptions.push("PY measures read the same days one year earlier: each date of the prior year counts in its date one year later (the Calendar's Next year date column, TREATAS, with the calendar filter removed), and 29 February counts in 28 February. A period that stops mid-month is compared with the same days a year earlier, and the months of previous year add up to its year.");
   }
   const rels = buildRelationships(models, joins, fact, dateInfo, assumptions);
 

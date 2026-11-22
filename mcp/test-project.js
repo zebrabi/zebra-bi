@@ -255,7 +255,7 @@ check("measures are template DAX on the fact table, quoted, one per scenario, PY
   const by = Object.fromEntries(t.measures.map((x) => [x.name, x.expression]));
   assert.strictEqual(by["Amount AC"], "CALCULATE ( SUM ( 'sales'[Amount] ), 'sales'[Scenario] = \"Actual\" )");
   assert.strictEqual(by["Amount PL"], "CALCULATE ( SUM ( 'sales'[Amount] ), 'sales'[Scenario] = \"Budget\" )");
-  assert.ok(/TREATAS \( PYDates, 'Calendar'\[Date\] \)/.test(by["Amount PY"]) && /REMOVEFILTERS \( 'Calendar' \)/.test(by["Amount PY"]));
+  assert.ok(/TREATAS \( SelectedDates, 'Calendar'\[Next year date\] \)/.test(by["Amount PY"]) && /REMOVEFILTERS \( 'Calendar' \)/.test(by["Amount PY"]), by["Amount PY"]);
   assert.ok(!m.tables.some((x) => /^(measures|kpi|goal|calculations)$/i.test(x.name)), "a measure holder table exists");
   assert.strictEqual(t.columns.find((c) => c.name === "Amount").dataType, "int64");
   const amountNode = m.sources.find((s) => /sales\.tmdl$/.test(s.rel)).tree.nodes.find((x) => x.type === "column" && x.name === "Amount");
@@ -329,6 +329,89 @@ check("the proposed page opens on one window, and AC, PL and PY under its slicer
   assert.ok(/Jan 2025 to Jun 2025'$/.test(table.visual.objects.titleSettings[0].properties.text.expr.Literal.Value), "title");
   assert.ok(!r1.validation.findings.some((x) => x.code === "page-filter-hardcodes-the-period" || x.code === "slicer-filter-double-nested"), JSON.stringify(r1.validation.findings));
 });
+
+// --- previous year, case by case ----------------------------------------------------------------
+
+/**
+ * Evaluates the written PY measure over the rows written in the model, the way the engine would:
+ * it reads the measure and the Calendar's own columns from the TMDL, so a change to either is what
+ * the test measures. Selection `S` is a set of calendar dates.
+ */
+function pyEvaluator(outDir, name, table) {
+  const files = tree(outDir);
+  const cal = files[`${name}.SemanticModel/definition/tables/Calendar.tmdl`].toString("utf8");
+  const fact = files[`${name}.SemanticModel/definition/tables/${table}.tmdl`].toString("utf8");
+  const [, y1, m1, d1, y2, m2, d2] = /CALENDAR \( DATE \( (\d+), (\d+), (\d+) \), DATE \( (\d+), (\d+), (\d+) \) \)/.exec(cal).map(Number);
+  const iso = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const days = [];
+  for (let t = Date.UTC(y1, m1 - 1, d1); t <= Date.UTC(y2, m2 - 1, d2); t += 86400000) days.push(new Date(t).toISOString().slice(0, 10));
+  const rows = fact.split("\n").filter((l) => /^\t+\{\d{4}, /.test(l)).map((l) => l.trim().replace(/,$/, "").slice(1, -1).split(", "));
+  const byDate = new Map();
+  for (const r of rows) { const k = iso(+r[0], +r[1], +r[2]); byDate.set(k, (byDate.get(k) || 0) + Number(r[r.length - 1])); }
+  const pyExpr = /measure 'Amount PY' =\n([\s\S]*?)\n\t\tformatString/.exec(fact)[1];
+  const parts = (s) => s.split("-").map(Number);
+  let priorOf;
+  if (/TREATAS \( SelectedDates, 'Calendar'\[Next year date\] \)/.test(pyExpr)
+    && /"Next year date", IF \( MONTH \( \[Date\] \) = 2 && DAY \( \[Date\] \) = 29, DATE \( YEAR \( \[Date\] \) \+ 1, 2, 28 \), DATE \( YEAR \( \[Date\] \) \+ 1, MONTH \( \[Date\] \), DAY \( \[Date\] \) \) \)/.test(cal)) {
+    const ny = (p) => { const [y, m, d] = parts(p); return m === 2 && d === 29 ? iso(y + 1, 2, 28) : iso(y + 1, m, d); };
+    priorOf = (S) => days.filter((p) => S.has(ny(p)));
+  } else if (/TREATAS \( PYDates, 'Calendar'\[Date\] \)/.test(pyExpr) && /"PY date", IF \( MONTH \( \[Date\] \) = 2 && DAY \( \[Date\] \) = 29, BLANK \(\)/.test(cal)) {
+    const pyd = (s) => { const [y, m, d] = parts(s); return m === 2 && d === 29 ? null : iso(y - 1, m, d); };
+    priorOf = (S) => [...S].map(pyd).filter((p) => p && days.includes(p));
+  } else {
+    throw new Error(`unrecognised PY measure: ${pyExpr}`);
+  }
+  const sumOn = (dates) => [...new Set(dates)].reduce((s, d) => s + (byDate.get(d) || 0), 0);
+  return { days, py: (S) => sumOn(priorOf(S)), ac: (S) => sumOn([...S]) };
+}
+
+/** Daily rows, or one row on each month's last day, for 2023 to 2025; 2024 is the leap year. */
+function pyFixture(grain) {
+  const rows = [["Date", "Region", "Amount"]];
+  for (let y = 2023; y <= 2025; y++) for (let m = 1; m <= 12; m++) {
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    for (let d = grain === "daily" ? 1 : last; d <= last; d++) {
+      rows.push([`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`, d % 2 ? "North" : "South", (y - 2022) * 10000 + m * 100 + d]);
+    }
+  }
+  return rows;
+}
+const monthsOf = (a, b) => { const out = []; for (let m = a; m <= b; m = shiftM(m, 1)) out.push(m); return out; };
+function shiftM(m, k) { const [y, mo] = m.split("-").map(Number); const t = y * 12 + mo - 1 + k; return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`; }
+const PY_CASES = [
+  ["a", "one month, Mar 2025", ["2025-03"]],
+  ["b", "several months, Jan, Mar and Nov 2025", ["2025-01", "2025-03", "2025-11"]],
+  ["c", "year to date, Jan to Sep 2025", monthsOf("2025-01", "2025-09")],
+  ["d", "Feb 2025, the year after the leap year", ["2025-02"]],
+  ["e", "Feb 2024, the leap year itself", ["2024-02"]],
+  ["f", "fiscal year Jul 2024 to Jun 2025", monthsOf("2024-07", "2025-06")],
+  ["g", "the first year in the data, 2023", monthsOf("2023-01", "2023-12")],
+  ["h", "grand total, every date", monthsOf("2023-01", "2025-12")],
+];
+const pyResults = [];
+for (const grain of ["daily", "month-end"]) {
+  check(`previous year returns the same months a year earlier, every case, ${grain} data`, () => {
+    const out = target();
+    const rows = pyFixture(grain);
+    write({ name: "PYT", outPath: out, source: { path: bed({ "flows.csv": csv(rows) }) }, scenarios: { form: "none", py: "timeIntelligence" },
+      date: { column: "Date", fiscalYearStartMonth: 7 } });
+    const ev = pyEvaluator(out, "PYT", "flows");
+    const src = rows.slice(1);
+    const bad = [];
+    for (const [id, what, months] of PY_CASES) {
+      const S = new Set(ev.days.filter((d) => months.includes(d.slice(0, 7))));
+      const want = src.filter((r) => months.includes(shiftM(r[0].slice(0, 7), 12))).reduce((s, r) => s + r[2], 0);
+      const got = ev.py(S);
+      pyResults.push({ grain, id, what, want, got });
+      if (got !== want) bad.push(`(${id}) ${what}: expected ${want}, got ${got}`);
+    }
+    // Additive: the months of a year add up to the year.
+    const months2025 = monthsOf("2025-01", "2025-12");
+    const byMonth = months2025.reduce((s, m) => s + ev.py(new Set(ev.days.filter((d) => d.startsWith(m)))), 0);
+    if (byMonth !== ev.py(new Set(ev.days.filter((d) => d.startsWith("2025"))))) bad.push("the months of 2025 do not add up to 2025");
+    assert.deepStrictEqual(bad, []);
+  });
+}
 
 check("a plan that does not cover the whole window is stated as a limitation", () => {
   const rows = longRows().filter((r, i) => i === 0 || !(r[3] === "Budget" && r[0] >= "2025-04"));
@@ -462,7 +545,7 @@ check("none form: an actual per metric, PY by time intelligence when asked", () 
   assert.strictEqual(t.measures[0].expression, "SUM ( 'units'[Units] )");
   assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0);
   const cal = fs.readFileSync(path.join(out, "N.SemanticModel", "definition", "tables", "Calendar.tmdl"), "utf8");
-  assert.ok(cal.includes("DATE ( 2025, 12, 15 )") && cal.includes("\"PY date\""));
+  assert.ok(cal.includes("DATE ( 2025, 12, 15 )") && cal.includes("\"Next year date\""));
 });
 
 check("a source with no scenario column is refused with the three forms spelled out", () => {
@@ -478,7 +561,7 @@ check("long form with a PY member takes PY from it", () => {
   const t = tmdl.readModel(out).tables.find((x) => x.name === "v");
   const by = Object.fromEntries(t.measures.map((x) => [x.name, x.expression]));
   assert.strictEqual(by["Value PY"], "CALCULATE ( SUM ( 'v'[Value] ), 'v'[Version] = \"PY\" )");
-  assert.ok(!fs.readFileSync(path.join(out, "P.SemanticModel", "definition", "tables", "Calendar.tmdl"), "utf8").includes("PY date"));
+  assert.ok(!fs.readFileSync(path.join(out, "P.SemanticModel", "definition", "tables", "Calendar.tmdl"), "utf8").includes("Next year date"));
 });
 
 check("long form with keyed scenarios is read through the scenario table", () => {
@@ -803,6 +886,7 @@ check("the server lists write_project with explicit write annotations", () => {
 });
 
 for (const [s, name, d] of results) console.log(`  ${s}  ${name}${d ? `  <- ${d}` : ""}`);
+if (process.env.ZBI_PY_TABLE) console.log(JSON.stringify(pyResults));
 const failed = results.filter(([s]) => s === "FAIL").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
 fs.rmSync(TMP, { recursive: true, force: true });
