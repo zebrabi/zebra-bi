@@ -61,7 +61,8 @@
       "include": true,
       "reason": "Writes and checks the project files in the sandbox. The checker travels as skill scripts run with Node, because connectors are remote HTTPS MCP servers only.",
       "overlay": [
-        { "op": "insert-after", "line": "# Authoring Zebra BI reports", "file": "overlay/authoring-tools.md" }
+        { "op": "insert-after", "line": "# Authoring Zebra BI reports", "file": "overlay/authoring-tools.md" },
+        { "op": "drop-paragraph", "startsWith": "When the Zebra BI tools (`write_report`" }
       ],
       "moveSections": {
         "file": "references/sections-moved-for-microsoft-365.md",
