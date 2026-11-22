@@ -15,7 +15,7 @@ them.
 | You use | Route | State |
 |---|---|---|
 | Claude Code — terminal, desktop app, VS Code or JetBrains | **[1. Marketplace](#1-claude-code-marketplace)** | Works. This is the supported route |
-| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands. Skills and both servers register; **no report authored end to end on it yet** |
+| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands. Skills and the hosted server register; the checker is one more command; **no report authored end to end on it yet** |
 | Codex, Cursor, Gemini CLI, OpenCode, Kiro, or anything else that reads agent skills | **[2. Skills folder](#2-the-skills-folder-any-other-agent)** | The skills are plain Markdown and the checker is a plain stdio MCP server, so they load. **We have not run a report end to end on any of these hosts** |
 | A machine with no git, or a locked-down build | **[3. Release zip](#3-release-zip-no-git)** | Same bytes, downloaded instead of cloned |
 
@@ -53,18 +53,34 @@ copilot plugin marketplace add zebrabi/zebra-bi
 copilot plugin install zebra-bi@zebrabi
 ```
 
-That installs the 11 skills and registers both MCP servers: `zebra-bi`, the hosted server that
-draws charts, and `zebra-bi-reports`, the checker, started as `node ${PLUGIN_ROOT}/mcp/server.js`
-from the installed plugin's own folder. `copilot mcp list` shows them under *Plugin servers*, and
-`copilot skill list` shows the skills. The checker needs [Node.js](https://nodejs.org) on the PATH;
-without it only that server fails to start and the skills and the hosted server still load.
+That installs the 11 skills and registers `zebra-bi`, the hosted server that draws charts. Copilot
+CLI takes a plugin's servers from its `mcp.json` only, and that file lists the hosted server alone,
+so the checker is one more command. It needs [Node.js](https://nodejs.org) on the PATH and points at
+the checker inside the installed plugin.
+
+Windows, in PowerShell:
+
+```
+copilot mcp add zebra-bi-reports -- node "$HOME\.copilot\installed-plugins\zebrabi\zebra-bi\mcp\server.js"
+```
+
+macOS and Linux:
+
+```
+copilot mcp add zebra-bi-reports -- node "$HOME/.copilot/installed-plugins/zebrabi/zebra-bi/mcp/server.js"
+```
+
+If you set `COPILOT_HOME`, use that folder in place of `~/.copilot`. `copilot mcp list` then shows
+`zebra-bi-reports` under *User servers* and `zebra-bi` under *Plugin servers*, and `copilot skill
+list` shows the skills. The command stores the absolute path, so run it again if you move or
+reinstall the plugin under a different marketplace name.
 
 Then start Copilot and ask for the skill by name: *"use the setup-doctor skill"*.
 
-**What is verified:** on Windows with Copilot CLI 1.0.108 and 1.0.114 (2026-11-22), the two commands
-register both servers and the skills, and a session calls the checker's `validate_report` on a
-Power BI project. **What is not:** macOS and Linux, and a report authored end to end on Copilot.
-If you try either, tell us what happened.
+**What is verified:** on Windows with Copilot CLI 1.0.108 and 1.0.114 (2026-11-22), the install
+commands register the skills and the hosted server, the `copilot mcp add` command registers the
+checker, and a session calls its `validate_report` on a Power BI project. **What is not:** macOS and
+Linux, and a report authored end to end on Copilot. If you try either, tell us what happened.
 
 ## 2. The skills folder (any other agent)
 

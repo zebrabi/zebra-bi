@@ -14,10 +14,11 @@ though they shipped would misrepresent what anyone could have installed.
 
 ## Unreleased
 
-- Installing the plugin in GitHub Copilot CLI now registers the checker as `zebra-bi-reports`
-  beside the hosted server. `mcp.json`, the file Copilot CLI reads, lists it, started as
-  `node ${PLUGIN_ROOT}/mcp/server.js`, so there is no `copilot mcp add` step. `INSTALL.md` section 1b
-  describes the install as measured.
+- `INSTALL.md` section 1b gives the one command that registers the checker as `zebra-bi-reports`
+  in GitHub Copilot CLI, with the path inside the installed plugin, and states what was verified.
+  Copilot CLI reads a plugin's servers from `mcp.json` only, which lists the hosted server alone, so
+  the install commands do not register the checker.
+- The Microsoft 365 package build writes a `mcp.json` with the hosted server only, and a test checks it.
 
 ## 0.3.2 — 2026-11-04
 
