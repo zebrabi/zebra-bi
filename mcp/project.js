@@ -72,6 +72,8 @@ const CODE_NAMES = [
   [/^(fc|forecast|outlook|estimate|fcst)$/i, "FC"],
   [/^(py|prior ?year|previous ?year|ly|last ?year)$/i, "PY"],
 ];
+/** A scenario value as the measure's filter compares it: trimmed, and without case. */
+const memberKey = (v) => String(v === undefined || v === null ? "" : v).trim().toLowerCase();
 const codeOf = (label) => {
   const s = String(label).trim();
   for (const [re, code] of CODE_NAMES) if (re.test(s)) return code;
@@ -202,11 +204,19 @@ function readSource(root, overrides) {
   const tables = [];
   // Every file that is not loaded, with the reason. Nothing is left out in silence.
   const skipped = [];
-  const skip = (file, reason) => skipped.push({ file: path.basename(file), reason });
+  // A file is named by its path below source.path, so two files with one name stay apart.
+  const relOf = (f) => (isFolder ? path.relative(root, f).split(path.sep).join("/") : path.basename(f));
+  const skip = (file, reason) => skipped.push({ file: relOf(file), reason });
+  for (const o of overrides) {
+    const hits = files.filter((f) => sameSource(o.source, f, relOf(f)));
+    need(hits.length, `tables: no source file matches '${o.source}'. Files read: ${files.map(relOf).join(", ")}`);
+    need(hits.length === 1, `tables: '${o.source}' matches ${hits.length} files (${hits.map(relOf).join(", ")}). `
+      + "Name the file by its path below source.path, for example \"archive/sales.csv\".");
+  }
   for (const file of files) {
     const ext = path.extname(file).toLowerCase();
     const stem = path.basename(file, ext);
-    const ov = overrides.find((o) => sameSource(o.source, file));
+    const ov = overrides.find((o) => sameSource(o.source, file, relOf(file)));
     if (ov && ov.role === "skip") { skip(file, "skipped as asked (role: skip)"); continue; }
     // A file the caller named, or the one file source.path points at, must load or refuse; any other
     // file in a folder that cannot be read as a table is skipped with the reason.
@@ -223,6 +233,15 @@ function readSource(root, overrides) {
       + "source.path at the files you need and skip this one with tables: [{source, role: \"skip\"}].");
     let t;
     if (ext === ".json") {
+      // JSON numbers are read as doubles, so an integer beyond 2^53 would change its last digits.
+      const outsideStrings = fs.readFileSync(file, "utf8").replace(/"(?:[^"\\]|\\.)*"/g, "\"\"");
+      const big = (outsideStrings.match(/-?\d{16,}(?![\d.eE])/g) || []).find((d) => BigInt(d.replace("-", "")) > BigInt(Number.MAX_SAFE_INTEGER));
+      if (big) {
+        const why = `holds the integer ${big}, beyond 2^53, which JSON parsing would change; export such numbers as strings, or the file as CSV`;
+        need(!required, `${relOf(file)} ${why}.`);
+        skip(file, why);
+        continue;
+      }
       t = ps.readJsonTable(file);
       if (t.unreadable) {
         need(!required, `${path.basename(file)} was not read: ${t.unreadable}.`);
@@ -237,22 +256,27 @@ function readSource(root, overrides) {
       }
     }
     if (!t.rows.length) { skip(file, "no data rows"); continue; }
-    tables.push({ file: path.basename(file), stem, header: t.header, rows: t.rows, override: ov || null,
+    tables.push({ file: relOf(file), stem, header: t.header, rows: t.rows, override: ov || null,
       headerless: Boolean(t.headerless), required });
   }
-  for (const o of overrides) {
-    const hit = files.some((f) => sameSource(o.source, f));
-    need(hit, `tables: no source file matches '${o.source}'. Files read: `
-      + files.map((f) => path.basename(f)).join(", "));
+  // Two files with one name would share one table's profile and joins; refused, never merged.
+  const byStem = new Map();
+  for (const t of tables) {
+    const k = t.stem.toLowerCase();
+    need(!byStem.has(k), `${byStem.get(k)} and ${t.file} have the same name, so they would be one table. `
+      + `Skip one with tables: [{source: "${t.file}", role: "skip"}], rename one, or point source.path at one folder.`);
+    byStem.set(k, t.file);
   }
   need(tables.length, `nothing readable was found under ${root}.${skipped.length ? ` ${skipped.map((s) => `${s.file}: ${s.reason}`).join("; ")}` : ""}`);
   return { tables, notes, skipped, isFolder };
 }
 
-function sameSource(name, file) {
+/** An override names a file by its path below source.path, its file name, or its name without extension. */
+function sameSource(name, file, rel) {
   if (typeof name !== "string") return false;
+  const n = name.replace(/\\/g, "/").toLowerCase();
+  if (rel && n === rel.toLowerCase()) return true;
   const b = path.basename(file).toLowerCase();
-  const n = name.toLowerCase();
   return n === b || n === path.basename(file, path.extname(file)).toLowerCase();
 }
 
@@ -290,12 +314,12 @@ function decideKind(table, colName, values, profileType, forced, assumptions) {
       need(bad === undefined, `${where} was given type number but holds '${bad}'.`);
       return { kind: "number", blanks };
     }
-    return dateKind(where, filled, blanks, assumptions);
+    return dateKind(where, filled, blanks, assumptions, values);
   }
 
   if (!filled.length) return { kind: "text", blanks };
 
-  if (profileType === "date") return dateKind(where, filled, blanks, assumptions);
+  if (profileType === "date") return dateKind(where, filled, blanks, assumptions, values);
   if (profileType === "integer" || profileType === "dateKey" || profileType === "number") {
     const bad = firstBad((v) => ps.NUM_RE.test(v));
     need(bad === undefined, `${where} is a mixed-type column: mostly numbers, but it also holds `
@@ -330,7 +354,7 @@ function decideKind(table, colName, values, profileType, forced, assumptions) {
   return { kind: "text", blanks };
 }
 
-function dateKind(where, filled, blanks, assumptions) {
+function dateKind(where, filled, blanks, assumptions, rowsOf = filled) {
   // Day-first or month-first, decided from the whole column the way profile_source does, and
   // refused when the column gives no evidence either way or evidence both ways.
   let dayFirst = 0, monthFirst = 0, slash = 0;
@@ -347,7 +371,8 @@ function dateKind(where, filled, blanks, assumptions) {
     + "12 or less, so the order cannot be told apart. Export the dates as ISO yyyy-mm-dd.");
   const df = dayFirst > 0;
   const bad = filled.find((v) => ps.toIsoDate(v, df) === null);
-  need(bad === undefined, `${where} is a date column, but '${bad}' is not a date this tool can read `
+  const row = bad === undefined ? -1 : rowsOf.indexOf(bad) + 1;
+  need(bad === undefined, `${where} is a date column, but '${bad}' (data row ${row}) is not a date this tool can read, or is a day past the end of its month `
     + "(ISO yyyy-mm-dd, yyyy/mm/dd, or a slash form with a four-digit year). Fix the value, or pass "
     + `types: {"${where.replace(/^.*\[|\]$/g, "")}": "text"} to load the column as text.`);
   const timed = filled.find((v) => {
@@ -549,8 +574,12 @@ function calendarText(cal) {
   col("Quarter", "string", "\"Q\" & QUARTER ( [Date] )", { sortBy: "QuarterNo" });
   col("YearMonth", "string", "YEAR ( [Date] ) & \"-\" & FORMAT ( MONTH ( [Date] ), \"00\" )");
   if (cal.pyDate) {
-    col("PY date", "dateTime", "IF ( MONTH ( [Date] ) = 2 && DAY ( [Date] ) = 29, BLANK (), "
-      + "DATE ( YEAR ( [Date] ) - 1, MONTH ( [Date] ), DAY ( [Date] ) ) )", { hidden: true, formatString: "yyyy-MM-dd" });
+    // Each date's date one year later, 29 February going to 28 February. The PY measure keeps the
+    // prior dates whose next-year date is selected, so every prior date counts in exactly one
+    // selected date: a whole month always gets the whole month a year earlier, 29 February included.
+    col("Next year date", "dateTime", "IF ( MONTH ( [Date] ) = 2 && DAY ( [Date] ) = 29, "
+      + "DATE ( YEAR ( [Date] ) + 1, 2, 28 ), DATE ( YEAR ( [Date] ) + 1, MONTH ( [Date] ), DAY ( [Date] ) ) )",
+      { hidden: true, formatString: "yyyy-MM-dd" });
   }
   if (cal.fiscalStart !== 1) {
     col("Fiscal Year", "int64", `YEAR ( EDATE ( [Date], ${(13 - cal.fiscalStart) % 12} ) )`, { formatString: "0" });
@@ -639,23 +668,35 @@ function resolveScenarios(input, fact, tables, joins, dateCol, assumptions) {
 
   if (out.form === "long") {
     const ci = out.column.index;
+    // Grouped the way the measure's filter compares them: Power BI compares text without case, and
+    // the cells are written trimmed.
     const present = new Map();
     for (const r of fact.rows) {
       const v = String(r[ci] === undefined ? "" : r[ci]).trim();
-      present.set(v, (present.get(v) || 0) + 1);
+      const k = memberKey(v);
+      if (!present.has(k)) present.set(k, { rows: 0, variants: new Set() });
+      present.get(k).rows++;
+      present.get(k).variants.add(v);
     }
     const seenCodes = new Set();
+    const seenKeys = new Map();
     for (const [v, code] of Object.entries(out.members)) {
       need(CODES.includes(code), `scenarios.members['${v}'] is '${code}'; use AC, PL, FC or PY.`);
       need(!seenCodes.has(code), `scenarios.members maps two values to ${code}. Map one value per code.`);
       seenCodes.add(code);
-      need(present.has(v), `scenarios.members names '${v}', which never occurs in ${fact.name}[${out.column.name}]. `
-        + `Values found: ${[...present.keys()].slice(0, 20).join(", ")}.`);
+      need(!seenKeys.has(memberKey(v)), `scenarios.members maps '${seenKeys.get(memberKey(v))}' and '${v}' to different codes, but they differ only in case or spaces, `
+        + "and Power BI compares them as one value, so both measures would count the same rows. Map one of them.");
+      seenKeys.set(memberKey(v), v);
+      need(present.has(memberKey(v)), `scenarios.members names '${v}', which never occurs in ${fact.name}[${out.column.name}]. `
+        + `Values found: ${[...present.values()].flatMap((x) => [...x.variants]).slice(0, 20).join(", ")}.`);
+      const g = present.get(memberKey(v));
+      if (g.variants.size > 1) assumptions.push(`Scenarios: ${[...g.variants].join(", ")} are one value to Power BI, which compares text without case, so the ${code} measure counts all ${g.rows} of their rows.`);
       if (out.column.kind !== "text") need(ps.NUM_RE.test(v), `scenarios.members key '${v}' must be a number: ${fact.name}[${out.column.name}] is numeric.`);
     }
     need(seenCodes.has("AC"), "scenarios.members maps no value to AC. One value must be the actuals.");
     if (s && s.form === "long") {
-      for (const v of present.keys()) if (!(v in out.members) && v !== "") assumptions.push(`Scenarios: rows with ${fact.name}[${out.column.name}] = ${v} are in no measure; map the value in scenarios.members to include them.`);
+      const mapped = new Set(Object.keys(out.members).map(memberKey));
+      for (const [k, g] of present) if (!mapped.has(k) && k !== "") assumptions.push(`Scenarios: ${g.rows} row(s) with ${fact.name}[${out.column.name}] = ${[...g.variants].join(" or ")} are in no measure; map the value in scenarios.members to include them.`);
     }
   }
   if (out.form === "wide") {
@@ -694,7 +735,15 @@ function detectLong(fact, tables, joins) {
   if (!sig || sig.table !== fact.stem) return null;
   const column = fact.cols.find((c) => c.source === sig.column);
   if (!column) return null;
-  const values = [...new Set(fact.rows.map((r) => String(r[column.index] === undefined ? "" : r[column.index]).trim()))].filter(Boolean);
+  // Values that differ only in case are one value to the measure's filter, so they are one member.
+  const variants = new Map();
+  for (const r of fact.rows) {
+    const v = String(r[column.index] === undefined ? "" : r[column.index]).trim();
+    if (!v) continue;
+    if (!variants.has(memberKey(v))) variants.set(memberKey(v), []);
+    if (!variants.get(memberKey(v)).includes(v)) variants.get(memberKey(v)).push(v);
+  }
+  const values = [...variants.values()].map((vs) => vs[0]);
   let labelOf = (v) => v;
   let labels = null;
   const empty = [];
@@ -803,7 +852,7 @@ function buildMeasures(fact, metrics, sc, dateCol, assumptions) {
   const byMetric = new Map();
   const memberOf = {};
   if (sc.form === "long") for (const [v, code] of Object.entries(sc.members)) memberOf[code] = v;
-  const rowsOf = (v) => fact.rows.filter((r) => String(r[sc.column.index]).trim() === v).length;
+  const rowsOf = (v) => fact.rows.filter((r) => memberKey(r[sc.column.index]) === memberKey(v)).length;
   const filterFor = (code) => {
     const v = memberOf[code];
     const lit = sc.column.kind === "text" ? daxString(v) : plainNumber(v);
@@ -829,9 +878,9 @@ function buildMeasures(fact, metrics, sc, dateCol, assumptions) {
     }
     if (sc.py === "timeIntelligence") {
       codes.PY = [
-        `VAR PYDates = VALUES ( ${daxCol(CALENDAR, "PY date")} )`,
+        `VAR SelectedDates = VALUES ( ${daxCol(CALENDAR, "Date")} )`,
         "RETURN",
-        `\tCALCULATE ( ${daxBracket(`${m.name} AC`)}, REMOVEFILTERS ( ${daxTable(CALENDAR)} ), TREATAS ( PYDates, ${daxCol(CALENDAR, "Date")} ) )`,
+        `\tCALCULATE ( ${daxBracket(`${m.name} AC`)}, REMOVEFILTERS ( ${daxTable(CALENDAR)} ), TREATAS ( SelectedDates, ${daxCol(CALENDAR, "Next year date")} ) )`,
       ].join("\n");
     }
     byMetric.set(m.name.toLowerCase(), Object.keys(codes));
@@ -1037,13 +1086,13 @@ function reportingWindow(fact, sc, dateCol, fiscalStart, bound) {
   const memberOf = {};
   if (sc.form === "long") for (const [v, code] of Object.entries(sc.members)) memberOf[code] = v;
   const covers = (code) => {
-    if (sc.form === "long") return memberOf[code] === undefined ? null : monthsWhere((r) => val(r, sc.column) === memberOf[code]);
+    if (sc.form === "long") return memberOf[code] === undefined ? null : monthsWhere((r) => memberKey(val(r, sc.column)) === memberKey(memberOf[code]));
     if (sc.form === "wide") return sc.columns[code] ? monthsWhere((r) => !isBlank(val(r, sc.columns[code]))) : null;
     return code === "AC" ? monthsWhere(() => true) : null;
   };
   const ac = covers("AC");
   if (!ac || !ac.size) return null;
-  const actualDates = fact.rows.filter((r) => sc.form !== "long" || val(r, sc.column) === memberOf.AC)
+  const actualDates = fact.rows.filter((r) => sc.form !== "long" || memberKey(val(r, sc.column)) === memberKey(memberOf.AC))
     .map((r) => String(r[di] || "").trim()).filter((v) => !isBlank(v)).map((v) => ps.toIsoDate(v, dateCol.dayFirst)).sort();
   const lastDate = actualDates[actualDates.length - 1];
   const last = ym(lastDate);
@@ -1055,6 +1104,8 @@ function reportingWindow(fact, sc, dateCol, fiscalStart, bound) {
   const limits = [];
   for (const role of bound) {
     let have;
+    // Exact by month: the PY measure counts each prior date in its next-year date, which is always in
+    // the same month a year later (29 February in 28 February), so prior month m covers month m + 12.
     if (role === "PY" && sc.py === "timeIntelligence") have = new Set([...ac].map((m) => shiftMonths(m, 12)));
     else have = covers(role);
     if (!have) continue;
@@ -1186,18 +1237,43 @@ function checkOutPath(outPath) {
   }
 }
 
-function writeAll(outPath, files) {
-  fs.mkdirSync(outPath, { recursive: true });
+/**
+ * Writes every file, or stops at the first one that cannot be written and says exactly what is on
+ * disk. Nothing written is removed again: the tool never deletes a file.
+ */
+function writeAll(outPath, files, deps = {}) {
   const written = [];
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(outPath, ...rel.split("/"));
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    const buf = Buffer.from(content, "utf8");
-    // `wx` fails if the file exists, so nothing is ever overwritten.
-    fs.writeFileSync(abs, buf, { flag: "wx" });
-    written.push({ path: rel, bytes: buf.length });
+  let current = null;
+  try {
+    fs.mkdirSync(outPath, { recursive: true });
+    for (const [rel, content] of Object.entries(files)) {
+      current = rel;
+      const abs = path.join(outPath, ...rel.split("/"));
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      const buf = Buffer.from(content, "utf8");
+      if (deps.beforeWrite) deps.beforeWrite(rel, abs, written.length);
+      // `wx` fails if the file exists, so nothing is ever overwritten.
+      fs.writeFileSync(abs, buf, { flag: "wx" });
+      written.push({ path: rel, bytes: buf.length });
+    }
+  } catch (e) {
+    return { failed: { path: current, error: e.code ? `${e.code}: ${e.message}` : String(e.message || e) }, written };
   }
-  return written;
+  return { written };
+}
+
+/** Paths that would be one file on a case-insensitive file system, and names Windows refuses. */
+function checkFileNames(files) {
+  const seen = new Map();
+  for (const rel of Object.keys(files)) {
+    const k = rel.toLowerCase();
+    need(!seen.has(k), `${seen.get(k)} and ${rel} differ only in case, so on Windows they are one file and `
+      + "the second write would fail. Give the pages, visuals or tables names that differ in more than case.");
+    seen.set(k, rel);
+    for (const part of rel.split("/")) {
+      need(!DEVICE_NAMES.test(part.replace(/\.[^.]*$/, "")), `${rel}: '${part}' is a name Windows reserves for a device. Choose another name.`);
+    }
+  }
 }
 
 // --- the tool ------------------------------------------------------------------------------
@@ -1278,6 +1354,31 @@ function writeProject(args = {}, deps = {}) {
     t.rec = rec;
   }
 
+  // A table's own key (ProductKey on product) that another file carries is the one side of a
+  // relationship, and a one side must hold each key once. profile_source only joins a unique key, so a
+  // duplicate would otherwise drop the relationship in silence, or skip the table with the wrong reason.
+  for (const d of src.tables) {
+    const base = d.stem.replace(/^(dim|d_)/i, "").toLowerCase();
+    for (const c of d.rec.columns) {
+      if (c.unique || !/(key|id)$/i.test(c.name) || c.name.toLowerCase().replace(/[\s_]?(key|id)$/i, "") !== base) continue;
+      const others = src.tables.filter((o) => o !== d && o.rec.columns.some((x) => x.name.toLowerCase() === c.name.toLowerCase()));
+      if (!others.length) continue;
+      const i = d.header.indexOf(c.name);
+      const seen = new Map();
+      let dup = null;
+      for (const r of d.rows) {
+        const v = String(r[i] === undefined ? "" : r[i]).trim();
+        if (isBlank(v)) continue;
+        seen.set(v, (seen.get(v) || 0) + 1);
+        if (seen.get(v) === 2 && dup === null) dup = v;
+      }
+      if (dup === null) continue;
+      need(false, `${d.file}: ${c.name} is the key ${others.map((o) => o.file).join(" and ")} ${others.length > 1 ? "relate" : "relates"} to, and it holds `
+        + `'${dup}' ${seen.get(dup)} times. The one side of a relationship needs each key once; a duplicate loads and then `
+        + `fails. De-duplicate the file, or skip it with tables: [{source: "${d.file}", role: "skip"}].`);
+    }
+  }
+
   // From a folder, a file becomes a table only when it is plausibly data: it reads as a fact, has a
   // date or an amount column, or joins another file in the folder. A headerless file with one column
   // never is. A file the caller names in `tables` is always loaded.
@@ -1288,7 +1389,11 @@ function writeProject(args = {}, deps = {}) {
       const r = t.rec;
       const hasDate = r.columns.some((c) => c.type === "date");
       const hasAmount = r.columns.some((c) => (c.type === "integer" || c.type === "number") && !keyish(c.name));
-      const joined = joins0.some((j) => j.fromTable === r.table || j.toTable === r.table);
+      // A join as profile_source finds one, or a key column this file shares with another file where
+      // one side holds each key once (a small fact can hold its keys once too).
+      const joined = joins0.some((j) => j.fromTable === r.table || j.toTable === r.table)
+        || src.tables.some((o) => o !== t && o.rec.columns.some((x) => /(key|id)$/i.test(x.name)
+          && r.columns.some((c) => c.name.toLowerCase() === x.name.toLowerCase() && (c.unique || x.unique))));
       let reason = null;
       if (t.headerless && t.header.length === 1) reason = "one column and no header row, so not a table of data";
       else if (r.role === "date") reason = null;                       // set aside below, with its own note
@@ -1382,6 +1487,10 @@ function writeProject(args = {}, deps = {}) {
     assumptions.push("No date column on the fact table, so there is no Calendar and no time intelligence.");
   }
 
+  // A fact is never the one side of a relationship, even a small one whose keys happen to be unique:
+  // the relationship would run backwards and the dimension would filter nothing.
+  fact.rec.role = "fact";
+  for (const m of models) if (m.rec.role === "fact") m.rec.keyColumn = null;
   const joins = ps.joinSignals(models.map((m) => m.rec));
   const sc = resolveScenarios(args.scenarios, fact, models, joins, dateInfo, assumptions);
   const metrics = resolveMetrics(args.metrics, fact, sc, assumptions);
@@ -1403,7 +1512,7 @@ function writeProject(args = {}, deps = {}) {
   // Coverage per scenario, so a variance over unequal windows is stated rather than discovered.
   if (sc.form === "long" && dateInfo) {
     for (const [v, code] of Object.entries(sc.members)) {
-      const ds = fact.rows.filter((r) => String(r[sc.column.index]).trim() === v)
+      const ds = fact.rows.filter((r) => memberKey(r[sc.column.index]) === memberKey(v))
         .map((r) => String(r[dateCol.index] || "").trim()).filter((x) => !isBlank(x))
         .map((x) => ps.toIsoDate(x, dateCol.dayFirst)).sort();
       if (ds.length) assumptions.push(`${code} (${v}) covers ${ds[0]} to ${ds[ds.length - 1]}; a variance compares like periods only where both scenarios have rows.`);
@@ -1412,7 +1521,7 @@ function writeProject(args = {}, deps = {}) {
 
   fact.measures = buildMeasures(fact, metrics, sc, dateInfo, assumptions);
   if (sc.py === "timeIntelligence") {
-    assumptions.push("PY measures shift the selected dates back one year day by day (the Calendar's PY date column, TREATAS, with the calendar filter removed), so a period that stops mid-month is compared with the same days a year earlier; 29 February has no counterpart.");
+    assumptions.push("PY measures read the same days one year earlier: each date of the prior year counts in its date one year later (the Calendar's Next year date column, TREATAS, with the calendar filter removed), and 29 February counts in 28 February. A period that stops mid-month is compared with the same days a year earlier, and the months of previous year add up to its year.");
   }
   const rels = buildRelationships(models, joins, fact, dateInfo, assumptions);
 
@@ -1515,9 +1624,27 @@ function writeProject(args = {}, deps = {}) {
   need(longest.length <= LIMITS.pathLength, `The deepest file would be ${longest.length} characters long `
     + `(${longest}), above the ${LIMITS.pathLength}-character limit past which Windows tools and Power BI `
     + "Desktop's Save As fail. Choose a shorter outPath or name.");
+  checkFileNames(files);
 
+  // The folder is checked again just before the first write: something else may have written into
+  // it while the project was being built.
+  if (deps.beforeFinalCheck) deps.beforeFinalCheck(outPath);
   checkOutPath(outPath);
-  const written = writeAll(outPath, files);
+  const w = writeAll(outPath, files, deps);
+  if (w.failed) {
+    return {
+      ok: false,
+      incomplete: true,
+      outPath,
+      error: `Writing ${w.failed.path} failed (${w.failed.error}), so the project in ${outPath} is INCOMPLETE `
+        + `and will not open: ${w.written.length} of ${Object.keys(files).length} file(s) were written before it. `
+        + "Nothing was deleted; the files listed under written are on disk. Write the project again into a new, "
+        + "empty folder, and remove the incomplete folder yourself if you do not need it.",
+      written: w.written,
+      notWritten: Object.keys(files).filter((p) => !w.written.some((x) => x.path === p)),
+    };
+  }
+  const written = w.written;
 
   // Self-check: the validator, then an independent read-back of what is on disk.
   const validateReport = deps.validateReport || require("./server.js").validateReport;

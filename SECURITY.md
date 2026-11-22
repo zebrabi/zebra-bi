@@ -36,7 +36,10 @@ It reads and writes files in a Power BI project directory that you point it at. 
   every write to your project is one you can see in the transcript. **Two tools write to disk.**
   `write_project` creates a new project from a folder of flat files you point it at. It writes only
   into a folder that does not exist or is empty, never overwrites or deletes a file, and returns the
-  list of files it wrote, so the transcript shows every path it created. `write_measures` changes one
+  list of files it wrote, so the transcript shows every path it created. If a write fails partway (a
+  full disk, or another program creating a file in the folder at the same moment), it stops, returns
+  an error that lists every file already written and says the folder is incomplete, and removes
+  nothing: delete that folder yourself if you do not need it. `write_measures` changes one
   existing file: it inserts measures into the TMDL file of the table you name, or replaces a measure
   of the same name only when you pass `replace: true`. It keeps every other byte of that file, writes
   no other file, and returns the exact text it added and removed.

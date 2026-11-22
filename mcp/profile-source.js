@@ -152,6 +152,9 @@ function toIsoDate(s, dayFirst) {
 }
 function validYmd(y, mo, d) {
   if (y < 1900 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  // A day past the end of its month (31 February, 31 April, 29 February outside a leap year) is not a
+  // date; read as one it would roll into the next month.
+  if (d > new Date(Date.UTC(y, mo, 0)).getUTCDate()) return null;
   return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 function isDateKey(s) {

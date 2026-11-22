@@ -129,6 +129,21 @@ though they shipped would misrepresent what anyone could have installed.
 - `profile_project` ranks a fact table's measures by the columns of dimension tables related to it,
   and no longer ranks a relationship's key columns as amounts. A model with no relationships ranks
   as before.
+- Previous year counts 29 February. The `write_project` PY measure keeps the prior dates whose
+  next-year date is selected (a `Next year date` Calendar column, 29 February going to 28 February),
+  so a February after a leap year no longer loses its leap day, or the whole month with month-end
+  data, and the months of previous year add up to its year.
+- `write_project` refuses, before writing, page or visual names that differ only in case and names
+  Windows reserves (`CON`, `NUL`); if a write still fails partway it returns `ok: false` with every
+  file already written and says the folder is incomplete, and deletes nothing. It refuses an exact
+  duplicate on a table's own key that another file relates to, never makes a fact the one side,
+  groups scenario values as Power BI compares them (without case), refuses a day past the end of its
+  month, two source files with the same name, and JSON integers beyond 2^53.
+- `write_measures` keeps a table property after a replaced measure and the replaced measure's
+  `lineageTag` and annotations; leaves a DAX keyword that shares a table's name as written; reads a
+  measure as returning a date only when the date is its result; resolves `[Name]` to a measure, a
+  column of a table in scope or a column the expression introduces; quotes non-ASCII table names; and
+  writes through a temporary file, refusing if the file changed since it was read.
 
 ## 0.3.2 — 2026-11-04
 
