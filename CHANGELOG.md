@@ -35,8 +35,8 @@ though they shipped would misrepresent what anyone could have installed.
   `propose_pages` already proposes an AC against PL page from a model with a measure over each of
   those columns; when the measures are missing it now names the wide scenario columns in its notes
   and in its refusal.
-- Six new checks, each for a fault found in a project Power BI Desktop refused or drew empty:
-  `dax-unquoted-kpi-table` (a table named `KPI` referenced without quotes, which blanks the visuals that
+- Six new checks. Five are for a fault found in a project Power BI Desktop refused or drew empty, and one,
+  `charts-vertical-orientation-on-time`, is a layout check on a chart that draws. `dax-unquoted-kpi-table` (a table named `KPI` referenced without quotes, which blanks the visuals that
   use the measure), `zebra-visual-type-not-registered` (a Zebra BI visual type that `report.json` does
   not register, by `publicCustomVisuals`, an embedded resource package or the organization's store),
   `textbox-paragraphs-in-container-objects` (a textbox whose `paragraphs` sit under
@@ -75,7 +75,11 @@ though they shipped would misrepresent what anyone could have installed.
   `columnSettings` key whenever the pair is listed, so it no longer needs listing itself. With `roles`,
   or with the bindings of the same `write_visual` spec, a list that would draw one comparison in two
   slots is refused: `["actual-plan"]` on a table with Previous year and Plan bound leaves the second
-  slot on its default, the plan comparison, and drops the previous-year one.
+  slot on its default, the plan comparison, and drops the previous-year one. An entry for a scenario
+  that is not bound is refused only when it leaves a drawn slot repeating; otherwise the list is
+  written with a warning, because the visual stops reading at that entry and draws the rest. A
+  two-scenario table whose list ends in a `-percent` entry draws correctly; the encoder refuses that
+  list and names the fix, while `properties` and `rawObjects` write it with a warning.
 - `write_visual`, `write_page` and `write_report` check `chartSettings.calculations` on Tables and
   Tables+ however it is given (`tableCalculations`, `properties` or `rawObjects`). A value whose drawn
   slots repeat a comparison is refused, with the list to write instead. A value that draws correctly
