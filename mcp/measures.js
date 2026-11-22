@@ -141,6 +141,7 @@ function resolveReferences(measureName, expr, index, batch) {
   const problems = [];
   const quoted = new Map();
   const edits = [];
+  const columnTypes = [];
   const tableNames = [...index.tables.values()].map((t) => t.name);
   const allMeasures = [...index.measures.values()].map((m) => m.name).concat(batch);
   const allColumns = [...index.tables.values()].flatMap((t) => [...t.columns]);
@@ -172,6 +173,8 @@ function resolveReferences(measureName, expr, index, batch) {
       if (followedByColumn) {
         const col = bracketName(nx);
         const own = batch.some((b) => b.toLowerCase() === col.toLowerCase()) && table.name.toLowerCase() === index.home.toLowerCase();
+        if (table.columns.has(col.toLowerCase())) columnTypes.push(table.types.get(col.toLowerCase()));
+        else if (table.measures.has(col.toLowerCase()) || own) columnTypes.push("measure");
         if (!table.columns.has(col.toLowerCase()) && !table.measures.has(col.toLowerCase()) && !own) {
           problems.push(`${daxTable(table.name)}${nx.text}: ${table.name} has no column or measure '${col}' (nearest: ${nearest(col, [...table.columnNames, ...table.measureNames]).join(", ")})`);
         }
@@ -189,7 +192,27 @@ function resolveReferences(measureName, expr, index, batch) {
   }
   let out = expr;
   for (const e of edits.sort((a, b) => b.start - a.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end);
-  return { expression: out, problems, quoted: [...quoted.entries()].map(([from, to]) => `${from} -> ${to}`) };
+  // A date-valued measure: an aggregate that returns a date (MAX, MIN, LASTDATE, ...) whose first
+  // argument is a dateTime column, and nothing in the expression that turns the date into a number or
+  // text. Its format must be a date format, or the date shows as a serial number.
+  const AGG = new Set(["max", "min", "lastdate", "firstdate", "lastnonblank", "firstnonblank", "eomonth", "edate"]);
+  const NOT_A_DATE = /\b(FORMAT|DATEDIFF|YEAR|MONTH|DAY|QUARTER|WEEKNUM|COUNT|COUNTA|COUNTROWS|DISTINCTCOUNT|INT|VALUE|CONCATENATE|COMBINEVALUES|IF|SWITCH|DIVIDE)\s*\(/i;
+  let dateValued = false;
+  for (let k = 0; k < toks.length; k++) {
+    const t = toks[k];
+    if (t.type !== "ident" || !AGG.has(t.text.toLowerCase())) continue;
+    const open = significant(k, 1);
+    if (!open || open.text !== "(") continue;
+    const arg = significant(toks.indexOf(open), 1);
+    if (!arg || (arg.type !== "qtable" && arg.type !== "ident")) continue;
+    const br = significant(toks.indexOf(arg), 1);
+    if (!br || br.type !== "bracket") continue;
+    const tb = index.tables.get((arg.type === "qtable" ? quotedName(arg) : arg.text).toLowerCase());
+    if (tb && tb.types.get(bracketName(br).toLowerCase()) === "datetime") dateValued = true;
+  }
+  const code = toks.filter((t) => t.type !== "string" && t.type !== "comment").map((t) => t.text).join("");
+  if (NOT_A_DATE.test(code)) dateValued = false;
+  return { expression: out, problems, dateValued, quoted: [...quoted.entries()].map(([from, to]) => `${from} -> ${to}`) };
 }
 
 // --- the model -------------------------------------------------------------------------------
@@ -199,9 +222,9 @@ function modelIndex(model, home) {
   const measures = new Map();
   for (const t of model.tables) {
     const k = t.name.toLowerCase();
-    if (!tables.has(k)) tables.set(k, { name: t.name, columns: new Set(), measures: new Set(), columnNames: [], measureNames: [] });
+    if (!tables.has(k)) tables.set(k, { name: t.name, columns: new Set(), measures: new Set(), columnNames: [], measureNames: [], types: new Map() });
     const e = tables.get(k);
-    for (const c of t.columns) { e.columns.add(c.name.toLowerCase()); e.columnNames.push(c.name); }
+    for (const c of t.columns) { e.columns.add(c.name.toLowerCase()); e.columnNames.push(c.name); e.types.set(c.name.toLowerCase(), String(c.dataType || "").toLowerCase()); }
     for (const m of t.measures) {
       e.measures.add(m.name.toLowerCase()); e.measureNames.push(m.name);
       measures.set(m.name.toLowerCase(), { name: m.name, table: t.name, file: t.file });
@@ -309,15 +332,23 @@ function writeMeasures(args = {}, deps = {}) {
   // References.
   const quoted = [];
   const problems = [];
+  const formats = [];
   const batch = specs.map((s) => s.name);
   for (const s of specs) {
     const r = resolveReferences(s.name, s.expression, index, batch.filter((b) => b !== s.name));
     s.expression = r.expression;
+    if (r.dateValued) {
+      const f = s.formatString.replace(/"[^"]*"/g, "");
+      if (!(/[dMy]/.test(f) || /^(short|long|general) date$/i.test(s.formatString.trim()))) {
+        formats.push(`${s.name} returns a date, so its formatString must be a date format such as yyyy-MM-dd, mmm yyyy or Short Date, not '${s.formatString}'`);
+      }
+    }
     for (const q of r.quoted) quoted.push(`${s.name}: ${q}`);
     for (const p of r.problems) problems.push(`${s.name}: ${p}`);
   }
   need(!problems.length, `the expression(s) name things the model does not have, so the measure would `
     + `return an error: ${problems.join("; ")}.`);
+  need(!formats.length, `${formats.join("; ")}. A date under a number format shows as a serial number.`);
 
   // The one file.
   const homeSources = model.sources.filter((s) => s.tree.root.children.some((n) => n.type === "table" && n.name.toLowerCase() === home.name.toLowerCase()));

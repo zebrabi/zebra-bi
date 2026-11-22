@@ -156,6 +156,25 @@ check("a measure may use another measure written in the same call, and a column 
   assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0);
 });
 
+check("a date-returning measure for a title goes through, and needs a date format", () => {
+  const p = base();
+  const f = tablePath(p, "sales.tmdl");
+  const was = fs.readFileSync(f);
+  refuses(() => add({ projectPath: p, table: "sales", measures: [{ name: "Last actual date",
+    expression: "CALCULATE ( MAX ( sales[Date] ), REMOVEFILTERS ( Calendar ), sales[Scenario] = \"Actual\" )", formatString: "#,0" }] }),
+  /Last actual date returns a date, so its formatString must be a date format/);
+  assert.ok(fs.readFileSync(f).equals(was));
+  const r = add({ projectPath: p, table: "sales", measures: [
+    { name: "Last actual date", expression: "CALCULATE ( MAX ( sales[Date] ), REMOVEFILTERS ( Calendar ), sales[Scenario] = \"Actual\" )", formatString: "yyyy-MM-dd" },
+    { name: "Period label", expression: "\"Jan - \" & FORMAT ( [Last actual date], \"mmm yyyy\" )", formatString: "General" },
+    { name: "Calendar end", expression: "MAX ( Calendar[Date] )", formatString: "Short Date" }] });
+  assert.ok(r.added.includes("CALCULATE ( MAX ( 'sales'[Date] ), REMOVEFILTERS ( 'Calendar' ), 'sales'[Scenario] = \"Actual\" )"), r.added);
+  assert.deepStrictEqual(r.quoted, ["Last actual date: sales -> 'sales'", "Last actual date: Calendar -> 'Calendar'", "Calendar end: Calendar -> 'Calendar'"]);
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+  const m = tmdl.readModel(p).tables.find((x) => x.name === "sales").measures.find((x) => x.name === "Last actual date");
+  assert.strictEqual(m.formatString, "yyyy-MM-dd");
+});
+
 // --- reserved names, CRLF, two tables in one file ---------------------------------------------
 
 check("bare reserved table names are quoted and reported; a CRLF file stays CRLF; the right table gets each measure", () => {
