@@ -2328,6 +2328,142 @@ const checkers = {
   },
 
   /**
+   * `sortByColumn`, a hierarchy level's `column` and `groupByColumn` take the NAME of a column of the
+   * same table: bare (`MonthNumber`) or single-quoted when it needs quoting (`'Month Number'`, with
+   * `''` for a quote inside). A DAX-style reference, `'Calendar'[Month Number]` or
+   * `Calendar[Month Number]`, or a quote that is not a well-formed quoted name, is refused by the
+   * TMDL loader and the whole model does not load: "Parsing error type - InvalidName ...
+   * single-quote character in name must be escaped!". A dot outside quotes is not judged.
+   *
+   * Covered because the accepted form is stated in the reference and every one of the 357 uses in
+   * the corpus of real models (710 .tmdl files, 369 uses) is a bare or a quoted name. Relationship `fromColumn` and `toColumn`
+   * (which take `Table.Column`) are read by `tmdl-relationship-endpoints-must-resolve`, so they are
+   * not repeated here. Not covered: a variation's `relationship`, `defaultHierarchy` and
+   * `defaultColumn` (Desktop writes them on its own date tables and the reference says never author
+   * them), a calendar group's `primaryColumn` / `associatedColumn` / `column`, `alternateOf`'s
+   * `baseTable` / `baseColumn`, and a model's `defaultMeasure`: the corpus has no instance of those,
+   * so silence on it would prove nothing.
+   */
+  "tmdl-column-name-property-must-be-a-plain-name"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    // Returns why a value is not a plain (bare or well-formed quoted) name, or null.
+    const problem = (v) => {
+      let i = 0;
+      const n = v.length;
+      if (v[0] === "'") {
+        i = 1;
+        for (;;) {
+          if (i >= n) return "its quote is never closed";
+          if (v[i] === "'") { if (v[i + 1] === "'") { i += 2; continue; } break; }
+          i++;
+        }
+        const rest = v.slice(i + 1);
+        if (rest === "") return null;
+        return rest.startsWith("[") ? "it is a DAX reference, 'Table'[Column]" : "text follows the closing quote";
+      }
+      if (/[[\]]/.test(v)) return "it is a DAX reference, Table[Column]";
+      if (v.includes("'")) return "it holds a single quote that is not escaped";
+      return null;
+    };
+    const WHERE = { column: ["sortbycolumn"], level: ["column"], relatedcolumndetails: ["groupbycolumn"] };
+    for (const src of p.model.sources || []) {
+      if (!src.tree) continue;
+      for (const n of src.tree.nodes) {
+        const names = WHERE[n.type];
+        if (!names) continue;
+        for (const pr of n.props) {
+          if (!names.includes(pr.name.toLowerCase()) || pr.delim !== ":" || !pr.value) continue;
+          const why = problem(pr.value.trim());
+          if (why) out.push({ location: `${src.rel}:${pr.line}`, detail: `${pr.name}: ${pr.value.trim()} -- ${why}; write the column name alone` });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * `chartSettings.calculations` on a Tables or Tables+ visual is read as ONE COMPARISON PAIR PER
+   * VARIANCE SLOT, by array position: each entry is split on `-` and only the first two parts are
+   * kept, and an entry that names a scenario that is not bound ends the loop. So
+   * `["actual-plan","actual-plan-percent","actual-previousYear","actual-previousYear-percent"]` draws
+   * the plan variance in slots 1 and 2 and never the previous-year variance, with no error. Read from
+   * the visual's own parser (certified Tables 8.3.0.37 and Tables+ 8.3.0.16 carry the same code).
+   *
+   * The slots are simulated: slot k starts as (actual, k-th bound reference), the entries overwrite
+   * the slots they reach, and the rule fires when two DRAWN slots end up holding the same pair. That
+   * is the render-verified defect; an entry that merely carries a `-percent` tail but leaves every
+   * drawn slot distinct is not flagged, and neither is a `-percent` entry that lands past the drawn
+   * slots (a table with two scenarios draws one variance, so
+   * `["actual-previousYear","actual-previousYear-percent"]` is harmless there).
+   *
+   * The bound references come from the roles and their projection counts in the visual's own order
+   * (PreviousYear, then Plan and Forecast: Plan before Forecast when PreviousYear is bound, Forecast
+   * before Plan when it is not); a role with several projections adds plan2 / plan3 and
+   * forecast2 / forecast3. A `calculations` value that is not a JSON array is not judged (the visual
+   * falls back to its defaults).
+   */
+  "tables-calculations-must-name-distinct-drawn-pairs"(p) {
+    const NAME = { actual: "AC", previousYear: "PY", plan: "PL", forecast: "FC",
+                   plan2: "PL2", plan3: "PL3", forecast2: "FC2", forecast3: "FC3" };
+    const group = (prefix, n) => Array.from({ length: Math.min(n, 3) }, (_, i) => (i === 0 ? prefix : prefix + (i + 1)));
+    const out = [];
+    for (const v of p.visuals) {
+      if (!isTable(v.visualType)) continue;
+      const calcs = blob(obj(v.parsed, "chartSettings")?.calculations);
+      if (!Array.isArray(calcs)) continue;
+      const n = (role) => projections(v.parsed, role).length;
+      if (n("Values") === 0) continue;
+      const pl = group("PL", n("Plan")), fc = group("FC", n("Forecast")), py = n("PreviousYear") > 0 ? ["PY"] : [];
+      const refs = [...py, ...(py.length ? [...pl, ...fc] : [...fc, ...pl])];
+      if (!refs.length) continue;
+      const bound = new Set(["AC", ...refs]);
+      const slots = refs.map((ref) => ["AC", ref]);
+      for (let e = 0; e < calcs.length; e++) {
+        const t = calcs[e];
+        if (!t) continue;
+        if (typeof t !== "string") break;
+        const parts = t.split("-");
+        const a = NAME[parts[0]], s = NAME[parts[1]];
+        if (!a || !s || !bound.has(a) || !bound.has(s)) break;
+        if (e < slots.length) slots[e] = [a, s];
+      }
+      const names = slots.map(([a, s]) => `${a}-${s}`);
+      if (new Set(names).size < names.length) {
+        const missing = refs.map((r) => `AC-${r}`).filter((x) => !names.includes(x));
+        out.push({ location: `${v.rel}:chartSettings.calculations`,
+          detail: `the variance slots draw ${names.join(", ")}` + (missing.length ? `; ${missing.join(", ")} is not drawn` : "") });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * `definition.pbir` carries the PBIR `$schema` and `"version": "4.0"`. One build wrote
+   * `{ "version": "1.0", "datasetReference": ... }` with no `$schema` beside a report folder in the PBIR
+   * format (a `definition/` folder of JSON files), and Desktop opened an empty Page 1 with no dialog
+   * instead of its pages. What is known is the mismatch between the file and the folder, not the
+   * mechanism, so the finding says only that. A `$schema` that is present is `pbir-schema-url-invalid`'s;
+   * a missing `$schema` beside version 4.0 is NOT flagged (Desktop loaded those builds).
+   */
+  "pbir-version-must-match-the-pbir-folder-format"(p) {
+    if (!p.files.has("definition/report.json")) return [];
+    const out = [];
+    for (const f of p.pbirFiles || []) {
+      if (f.parseError || !f.parsed || typeof f.parsed !== "object") continue;
+      const v = f.parsed.version;
+      if (typeof v !== "string" && typeof v !== "number") continue;
+      if (typeof f.parsed.$schema === "string") continue;
+      const m = /^(\d+)/.exec(String(v).trim());
+      if (m && Number(m[1]) < 4) {
+        out.push({ location: `${f.rel}:version`,
+          detail: `version is ${JSON.stringify(v)} and there is no $schema, beside a report folder in the PBIR format; write the $schema and "version": "4.0"` });
+      }
+    }
+    return out;
+  },
+
+  /**
    * Every column a calculated table declares carries `sourceColumn: [Name]` (with `isNameInferred`).
    * Desktop: "Column 'Year' in calculated table 'Financials' is missing the SourceColumn property".
    * Judged on a `column` of a table whose partition is written `= calculated` and that has no `=` of

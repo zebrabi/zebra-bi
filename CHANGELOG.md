@@ -25,6 +25,16 @@ though they shipped would misrepresent what anyone could have installed.
   `source =`) and `tmdl-calculated-table-column-without-sourcecolumn` (a calculated-table column with no
   `sourceColumn`). Each stays silent on the 20 shipped templates and on the further working projects it was
   measured on.
+- Three more checks: `tmdl-column-name-property-not-a-plain-name` (`sortByColumn`, a hierarchy level's
+  `column` or `groupByColumn` written as a DAX reference such as `'Calendar'[Month Number]`, which the
+  model loader refuses), `pbir-version-and-schema-do-not-match-pbir-folder` (a `definition.pbir` with
+  `"version": "1.0"` and no `$schema` beside a report folder in the PBIR format, which opened an empty
+  Page 1) and `tables-calculations-repeat-a-comparison` (a Tables or Tables+ `chartSettings.calculations`
+  whose entries put the same comparison in two variance slots, such as a list with `-percent` entries,
+  so one comparison is drawn twice and the other not at all).
+- The authoring reference now says that `chartSettings.calculations` is a list of comparison pairs only,
+  one per variance slot, in display order, and that each pair brings its absolute and percent column. It no
+  longer reads as if percent entries belong in the list.
 - `validate_report` returns `clean` (true only when there are no findings) and `counts` (findings per
   severity, and the total) beside `ok`. `ok` is unchanged and means the check ran; the tool description
   now says so.
@@ -104,7 +114,7 @@ thing you can do is tell us when it does not.
 | **`setup-doctor`** | Ten checks on the machine, each with a fix. Two are about your model — scenario measures and a marked date table — and they are the ones that decide whether the report comes out right |
 | **`report-authoring`** | Planning, data binding, IBCS variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates |
 | **`report-publishing`** | The Zebra-specific parts of publishing. Microsoft's own skill does the upload; this covers the visual-track choice and the refresh without which the report arrives empty |
-| **The checker** | 73 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
+| **The checker** | 76 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
 | **18 MCP tools** | Profiling, page proposal, the encoders for the property blobs that cannot be written by hand, and the report writers |
 
 Ten on-demand reference layers sit behind the authoring skill and load only when they are needed:

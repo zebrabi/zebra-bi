@@ -1071,6 +1071,48 @@ check("columns of an imported table, calculated columns and a calculated table w
   assert.ok(!scCodes(calcTable("")).has(SC), "fired on a calculated table that declares no columns");
 });
 
+// --- name-valued properties take a plain column name (22 Nov 2026) -----------------------------------
+// The TMDL loader refuses `sortByColumn: 'Calendar'[Month Number]`: "Parsing error type - InvalidName ...
+// single-quote character in name must be escaped!". Same grammar for a level's `column` and `groupByColumn`.
+const NAMEID = "tmdl-column-name-property-not-a-plain-name";
+const sortTable = (value) => "table Calendar\n\n\tcolumn 'Month Number'\n\t\tdataType: int64\n\t\tsourceColumn: Month Number\n\n"
+  + "\tcolumn Month\n\t\tdataType: string\n\t\tsourceColumn: Month\n\t\tsortByColumn: " + value + "\n";
+const nameCodes = (tmdl) => codes(project({ extraTmdl: tmdl }));
+
+check("a DAX-style reference or an unescaped quote in sortByColumn is caught, at the property, as wont-open", () => {
+  for (const v of ["'Calendar'[Month Number]", "Calendar[MonthNumber]", "'Month Number", "Month's", "'Month Number' x"]) {
+    assert.ok(nameCodes(sortTable(v)).has(NAMEID), "missed sortByColumn: " + v);
+  }
+  const root = project({ extraTmdl: sortTable("'Calendar'[Month Number]") });
+  const hits = srv.validateReport({ projectPath: root }).findings.filter((f) => f.code === NAMEID);
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].severity, "wont-open");
+  assert.ok(/extra\.tmdl:10$/.test(hits[0].location), hits[0].location);
+  assert.ok(/DAX reference/.test(hits[0].detail), hits[0].detail);
+});
+
+check("a bare name, a quoted name, an escaped quote and a name with brackets inside quotes are NOT flagged", () => {
+  for (const v of ["MonthNumber", "'Month Number'", "'Sales ''Region'' key'", "'Sales [x]'"]) {
+    assert.ok(!nameCodes(sortTable(v)).has(NAMEID), "fired on sortByColumn: " + v);
+  }
+  // another table's properties are not read: a measure's formatString with brackets, a description
+  assert.ok(!nameCodes("table T\n\n\tmeasure M = 1\n\t\tformatString: [$-409]#,0\n").has(NAMEID), "read a formatString");
+});
+
+check("a hierarchy level's column and groupByColumn take the same grammar", () => {
+  const level = (v) => "table Calendar\n\n\tcolumn Year\n\t\tdataType: int64\n\t\tsourceColumn: Year\n\n\thierarchy 'Date hierarchy'\n\n\t\tlevel Year\n\t\t\tcolumn: " + v + "\n";
+  assert.ok(nameCodes(level("Calendar[Year]")).has(NAMEID), "missed a level column written as a DAX reference");
+  assert.ok(!nameCodes(level("Year")).has(NAMEID), "fired on a level column that is a name");
+  const grp = (v) => "table P\n\n\tcolumn Name\n\t\tdataType: string\n\t\tsourceColumn: Name\n\n\t\trelatedColumnDetails\n\t\t\tgroupByColumn: " + v + "\n";
+  assert.ok(nameCodes(grp("'P'[Order]")).has(NAMEID), "missed groupByColumn as a DAX reference");
+  assert.ok(!nameCodes(grp("'Dimension Order'")).has(NAMEID), "fired on a quoted groupByColumn");
+});
+
+check("relationship endpoints keep their own rule: Table.Column with quoted parts is not judged here", () => {
+  const rel = "relationship r1\n\tfromColumn: 'Sales Data'.'Order Date'\n\ttoColumn: Calendar.Date\n";
+  assert.ok(!nameCodes(rel).has(NAMEID), "judged a relationship endpoint");
+});
+
 // --- cultures/ is a FACT, like compatibilityLevel -----------------------------------------
 //
 // It kills `file.reload/v1` while the project cold-opens perfectly, so the caller needs to know

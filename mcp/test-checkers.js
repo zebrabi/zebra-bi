@@ -71,7 +71,9 @@ function project(mutate = () => {}) {
     pbip: { $schema: SCHEMA, version: "1.0" },
     // definition.pbism: a project Desktop opens carries 4.2 beside a TMDL definition/ folder.
     pbism: { $schema: PBISM_SCHEMA, version: "4.2", settings: {} },
-    pbir: { version: "1.0", datasetReference: { byPath: { path: "../Demo.SemanticModel" } } },
+    // definition.pbir as a project that opens has it: the PBIR $schema and version 4.0.
+    pbir: { $schema: "https://developer.microsoft.com/json-schemas/fabric/item/report/definitionProperties/2.0.0/schema.json",
+            version: "4.0", datasetReference: { byPath: { path: "../Demo.SemanticModel" } } },
     // A report that opens registers every Zebra BI visual type its pages use.
     reportJson: { $schema: "https://x", themeCollection: { baseTheme: { name: "CY24SU10" } },
                   publicCustomVisuals: Object.values(GUID) },
@@ -887,6 +889,71 @@ check("showVerticalCharts: true with a time category is not judged when the proj
   const root = project(chartOn(GUID.charts, col("Calendar", "Month")));
   fs.rmSync(path.join(root, "Demo.SemanticModel"), { recursive: true, force: true });
   assert.ok(!codes(root).has(V), "judged a report with no model");
+});
+
+// definition.pbir beside a PBIR report folder: version 1.0 with no $schema opened an empty Page 1 (22 Nov 2026).
+rule("pbir-version-and-schema-do-not-match-pbir-folder", "definition.pbir at version 1.0 with no $schema", (s) => {
+  s.pbir = { version: "1.0", datasetReference: { byPath: { path: "../Demo.SemanticModel" } } };
+});
+
+check("a pbir with version 4.0 and a $schema, or 4.0 with no $schema, or a $schema at any version, is NOT flagged", () => {
+  const id = "pbir-version-and-schema-do-not-match-pbir-folder";
+  const ref = { byPath: { path: "../Demo.SemanticModel" } };
+  assert.ok(!codes(project()).has(id), "fired on the form that opens");
+  assert.ok(!codes(project((s) => { s.pbir = { version: "4.0", datasetReference: ref }; })).has(id), "fired on 4.0 with no $schema");
+  assert.ok(!codes(project((s) => { s.pbir = { $schema: s.pbir.$schema, version: "1.0", datasetReference: ref }; })).has(id),
+    "fired on a pbir that carries a $schema");
+  assert.ok(!codes(project((s) => { s.pbir = { datasetReference: ref }; })).has(id), "fired on a pbir with no version");
+  const noFolder = project((s) => { s.pbir = { version: "1.0", datasetReference: ref }; });
+  fs.rmSync(path.join(noFolder, "Demo.Report", "definition", "report.json"));
+  assert.ok(!codes(noFolder).has(id), "judged a report folder that is not in the PBIR format");
+});
+
+// chartSettings.calculations on Tables / Tables+ is one comparison pair per variance slot.
+const CALC = "tables-calculations-repeat-a-comparison";
+const proj = (n) => Array.from({ length: n }, (_, i) => ({ field: {}, queryRef: "m" + i }));
+const tableWith = (guid, roles, calcs) => (s) => {
+  const queryState = {};
+  for (const [role, n] of Object.entries(roles)) queryState[role] = { projections: proj(n) };
+  s.visuals.V1.visual = { visualType: guid, query: { queryState },
+    objects: calcs === undefined ? {} : { chartSettings: [{ properties: { calculations: W(JSON.stringify(calcs)) } }] } };
+};
+const calcCodes = (guid, roles, calcs) => codes(project(tableWith(guid, roles, calcs)));
+const ACPYPL = { Values: 1, PreviousYear: 1, Plan: 1 };
+
+check("a four-key calculations value on a three-scenario table draws the plan variance twice and is caught", () => {
+  const four = ["actual-plan", "actual-plan-percent", "actual-previousYear", "actual-previousYear-percent"];
+  for (const g of [GUID.tables, GUID.tablesPlus]) {
+    const root = project(tableWith(g, ACPYPL, four));
+    const hit = srv.validateReport({ projectPath: root }).findings.find((f) => f.code === CALC);
+    assert.ok(hit, "missed the four-key value on " + g);
+    assert.strictEqual(hit.severity, "wrong-numbers");
+    assert.ok(/AC-PL, AC-PL/.test(hit.detail) && /AC-PY is not drawn/.test(hit.detail), hit.detail);
+  }
+  assert.ok(calcCodes(GUID.tablesPlus, ACPYPL, ["actual-previousYear", "actual-previousYear-percent", "actual-plan", "actual-plan-percent"]).has(CALC),
+    "missed the mirror value");
+  assert.ok(calcCodes(GUID.tables, { Values: 1, Forecast: 1, Plan: 1 }, ["actual-plan"]).has(CALC),
+    "missed one entry that repeats the pair another slot shows by default");
+});
+
+check("pairs only, the key absent, a harmless percent tail past the drawn slots and other shapes are NOT flagged", () => {
+  const silent = (what, guid, roles, calcs) => assert.ok(!calcCodes(guid, roles, calcs).has(CALC), "fired on " + what);
+  silent("distinct pairs", GUID.tablesPlus, ACPYPL, ["actual-previousYear", "actual-plan"]);
+  silent("PL first", GUID.tablesPlus, ACPYPL, ["actual-plan", "actual-previousYear"]);
+  silent("the key absent", GUID.tablesPlus, ACPYPL, undefined);
+  silent("an empty list", GUID.tablesPlus, ACPYPL, []);
+  silent("a null placeholder", GUID.tablesPlus, ACPYPL, [null, "actual-plan"]);
+  // two scenarios: one variance slot is drawn, so a percent tail in slot 2 is never read
+  silent("a two-scenario table with a percent tail", GUID.tablesPlus, { Values: 1, PreviousYear: 1 }, ["actual-previousYear", "actual-previousYear-percent"]);
+  silent("AC/FC/PL with the forecast pair first", GUID.tables, { Values: 1, Forecast: 1, Plan: 1 }, ["forecast-plan", "actual-plan"]);
+  // a Plan role with two projections adds plan2; the vendor shape [null, plan-actual, plan2-actual]
+  silent("a table with two plan projections", GUID.tables, { Values: 1, Plan: 2 }, [null, "plan-actual", "plan2-actual"]);
+  // an entry naming a scenario that is not bound ends the loop; later entries are not read
+  silent("an entry that names an unbound scenario", GUID.tablesPlus, ACPYPL, ["actual-forecast", "actual-plan", "actual-plan"]);
+  // not a table, not an array, no Values
+  assert.ok(!calcCodes(GUID.charts, ACPYPL, ["actual-plan", "actual-plan-percent"]).has(CALC), "fired on a Charts visual");
+  assert.ok(!codes(project(tableWith(GUID.tablesPlus, ACPYPL, "x"))).has(CALC), "judged a calculations value that is a string");
+  silent("no Values bound", GUID.tablesPlus, { PreviousYear: 1, Plan: 1 }, ["actual-plan", "actual-plan-percent"]);
 });
 
 // --- the silence bar -----------------------------------------------------------------------
