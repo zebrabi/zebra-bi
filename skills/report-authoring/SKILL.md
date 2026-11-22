@@ -20,14 +20,17 @@ Zebra BI is three custom visuals — **Charts**, **Tables**, **Cards** — that 
 financial reporting. Charts and Tables each also ship as **Charts+** and **Tables+**,
 identical to author and adding viewer commenting; **author Tables+ and Charts+ by default** and see
 `references/visuals.md` for the GUIDs and the four conditions that send you back to the certified
-track. All of them are fully authorable from PBIR text.
+track.
+
+When the Zebra BI tools (`write_report`, `validate_report`, `profile_source`, `encode_*`) are not in your
+tool list, call them with `node <plugin folder>/mcp/cli.js <tool> @args.json` (`list` shows them); the plugin
+folder is the one that holds `skills/`.
 
 **The one rule that matters: the screenshot is the only evidence.** For Zebra visuals the validator
-knows nothing — not the roles, not the properties, not the values. A wrong report validates clean.
+knows no roles, properties or values, so a wrong report validates clean.
 A visual that renders empty, black, or beautifully-wrong is a *passing* validate. Look at it.
 
-**The session, in order.** Every section in this file hangs on one of these lines; when the file is
-long and the work is deep in a blob, this is the list to come back to.
+**The session, in order.** Come back to this list when deep in a blob.
 
 1. **Cold start** — registration, Desktop closed, can the model express a variance, calendar, scope.
 2. **Frame the brief** — reader, decision, period, comparison, conventions (`references/analyst.md`).

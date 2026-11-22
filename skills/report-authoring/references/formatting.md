@@ -264,6 +264,11 @@ sortSettings:    { columnName: word('actual'),   // 'actual' = the FIRST Values 
 //   example 'Won revenue'. That is how you sort by one column while the variance sits on another, which is
 //   the case worth knowing: a rate sorted descending puts tiny-denominator members on top
 //   (100% on 2 deals), so bind the rate to Values[0] for the variance and sort by the volume column.
+//   A table with COMPUTED ROWS (addedFormulas: gross profit, margins, subtotals) is not sorted by a
+//   value column: the rows would be ordered by size and the subtotals land among the lines they total.
+//   Write categorySort 0 and chartSort 0 with columnName left out or 'category' (statement order), or
+//   bind an order column, hide it in columnSettings and sort on it. categorySort 0 with a value
+//   columnName and no chartSort is a value sort too.
 dataLabelSettings: { decimalPlaces: int(0), decimalPlacesPercentage: int(0) }
 // Top N on a TABLE lives in categorySettings and thins the ROWS. Different object group and
 // different names from the Charts form (multipleLayout.showTopNChartsOptions), which thins

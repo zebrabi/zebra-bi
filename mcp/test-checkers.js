@@ -956,6 +956,63 @@ check("pairs only, the key absent, a harmless percent tail past the drawn slots 
   silent("no Values bound", GUID.tablesPlus, { PreviousYear: 1, Plan: 1 }, ["actual-plan", "actual-plan-percent"]);
 });
 
+// A table with computed rows (addedFormulas) must not be sorted by a value column.
+const SORTED = "computed-rows-sorted-by-value";
+const ADDED = [{ identity: "Gross profit", expression: "[Revenue] + [Cost of sales]", hierarchyIdentity: "Fin.Account",
+  position: "Cost of sales", bold: true }];
+// A Tables or Tables+ visual with a Category, computed rows and the given sort keys.
+const sortedTable = (guid, sort, extra = {}, added = ADDED) => (s) => {
+  const sortProps = {};
+  for (const [k, v] of Object.entries(sort)) sortProps[k] = typeof v === "number" ? N(v) : W(v);
+  s.visuals.V1.visual = { visualType: guid,
+    query: { queryState: { Category: { projections: [{ field: { Column: { Property: "Account" } },
+      queryRef: "Fin.Account", nativeQueryRef: "Account", displayName: "P&L line" }] },
+      Values: { projections: [{ field: {}, queryRef: "Fin.AC" }] } } },
+    objects: { categoriesMetadata: [{ properties: { addedFormulas: W(JSON.stringify(added)) } }],
+      ...(Object.keys(sort).length ? { sortSettings: [{ properties: sortProps }] } : {}), ...extra } };
+};
+const sortedCodes = (guid, sort, extra, added) => codes(project(sortedTable(guid, sort, extra, added)));
+
+check("computed rows sorted by a value column are caught, on Tables and Tables+, in every form of that sort", () => {
+  for (const g of [GUID.tables, GUID.tablesPlus]) {
+    assert.ok(sortedCodes(g, { columnName: "actual", categorySort: 1 }).has(SORTED), "missed descending by actual on " + g);
+    assert.ok(sortedCodes(g, { columnName: "actual", categorySort: 2, chartSort: 2 }).has(SORTED), "missed ascending by actual on " + g);
+    assert.ok(sortedCodes(g, { categorySort: 1 }).has(SORTED), "missed a descending sort with no columnName (the first Values column)");
+    // the shape of the agent-built page that drew the subtotals among the lines
+    assert.ok(sortedCodes(g, { columnName: "actual", categorySort: 0 }).has(SORTED), "missed categorySort 0 on a value column with no chartSort");
+    assert.ok(sortedCodes(g, { columnName: "plan-actual", categorySort: 1 }).has(SORTED), "missed a variance column");
+    assert.ok(sortedCodes(g, { columnName: "Amount AC", categorySort: 1 }).has(SORTED), "missed a measure's display name");
+  }
+  const hit = srv.validateReport({ projectPath: project(sortedTable(GUID.tablesPlus, { columnName: "actual", categorySort: 0 })) })
+    .findings.find((f) => f.code === SORTED);
+  assert.strictEqual(hit.severity, "looks-fine");
+});
+
+check("the statement-order sorts, the hidden order column and everything that is not a value sort are NOT flagged", () => {
+  const silentSort = (what, sort, extra, added, guid = GUID.tablesPlus) =>
+    assert.ok(!sortedCodes(guid, sort, extra, added).has(SORTED), "fired on " + what);
+  for (const g of [GUID.tables, GUID.tablesPlus]) {
+    silentSort("categorySort 0 and chartSort 0 on 'actual' (28 shipped statement tables)", { columnName: "actual", categorySort: 0, chartSort: 0 }, undefined, ADDED, g);
+    silentSort("categorySort 0 and chartSort 0 with no columnName", { categorySort: 0, chartSort: 0 }, undefined, ADDED, g);
+  }
+  silentSort("columnName 'category'", { columnName: "category", categorySort: 0 });
+  silentSort("columnName 'category' descending", { columnName: "category", categorySort: 1 });
+  silentSort("columnName naming the category column", { columnName: "Account", categorySort: 2 });
+  silentSort("columnName naming the category's display name", { columnName: "p&l line", categorySort: 2 });
+  silentSort("a columnName with no categorySort (the shipped Financial statements shape)", { columnName: "actual" });
+  silentSort("no sortSettings at all", {});
+  // the remedy the message names: an order column, hidden, sorted on
+  const hidden = { chartSettings: [{ properties: { columnSettings: W(JSON.stringify({ "Row order": { order: 20, hidden: true } })) } }] };
+  silentSort("a hidden order column", { columnName: "Row order", categorySort: 2, chartSort: 2 }, hidden);
+  assert.ok(sortedCodes(GUID.tablesPlus, { columnName: "Row order", categorySort: 2, chartSort: 2 },
+    { chartSettings: [{ properties: { columnSettings: W(JSON.stringify({ "Row order": { order: 20, hidden: false } })) } }] }).has(SORTED),
+    "an order column left visible is still a sort by a value column");
+  silentSort("a table with no computed rows sorted by actual", { columnName: "actual", categorySort: 1 }, undefined, []);
+  silentSort("a table with no addedFormulas value", { columnName: "actual", categorySort: 1 }, undefined, null);
+  // not a table
+  assert.ok(!sortedCodes(GUID.charts, { columnName: "actual", categorySort: 1 }).has(SORTED), "fired on a Charts visual");
+});
+
 // --- review fixes: a checker reports, never throws; one slot simulation; fences and block comments -----
 
 // Every rule over a project whose arrays hold null members, a visualType that is not a string, and the

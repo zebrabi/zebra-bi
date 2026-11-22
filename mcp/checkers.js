@@ -1280,6 +1280,28 @@ const checkers = {
       .map((v) => ({ location: `${v.rel}:visual.query.sortDefinition` }));
   },
 
+  /**
+   * A table with computed rows sorted by a value column: the subtotals land among the lines they total.
+   *
+   * The predicate is `enc.computedRowsSortedByValue` and its comment states what counts and why.
+   * Measured over every Tables and Tables+ with `addedFormulas` in the 20 shipped templates and the
+   * working projects (31 tables): silent on all of them, because each writes `categorySort` 0 with
+   * `chartSort` 0, `columnName` only, or no sort at all. The branch that catches a `categorySort` 0
+   * with a value column and no `chartSort` rests on one Desktop render and is vacuous against the
+   * templates (all certified Tables, none omits `chartSort`): a single sighting, kept narrow.
+   */
+  "computed-rows-sorted-by-value"(p) {
+    const out = [];
+    for (const v of p.visuals) {
+      if (!isTable(v.visualType)) continue;
+      const cats = projections(v.parsed, "Category")
+        .flatMap((x) => [x?.field?.Column?.Property, x?.field?.Hierarchy?.Hierarchy, x?.field?.HierarchyLevel?.Level, x?.nativeQueryRef, x?.displayName]);
+      const hit = enc.computedRowsSortedByValue(v.parsed?.visual?.objects, cats);
+      if (hit) out.push({ location: `${v.rel}:sortSettings (${hit.computedRows} computed rows)` });
+    }
+    return out;
+  },
+
   /** A handful of properties accept a value and change nothing at all. */
   "property-accepts-value-and-does-nothing"(p) {
     // `chartSettings.chartLayout` was briefly removed from this list on 2026-08-05 and RESTORED the

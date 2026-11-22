@@ -842,7 +842,78 @@ function encodeStorageConfig({ siteId, driveId, folderPath, fileName } = {}) {
   });
 }
 
+// --- computed rows and the sort ---------------------------------------------------------------
+
+/** A PBIR literal as a plain value: 'actual' -> "actual", 0D and 0L -> 0. Anything else -> undefined. */
+function plainLiteral(prop) {
+  const raw = prop && prop.expr && prop.expr.Literal && prop.expr.Literal.Value;
+  if (typeof raw !== "string") return undefined;
+  if (/^-?\d+(?:\.\d+)?[DLM]?$/.test(raw)) return Number(raw.replace(/[DLM]$/, ""));
+  return raw.replace(/^'/, "").replace(/'$/, "").replace(/''/g, "'");
+}
+
+/** The properties of one object group in a visual's `objects`, or {}. */
+function groupProps(objects, group) {
+  const g = objects && objects[group];
+  return (Array.isArray(g) && g[0] && g[0].properties) || {};
+}
+
+/** A blob property (JSON inside a string literal) parsed, or undefined. */
+function blobOf(prop) {
+  const s = plainLiteral(prop);
+  if (typeof s !== "string") return undefined;
+  try { return JSON.parse(s); } catch { return undefined; }
+}
+
+/**
+ * Does a Tables or Tables+ visual with computed rows sort its rows by a value column?
+ *
+ * Computed rows are `categoriesMetadata.addedFormulas`. Their position is "after row X", and a sort by
+ * a value column ignores it: the rows are ordered by size and the subtotals land among the lines they
+ * total. Given a visual's `objects` and the names its Category binds (property, display name), returns
+ * null when the sort leaves the statement order alone, otherwise
+ * `{ columnName, categorySort, chartSort, computedRows }`.
+ *
+ * What counts as a sort by value, and the evidence for each part:
+ *   - `categorySort` 1 (descending) or 2 (ascending) with `columnName` left out or naming a value
+ *     column: the table orders its rows by that column. Measured on Tables+ with no computed rows.
+ *   - `categorySort` 0 with `columnName` naming a value column and NO `chartSort`: one Tables+ with
+ *     computed rows drew its rows in ascending order of that column. This branch rests on that one
+ *     render. The shipped templates cannot test it: every one of their tables with computed rows is a
+ *     certified Tables, and none writes `categorySort` 0 without `chartSort`.
+ * What does not count: `columnName` `category` or the category field (the table's own order),
+ * `categorySort` 0 with `chartSort` 0 (the form 28 shipped statement tables write, and what a Tables+
+ * drew in statement order), a `columnName` hidden in `columnSettings` (an order column), a
+ * `columnName` with no `categorySort`, and no `sortSettings` at all.
+ */
+function computedRowsSortedByValue(objects, categoryNames) {
+  const added = blobOf(groupProps(objects, "categoriesMetadata").addedFormulas);
+  if (!Array.isArray(added) || !added.length) return null;
+  const s = groupProps(objects, "sortSettings");
+  const categorySort = plainLiteral(s.categorySort);
+  if (typeof categorySort !== "number") return null;
+  const chartSort = plainLiteral(s.chartSort);
+  const columnName = plainLiteral(s.columnName);
+  const own = new Set(["category", ...(categoryNames || [])].filter((n) => typeof n === "string")
+    .map((n) => n.toLowerCase()));
+  const named = typeof columnName === "string" && columnName !== "";
+  if (named && own.has(columnName.toLowerCase())) return null;
+  const settings = blobOf(groupProps(objects, "chartSettings").columnSettings);
+  if (named && settings && typeof settings === "object" && settings[columnName]
+      && settings[columnName].hidden === true) return null;
+  const byValue = categorySort === 1 || categorySort === 2
+    || (categorySort === 0 && named && chartSort === undefined);
+  return byValue ? { columnName: named ? columnName : null, categorySort, chartSort: chartSort ?? null,
+    computedRows: added.length } : null;
+}
+
+/** The sentence both the writers and the checker give for that fault, as the fix. */
+const COMPUTED_ROWS_SORT_FIX = "Sort by the category's own order instead: set sortSettings.categorySort "
+  + "and sortSettings.chartSort to 0, with sortSettings.columnName left out or set to 'category', or "
+  + "bind an order column, hide it in chartSettings.columnSettings and sort on it.";
+
 module.exports = {
+  computedRowsSortedByValue, COMPUTED_ROWS_SORT_FIX,
   encodeTableColumns, encodeTableCalculations, encodeAddedFormulas, encodeAnnotations,
   planCardInvert, encodeCardInvert, encodeDataValueList, encodeStorageConfig, siteIdFromDriveId,
   encodeHighlights, encodeCagrArrows, encodeCategoryScenarios,

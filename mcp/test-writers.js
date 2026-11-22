@@ -804,6 +804,41 @@ check("no sort warning when the visual carries a sortDefinition; a Category with
   }
 });
 
+// Computed rows (addedFormulas) sorted by a value column: the subtotals land among the lines they total.
+// The writer warns in one sentence with the fix, on every route that supplies the formulas or the sort,
+// and writes the file as asked.
+const rowsWarned = (r) => (r.warnings || []).some((x) => /computed row/.test(x) && /sorted by/.test(x));
+const FORMULAS = { categoryField: "Fin.Account", formulas: [{ name: "Gross profit", expression: "[Revenue] + [Cost of sales]",
+  position: "Cost of sales", aggregatesOtherRows: false }] };
+check("computed rows sorted by a value column warn with the fix, on Tables and Tables+, by every route", () => {
+  for (const t of ["tables", "tables+"]) {
+    const props = { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 };
+    const r = w.writeVisual({ ...MIN, visualType: t, bindings: CAT, addedFormulas: FORMULAS, properties: props });
+    assert.ok(rowsWarned(r), `${t}: ${JSON.stringify(r.warnings)}`);
+    const msg = r.warnings.find((x) => /computed row/.test(x));
+    assert.ok(/categorySort and sortSettings.chartSort to 0/.test(msg) && /order column/.test(msg), msg);
+    assert.ok(JSON.parse(r.content).visual.objects.sortSettings, `${t}: the sort was not written as asked`);
+    // the same sort through rawObjects, and the value sort that leaves chartSort out
+    const lit = (v) => ({ expr: { Literal: { Value: v } } });
+    assert.ok(rowsWarned(w.writeVisual({ ...MIN, visualType: t, bindings: CAT, addedFormulas: FORMULAS,
+      rawObjects: { sortSettings: [{ properties: { columnName: lit("'actual'"), categorySort: lit("0D") } }] } })), `${t}: rawObjects`);
+    assert.ok(rowsWarned(w.writeVisual({ ...MIN, visualType: t, bindings: CAT, addedFormulas: FORMULAS,
+      properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 0 } })), `${t}: 0 with no chartSort`);
+  }
+});
+check("no computed-row sort warning for statement order, a sort on the category, no formulas, or another visual", () => {
+  const ok = (spec) => assert.ok(!rowsWarned(w.writeVisual({ ...MIN, bindings: CAT, ...spec })), JSON.stringify(spec).slice(0, 120));
+  for (const t of ["tables", "tables+"]) {
+    ok({ visualType: t, addedFormulas: FORMULAS, properties: { "sortSettings.categorySort": 0, "sortSettings.chartSort": 0 } });
+    ok({ visualType: t, addedFormulas: FORMULAS, properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 0, "sortSettings.chartSort": 0 } });
+    ok({ visualType: t, addedFormulas: FORMULAS, properties: { "sortSettings.columnName": "category", "sortSettings.categorySort": 1 } });
+    ok({ visualType: t, addedFormulas: FORMULAS, properties: { "sortSettings.columnName": "Region", "sortSettings.categorySort": 2 } });
+    ok({ visualType: t, addedFormulas: FORMULAS });
+    ok({ visualType: t, properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 } });
+  }
+  ok({ visualType: "charts+", addedFormulas: undefined, properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 } });
+});
+
 // --- file hygiene -----------------------------------------------------------------------------------
 
 check("output is UTF-8 with no BOM, LF only, and no trailing newline", () => {

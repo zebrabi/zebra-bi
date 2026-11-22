@@ -608,6 +608,14 @@
       "message": "A `definition.pbir` beside a `definition/` folder of JSON files carries the PBIR `$schema` and\n`\"version\": \"4.0\"`: copy the file from the project-files reference and change only the `byPath` to the\nmodel folder. A file that says `\"version\": \"1.0\"` and has no `$schema` does not match that report\nformat, and Desktop opened an empty Page 1, with no dialog, in place of the authored pages.",
       "source": "validator",
       "held": true
+    },
+    {
+      "id": "computed-rows-sorted-by-value",
+      "severity": "looks-fine",
+      "check": "computed-rows-sorted-by-value",
+      "message": "A Tables or Tables+ visual that carries computed rows (`categoriesMetadata.addedFormulas`) keeps them\nin statement order: do not sort it by a value column. Write `sortSettings.categorySort` and\n`sortSettings.chartSort` as `0`, with `sortSettings.columnName` left out or set to `category`, or bind\nan order column, hide it in `chartSettings.columnSettings` and sort on it. A sort by a value column\norders the rows by size, so the gross profit, operating profit and margin rows land among the lines\nthey total and the statement is unreadable, although every number is right.",
+      "source": "validator",
+      "held": true
     }
   ]
 }

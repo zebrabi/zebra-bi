@@ -725,6 +725,21 @@ function writeVisual(spec = {}) {
       + "sortSettings.categorySort (0 keeps the model's own order, 1 descending, 2 ascending).");
   }
 
+  // Computed rows (added formulas) and a sort by a value column: the rows are ordered by size and the
+  // subtotals land among the lines they total. Read from the merged objects, so every route that
+  // supplies addedFormulas, properties or rawObjects is covered. The file is written as asked.
+  if (visualType.startsWith("ZebraBITables")) {
+    const cats = (Array.isArray(spec.bindings?.Category) ? spec.bindings.Category : [])
+      .flatMap((b) => (b && typeof b === "object" ? [b.property, b.nativeQueryRef, b.displayName] : []));
+    const sorted = enc.computedRowsSortedByValue(objects, cats);
+    if (sorted) {
+      warnings.push(`This table has ${sorted.computedRows} computed row${sorted.computedRows === 1 ? "" : "s"} `
+        + `(addedFormulas) and its rows are sorted by ${sorted.columnName ? `the '${sorted.columnName}' column` : "its first Values column"}, `
+        + "so the computed rows land among the lines by size instead of under the rows they total. "
+        + enc.COMPUTED_ROWS_SORT_FIX);
+    }
+  }
+
   // A licence key in the spec is written with a fresh appliedTimestamp (Tables+ and Charts+), then
   // the licence groups of the visual being replaced are carried through unchanged. Applied last and
   // per group, so a group the spec itself provides wins and no old timestamp rides on a new key.
