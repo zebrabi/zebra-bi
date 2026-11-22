@@ -338,6 +338,7 @@ function validateReport(args) {
   if (rules === null) {
     return {
       ok: false,
+      clean: false,
       error:
         "The rule catalogue is missing or unreadable, so nothing was checked. This is a broken " +
         "install rather than a clean report. Reinstall the plugin.",
@@ -345,7 +346,7 @@ function validateReport(args) {
   }
 
   const project = resolveProject(projectPath);
-  if (project.fatal) return { ok: false, error: project.fatal };
+  if (project.fatal) return { ok: false, clean: false, error: project.fatal };
 
   const findings = [...project.problems];
   const ran = [];
@@ -373,8 +374,15 @@ function validateReport(args) {
   const severityOrder = { "wont-open": 0, blank: 1, "wrong-numbers": 2, "looks-fine": 3 };
   findings.sort((a, b) => (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9));
 
+  // `ok` says the check RAN; it has never said the project is clean. `clean` and `counts` do: a
+  // caller that branches on `ok` alone reads a report with findings as a pass.
+  const counts = { "wont-open": 0, blank: 0, "wrong-numbers": 0, "looks-fine": 0 };
+  for (const f of findings) counts[f.severity] = (counts[f.severity] ?? 0) + 1;
+
   return {
     ok: true,
+    clean: findings.length === 0,
+    counts: { ...counts, total: findings.length },
     findings,
     checked: project.checked,
     rulesRun: ran.length,
@@ -816,7 +824,9 @@ const TOOLS = [
     name: "validate_report",
     description:
       "Check an unopened Power BI project (.pbip) for faults that render blank, wrong or " +
-      "not at all. Returns what was checked, what was found, and what it could not see.",
+      "not at all. Returns what was checked, what was found, and what it could not see. " +
+      "`ok` means the check ran, not that the project is fine: read `clean` (true only when " +
+      "there are no findings) and `counts` (findings per severity, and the total).",
     inputSchema: {
       type: "object",
       properties: {

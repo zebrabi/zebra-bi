@@ -25,6 +25,9 @@ though they shipped would misrepresent what anyone could have installed.
   `source =`) and `tmdl-calculated-table-column-without-sourcecolumn` (a calculated-table column with no
   `sourceColumn`). Each stays silent on the 20 shipped templates and on the further working projects it was
   measured on.
+- `validate_report` returns `clean` (true only when there are no findings) and `counts` (findings per
+  severity, and the total) beside `ok`. `ok` is unchanged and means the check ran; the tool description
+  now says so.
 
 ## 0.3.2 — 2026-11-04
 
