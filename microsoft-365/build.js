@@ -234,8 +234,10 @@ function stage(dir) {
 
   fs.mkdirSync(path.join(dir, "skills"), { recursive: true });
   fs.writeFileSync(path.join(dir, "plugin.json"), JSON.stringify(pluginJson, null, 2) + "\n");
-  if (Object.keys(mcpJson.mcpServers).length !== 1) fail("mcp.json must carry the hosted server only");
-  fs.copyFileSync(path.join(ROOT, "mcp.json"), path.join(dir, "mcp.json"));
+  // Microsoft 365 takes remote connectors only: the package's mcp.json carries the hosted server and
+  // leaves out the local checker, which ships inside report-authoring as scripts.
+  const packaged = { ...mcpJson, mcpServers: Object.fromEntries(remote) };
+  fs.writeFileSync(path.join(dir, "mcp.json"), JSON.stringify(packaged, null, 2) + "\n");
 
   const report = { version: pluginJson.version, skills: {} };
   for (const skill of included) {

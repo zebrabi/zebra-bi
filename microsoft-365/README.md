@@ -1,6 +1,6 @@
 # Microsoft 365 Copilot package
 
-`build.js` turns this plugin into one Microsoft 365 app package named Zebra BI: the hosted Zebra BI MCP (`mcp.json`) as a remote connector, and the skills `config.json` includes. It reads `skills/`, `mcp/`, `plugin.json` and `mcp.json` and never changes them. The package's skills are the plugin's own files; the only differences are the Copilot text in `overlay/` and the fits to Microsoft's limits below.
+`build.js` turns this plugin into one Microsoft 365 app package named Zebra BI: the hosted Zebra BI MCP (the remote server in `mcp.json`) as a remote connector, and the skills `config.json` includes. It reads `skills/`, `mcp/`, `plugin.json` and `mcp.json` and never changes them. The package's skills are the plugin's own files; the only differences are the Copilot text in `overlay/` and the fits to Microsoft's limits below.
 
 ```
 node microsoft-365/build.js

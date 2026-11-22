@@ -106,7 +106,7 @@ The MCP URL is `https://mcp.zebrabi.com/mcp`.
 | `plugin.json`, `mcp.json` | Agent Plugins 1.0: VS Code, Copilot CLI, ChatGPT and Codex |
 | `skills/` | Hosts that install the plugin |
 | `scripts/`, `assets/` | The story skills in Claude Code: profiling, PDF and Office builds, the brand default and the page template |
-| `mcp/` | The Power BI checker, started by `.mcp.json` as `zebra-bi-reports`: plain Node.js, no dependencies |
+| `mcp/` | The Power BI checker, started by `.mcp.json` and `mcp.json` as `zebra-bi-reports`: plain Node.js, no dependencies |
 | `perf/`, `.github/scripts/` | The gates on the Power BI skills: context budget, stated rule count, public surface, tenant identifiers |
 | `microsoft-365/` | The build of the Microsoft 365 Copilot app package from `skills/`, `mcp/` and the manifests |
 
