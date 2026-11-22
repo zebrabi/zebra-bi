@@ -33,10 +33,13 @@ It reads and writes files in a Power BI project directory that you point it at. 
 - **An MCP server** (`mcp/`) — Node, **no dependencies**, deliberately, so there is
   no supply chain beyond Node itself. It reads a project path you supply and returns findings; the
   tools that compose report files return the content as a string, and your agent host writes it, so
-  every write to your project is one you can see in the transcript. **One tool writes to disk:**
+  every write to your project is one you can see in the transcript. **Two tools write to disk.**
   `write_project` creates a new project from a folder of flat files you point it at. It writes only
   into a folder that does not exist or is empty, never overwrites or deletes a file, and returns the
-  list of files it wrote, so the transcript shows every path it created.
+  list of files it wrote, so the transcript shows every path it created. `write_measures` changes one
+  existing file: it inserts measures into the TMDL file of the table you name, or replaces a measure
+  of the same name only when you pass `replace: true`. It keeps every other byte of that file, writes
+  no other file, and returns the exact text it added and removed.
 - **No network calls from the checker.** CI fails if a file in `mcp/` loads a network or process
   module. It does not phone home, fetch at runtime, or send your
   project anywhere. Two skills can lead your agent to the network: the publishing skill has it

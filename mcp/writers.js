@@ -44,9 +44,11 @@
  * output tokens into input tokens. That is still most of the wall-clock win, because output tokens
  * are the expensive term, but the bytes do not vanish.
  *
- * Nothing here writes to disk: these writers return content for the agent host to save. The one
- * tool that writes is write_project (project.js), which creates a new project in a folder that does
- * not exist or is empty, never overwrites or deletes a file, and returns the list of files it wrote.
+ * Nothing here writes to disk: these writers return content for the agent host to save. Two tools
+ * write: write_project (project.js) creates a new project in a folder that does not exist or is
+ * empty, never overwrites or deletes a file, and returns the list of files it wrote; write_measures
+ * (measures.js) inserts measures into one existing table file, or replaces a measure of the same
+ * name when asked, keeps every other byte of that file, and returns the text it added.
  */
 
 const fs = require("fs");
