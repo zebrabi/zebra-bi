@@ -161,21 +161,29 @@ function checkTableCalculations(objects, visualType, bindings, warnings) {
   const { percent, repeated } = enc.calculationsFaults(list);
   const pairsOnly = [...new Set(list.filter((c) => typeof c === "string")
     .map((c) => c.split("-").slice(0, 2).join("-")))];
-  if (bindings) {
-    const sim = enc.tableComparisonSlots(bindings, list);
+  // Bindings that are not lists of fields get their own, plainer error where the query is built.
+  const roles = bindings && typeof bindings === "object" && Object.values(bindings).every(Array.isArray) ? bindings : null;
+  if (roles) {
+    const sim = enc.tableComparisonSlots(roles, list);
     need(!sim.repeats.length,
       `chartSettings.calculations ${JSON.stringify(list)} makes this table draw `
       + `'${sim.repeats[0] && sim.repeats[0].comparison}' in variance slots `
       + `${sim.repeats[0] && sim.repeats[0].slots.join(" and ")}, and leaves out `
       + `${sim.missing.map((m) => `'${m}'`).join(", ") || "nothing else"}. The list holds one comparison `
       + `pair per variance slot, in order, and the visual reads 'x-y-percent' as 'x-y'. Write `
-      + `${JSON.stringify(sim.references.map((r) => `${sim.value}-${r}`))} for these roles, or leave the `
-      + `property out to draw the same defaults.`);
+      + `${JSON.stringify(enc.suggestCalculations(list, roles))} for these roles, or leave the `
+      + `property out to draw the defaults.`);
+    // The same rule as the encoder route: a list that draws correctly is written, with a warning.
+    if (sim.stoppedAt !== null) {
+      warnings.push(`chartSettings.calculations entry '${list[sim.stoppedAt]}' names a scenario that is not bound `
+        + `(bound: ${[sim.value, ...sim.references].filter(Boolean).join(", ") || "none"}), so the visual stops `
+        + `reading the list at that entry and the entries after it are not read.`);
+    }
   }
   if (percent.length || repeated.length) {
     warnings.push(`chartSettings.calculations carries ${[...percent, ...repeated].map((c) => `'${c}'`)
       .join(", ")}. The list holds comparison pairs, one per variance slot, and each pair already `
-      + `brings its percent column. Written as given${bindings ? ", because with these roles no drawn "
+      + `brings its percent column. Written as given${roles ? ", because with these roles no drawn "
         + "slot repeats a comparison" : ""}; the pairs-only form is ${JSON.stringify(pairsOnly)}.`);
   }
 }
@@ -708,8 +716,8 @@ function writeVisual(spec = {}) {
   // Observed on certified Tables (no sortSettings object at all, reproduced), with one matching
   // sighting on Tables+. The default is stated as observed, not as a documented guarantee.
   if (visualType.startsWith("ZebraBITables") && (spec.bindings?.Category?.length ?? 0) > 0
-      && !objects.sortSettings) {
-    warnings.push("This Tables visual has a Category and no sortSettings. A table with none has been seen "
+      && !objects.sortSettings && !spec.queryExtras?.sortDefinition) {
+    warnings.push("This Tables visual has a Category and no sortSettings and no sortDefinition. A table with none has been seen "
       + "to sort its rows by the first Values column, descending, which separates subtotals from their "
       + "components and moves rows inserted after a named row. Set sortSettings.columnName and "
       + "sortSettings.categorySort (0 keeps the model's own order, 1 descending, 2 ascending).");
