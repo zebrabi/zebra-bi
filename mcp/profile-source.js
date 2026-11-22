@@ -942,4 +942,6 @@ function profileSource(args = {}) {
   };
 }
 
-module.exports = { profileSource, sniffDelimiter, splitLine, toIsoDate, profileColumns, fiscalSignal, periodSignal, wideScenarioOf, WIDE_LABEL };
+module.exports = { profileSource, sniffDelimiter, splitLine, toIsoDate, profileColumns, fiscalSignal, periodSignal, wideScenarioOf, WIDE_LABEL,
+  // Also read by write_project (project.js), so the writer and the profile agree on a file.
+  listFiles, readJsonTable, keyColumnOf, classifyFile, joinSignals, scenarioSignal, INT_RE, NUM_RE };

@@ -82,6 +82,28 @@ though they shipped would misrepresent what anyone could have installed.
   but carries `-percent` or repeated entries is written as given, with a warning naming the pairs-only
   form; it is not rewritten, because dropping entries moves later ones into earlier slots and can
   change what a correct table draws.
+- New tool `write_project`: a complete Power BI project from a folder of flat files (CSV, TSV, pipe
+  or semicolon text, JSON arrays). It writes the `.pbip`, `definition.pbir`, `report.json` (with
+  `publicCustomVisuals` taken from the visuals on the pages), the pages, `definition.pbism`,
+  `database.tmdl`, `model.tmdl`, `relationships.tmdl` and one TMDL file per table. Each table is a
+  calculated `DATATABLE` of constants, with dates carried as year, month and day and built outside
+  the rows; a marked `Calendar` runs from 1 January of the first year to the last date in the data,
+  with fiscal year and period when the year does not start in January; AC, PL, FC and PY measures
+  are written on the fact table from templates, with every table reference quoted. `pages` takes a
+  `write_report` spec, `"propose"` (`profile_project` and `propose_pages` on the model just
+  written), or nothing for one empty page.
+- `write_project` writes only into a folder that does not exist or is empty, never overwrites or
+  deletes a file, and returns the files it wrote with their sizes, never the data. It refuses
+  mixed-type columns, decimal commas, dates it cannot read, duplicate keys on the one side of a
+  relationship, a path over 240 characters, and models above 300,000 cells or 2 MB of embedded
+  rows, each with the column or the way out named. Every other choice it makes is returned as a
+  one-line assumption, and it runs `validate_report` and `profile_project` over what it wrote.
+- `SECURITY.md`, `README.md` and the tool descriptions say that `write_project` is the one tool
+  that writes to disk.
+- `propose_pages` binds a measure whose DAX quotes its table (`SUM ( 'Sales'[Amount] )`); before,
+  such a measure left every ranked question unbindable.
+- The Microsoft 365 Copilot package names `write_project` as the way to create the project and
+  model, and its tests call it through `scripts/zbi.js`.
 
 ## 0.3.2 — 2026-11-04
 

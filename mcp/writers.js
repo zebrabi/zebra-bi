@@ -44,8 +44,9 @@
  * output tokens into input tokens. That is still most of the wall-clock win, because output tokens
  * are the expensive term, but the bytes do not vanish.
  *
- * Nothing here writes to disk. `validate_report` only reads, and a tool that silently writes into
- * a customer's project would be a different and much larger promise.
+ * Nothing here writes to disk: these writers return content for the agent host to save. The one
+ * tool that writes is write_project (project.js), which creates a new project in a folder that does
+ * not exist or is empty, never overwrites or deletes a file, and returns the list of files it wrote.
  */
 
 const fs = require("fs");

@@ -23,7 +23,9 @@
  *
  * Zero dependencies. The MCP stdio transport is newline-delimited JSON-RPC 2.0, which is small
  * enough that adding an SDK would mean shipping node_modules inside a plugin to save very
- * little. It also never touches the network, and never writes to the customer's project.
+ * little. It also never touches the network. Every tool returns its content for the agent host to
+ * save, except write_project, which creates a new project in a folder that does not exist or is
+ * empty, never overwrites or deletes a file, and returns the list of files it wrote.
  */
 
 const fs = require("fs");
@@ -59,6 +61,7 @@ const wr = require("./writers.js");
 const prof = require("./profile.js");
 const propose = require("./propose.js");
 const profSource = require("./profile-source.js");
+const project = require("./project.js");
 
 // --- reading the project ------------------------------------------------------------------
 
@@ -814,8 +817,106 @@ const WRITERS = {
   },
 };
 
+// --- the project writer -----------------------------------------------------------------------
+// The one tool that writes to disk. It creates a new project in a folder that does not exist or is
+// empty, never overwrites or deletes a file, and returns the list of files it wrote rather than
+// their content. It validates what it wrote with the same validateReport and resolveProject as
+// validate_report, so the two cannot disagree.
+
+const COLUMN_TYPES = { type: "object", additionalProperties: { type: "string", enum: ["text", "integer", "number", "date"] } };
+
+const PROJECT_WRITER = {
+  write_project: {
+    fn: (a) => project.writeProject(a, { validateReport, resolveProject }),
+    description: "Create a complete Power BI project on disk from a folder of flat files: the .pbip, "
+      + "the .Report folder (definition.pbir, report.json with publicCustomVisuals taken from the "
+      + "visuals on the pages, version.json and the pages) and the .SemanticModel folder "
+      + "(definition.pbism, database.tmdl, model.tmdl, relationships.tmdl and one TMDL file per table). "
+      + "Use it instead of writing any of those files by hand. It reads the source the way "
+      + "profile_source does, embeds every table as a calculated DATATABLE of constants (dates built "
+      + "outside the rows), adds a marked Calendar from 1 January of the first year to the last date "
+      + "in the data, relates the tables, and writes AC / PL / FC / PY measures on the fact table from "
+      + "templates (no free-form DAX). It writes only into a folder that does not exist or is empty, "
+      + "never overwrites or deletes a file, and refuses rather than guesses: mixed-type columns, "
+      + "decimal commas, unreadable dates, duplicate keys on the one side of a relationship, a path "
+      + "too long for Windows, or more than 300,000 cells or 2 MB of embedded rows. The result lists "
+      + "the files written with their sizes, the model's tables, measures and relationships, every "
+      + "assumption made (one line each), and validate_report's findings on the written project; it "
+      + "never returns the data. The project has not been rendered: open it in Power BI Desktop, "
+      + "refresh and save before handing it over.",
+    schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Stem for <name>.pbip, <name>.Report and "
+          + "<name>.SemanticModel: 1 to 60 letters, digits, underscores or hyphens." },
+        outPath: { type: "string", description: "Absolute path of the folder to create the project "
+          + "in. It must not exist yet, or must be empty." },
+        source: { type: "object", description: "The flat files, as profile_source takes them.",
+          properties: { path: { type: "string", description: "Absolute path to a folder of CSV, TSV, "
+            + "pipe or semicolon text and JSON arrays (two levels deep), or to one file." } },
+          required: ["path"] },
+        tables: { type: "array", description: "Optional overrides per source file.", items: {
+          type: "object",
+          properties: {
+            source: { type: "string", description: "The file name, with or without its extension." },
+            name: { type: "string", description: "The table's name in the model." },
+            role: { type: "string", enum: ["fact", "dimension", "skip"], description: "Overrides the "
+              + "detected role. 'skip' leaves the file out. A date table is left out by default, "
+              + "because the model's Calendar replaces it; 'dimension' keeps it." },
+            types: { ...COLUMN_TYPES, description: "Column to type. 'text' keeps a column exactly as "
+              + "written (leading zeros, mixed values)." },
+            hidden: { type: "array", items: { type: "string" }, description: "Columns to hide." },
+            columns: { type: "array", items: { type: "string" }, description: "Keep-list: only these "
+              + "columns are loaded. The way under the size ceiling." },
+          },
+          required: ["source"] } },
+        date: { type: "object", description: "Optional. Defaults to the fact table's first date column "
+          + "and the fiscal year the source shows.", properties: {
+          column: { type: "string", description: "'Column' or 'Table[Column]' on the fact table." },
+          fiscalYearStartMonth: { type: "number", description: "1 to 12. Other than 1 adds Fiscal Year "
+            + "(named by the year it ends) and Fiscal Period to the Calendar." },
+        } },
+        scenarios: { type: "object", description: "How the scenarios are stored. Detected when one "
+          + "column names each row's scenario; otherwise required, and the refusal says what to pass.",
+          properties: {
+            form: { type: "string", enum: ["long", "wide", "none"] },
+            column: { type: "string", description: "long: the column whose value names the scenario." },
+            members: { type: "object", additionalProperties: { type: "string", enum: ["AC", "PL", "FC", "PY"] },
+              description: "long: each value of that column to its code, e.g. {\"Actual\": \"AC\", \"Budget\": \"PL\"}." },
+            columns: { type: "object", additionalProperties: { type: "string" },
+              description: "wide: each code to the column that holds it, e.g. {\"AC\": \"Actual\", \"PL\": \"Budget\"}." },
+            py: { type: "string", enum: ["timeIntelligence", "column", "none"], description: "Where "
+              + "previous year comes from: the calendar, one year back day by day (the default when "
+              + "the data spans 13 months or more), the source's own PY member or column, or nowhere." },
+          } },
+        metrics: { type: "array", description: "Optional. Defaults to the additive amount columns of "
+          + "the fact table. Each metric gets one measure per scenario, named '<name> AC', "
+          + "'<name> PL', '<name> FC', '<name> PY'.", items: { type: "object", properties: {
+          name: { type: "string" },
+          column: { type: "string", description: "long and none: the amount column." },
+          columns: { type: "object", additionalProperties: { type: "string" }, description: "wide: code to column, for this metric." },
+          agg: { type: "string", enum: ["sum", "average"], description: "Default sum." },
+          format: { type: "string", description: "Format string, e.g. '#,0' or '0.0%'." },
+          numerator: { type: "string", description: "Ratio: the metric divided ..." },
+          denominator: { type: "string", description: "... by this metric, per scenario, with DIVIDE." },
+        } } },
+        pages: { description: "A write_report spec ({pages: [...]}) whose bindings must resolve in the "
+          + "written model; or \"propose\", which runs profile_project and propose_pages on the model "
+          + "just written; or omitted, for one empty page so the project opens." },
+      },
+      required: ["name", "outPath", "source"],
+    },
+  },
+};
+
+/** Explicit labels: it writes files (not read-only), never overwrites or deletes (not destructive),
+ *  and a second call into the same folder is refused (not idempotent). */
+const WRITES_NEW_FILES = Object.freeze({
+  readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
+});
+
 /** Everything reachable through tools/call that is not validate_report. */
-const CALLABLE = { ...ENCODERS, ...WRITERS };
+const CALLABLE = { ...ENCODERS, ...WRITERS, ...PROJECT_WRITER };
 
 /**
  * Labels that let a host skip its per-call confirmation, given ONLY to the encoders: they turn
@@ -829,8 +930,11 @@ const CALLABLE = { ...ENCODERS, ...WRITERS };
 const NO_READS = Object.freeze({
   readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
 });
-const annotate = (t) => (Object.prototype.hasOwnProperty.call(ENCODERS, t.name)
-  ? { ...t, annotations: NO_READS } : t);
+const annotate = (t) => {
+  if (Object.prototype.hasOwnProperty.call(ENCODERS, t.name)) return { ...t, annotations: NO_READS };
+  if (Object.prototype.hasOwnProperty.call(PROJECT_WRITER, t.name)) return { ...t, annotations: WRITES_NEW_FILES };
+  return t;
+};
 
 const TOOLS = [
   {
@@ -1036,5 +1140,5 @@ process.stdin.on("data", (chunk) => {
 if (require.main === module) listen();
 
 module.exports = { validateReport, resolveProject, checkers, loadRules, listen,
-                   ENCODERS, WRITERS, CALLABLE, TOOLS, profileProjectTool,
+                   ENCODERS, WRITERS, PROJECT_WRITER, CALLABLE, TOOLS, profileProjectTool,
                    profileSourceTool: profSource.profileSource };
