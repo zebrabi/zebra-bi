@@ -107,6 +107,29 @@ const isZebraType = (t = "") => ZEBRA_PREFIXES.some((p) => t.startsWith(p));
 // ordinary, so it is not warned about as "not a Zebra visual type".
 const PAGE_FURNITURE = new Set(["textbox", "slicer", "actionButton", "shape", "image", "pageNavigator"]);
 
+/**
+ * Tables+ draws its own automatic title in place of an authored `titleSettings.text` (three renders
+ * across two Desktop sessions, two models and two plugin versions; Charts+ drew the same key). Only
+ * the warning is emitted. Which alternative draws on Tables+ is not settled by those renders:
+ * `titleSettings.show: false` hid the automatic title, and a text box above the visual carried a
+ * title that drew, but the Power BI container title (`visualContainerObjects.title`) was used as a
+ * workaround without a recorded render, so nothing is routed there.
+ */
+function tablesPlusTitleWarning(objects, visualType) {
+  if (!isTablesPlus(visualType)) return null;
+  const props = objects.titleSettings && objects.titleSettings[0] && objects.titleSettings[0].properties;
+  const lit = (v) => v && v.expr && v.expr.Literal && v.expr.Literal.Value;
+  const text = lit(props && props.text);
+  if (typeof text !== "string") return null;
+  if (lit(props.show) === "false") return null;   // the title is off, so there is nothing to draw
+  const token = /\[[^\]]+\]/.test(text);
+  return "Tables+ has been seen to draw its own automatic title instead of titleSettings.text "
+    + "(for example 'AC and PY by Company, Line'), while Charts+ draws the authored text."
+    + (token ? " This title carries a [Measure] token, which Tables+ may not draw either." : "")
+    + " titleSettings.show: false hides the automatic title, and a text box above the visual carries "
+    + "a title that draws. Check a render of the title text.";
+}
+
 // --- what must never be written ---------------------------------------------------------------
 /**
  * Telemetry the visual writes about itself, not design.
@@ -622,6 +645,9 @@ function writeVisual(spec = {}) {
       + `Write the group once, one way.`);
     objects[group] = entries;
   }
+
+  const titleWarning = tablesPlusTitleWarning(objects, visualType);
+  if (titleWarning) warnings.push(titleWarning);
 
   // A licence key in the spec is written with a fresh appliedTimestamp (Tables+ and Charts+), then
   // the licence groups of the visual being replaced are carried through unchanged. Applied last and

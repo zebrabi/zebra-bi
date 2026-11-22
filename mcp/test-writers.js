@@ -655,6 +655,39 @@ check("page furniture through write_page: no warning, and a native chart beside 
     "control: a native chart should still warn");
 });
 
+// Tables+ has been seen to draw its own automatic title instead of an authored titleSettings.text.
+// Only a warning is emitted: what is written is what was asked for, and nothing is routed elsewhere.
+const titleWarned = (r) => (r.warnings || []).some((x) => /automatic title/.test(x));
+check("Tables+ with a static title text warns, and writes the text exactly as asked", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "tables+", title: "Net sales by region" });
+  assert.ok(titleWarned(r), JSON.stringify(r.warnings));
+  const f = JSON.parse(r.content).visual;
+  assert.deepStrictEqual(Object.keys(f.objects), ["titleSettings"], "something else was routed");
+  assert.ok(!("visualContainerObjects" in f), "the title was routed to the container");
+  assert.ok(!(r.warnings || []).some((x) => /\[Measure\] token/.test(x)));
+});
+check("Tables+ with the text set through properties warns as well", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "ZebraBITablesPlus3E6085701D7B426980C3859B16327993",
+    properties: { "titleSettings.show": true, "titleSettings.text": "Net sales" } });
+  assert.ok(titleWarned(r), JSON.stringify(r.warnings));
+});
+check("Tables+ with a [Measure] token in the title says the token may not draw", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "tables+", title: "Net sales, in USD - [Period label]" });
+  assert.ok(titleWarned(r) && r.warnings.some((x) => /\[Measure\] token/.test(x)), JSON.stringify(r.warnings));
+});
+check("no Tables+ title warning when there is no text, or the title is off", () => {
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+" })));
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+",
+    properties: { "titleSettings.show": false } })));
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+", title: { text: "Hidden", show: false } })));
+});
+check("Charts+ and certified Tables/Charts/Cards titles are not warned about", () => {
+  for (const t of ["charts+", "tables", "charts", "cards", "ZebraBITables98F88148E5424E949E69864664EE1860"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t, title: "Net sales by region" });
+    assert.ok(!titleWarned(r), `${t} was warned about`);
+  }
+});
+
 // --- file hygiene -----------------------------------------------------------------------------------
 
 check("output is UTF-8 with no BOM, LF only, and no trailing newline", () => {

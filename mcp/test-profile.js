@@ -296,6 +296,14 @@ check("with AC + PY present it DOES bind the comparison", () => {
   assert.ok(v.bindings.PreviousYear, "PreviousYear well left empty");
 });
 
+check("Tables+ pages carry a note about the automatic title; certified Tables pages do not", () => {
+  const plus = proposed({ fact: SIGNAL_FACT, measures: MEASURES });
+  assert.ok(plus.notes && plus.notes.some((n) => /automatic title/.test(n)), JSON.stringify(plus.notes));
+  assert.ok(plus.spec.pages[0].visuals[0].properties["titleSettings.text"], "the authored title went missing");
+  const certified = proposed({ fact: SIGNAL_FACT, measures: MEASURES }, { usePlus: false });
+  assert.ok(!certified.notes, "a certified Tables proposal carries the Tables+ note");
+});
+
 check("an unrankable project is REFUSED, not proposed from thin air", () => {
   const pq = "table Sales\n\tcolumn Region\n\t\tdataType: string\n"
            + "\tpartition Sales = m\n\t\tmode: import\n\t\tsource = let x = 1 in x\n";

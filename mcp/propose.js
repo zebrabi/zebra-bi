@@ -259,6 +259,15 @@ function proposePages(profile, opts = {}) {
       + "invent a comparison.");
   }
 
+  // Output notes: facts about what these pages will do, kept apart from the decisions above.
+  const notes = [];
+  if (usePlus && pages.length) {
+    notes.push("TITLES ON Tables+. Tables+ has been seen to draw its own automatic title instead of the "
+      + "authored titleSettings.text, while Charts+ draws the authored text. These pages author the "
+      + "title text, so check a render. titleSettings.show: false hides the automatic title, and a "
+      + "text box above the visual carries a title that draws.");
+  }
+
   return {
     ok: true,
     subject,
@@ -272,6 +281,7 @@ function proposePages(profile, opts = {}) {
       ? { actual, plan: plan || null, previousYear: py || null, onSubject: false } : null,
     notProposed,
     youMustStillDecide: decide,
+    ...(notes.length ? { notes } : {}),
   };
 }
 

@@ -17,6 +17,11 @@ though they shipped would misrepresent what anyone could have installed.
 - `write_visual`, `write_page` and `write_report` no longer warn "not a Zebra visual type" for page
   furniture: `textbox`, `slicer`, `actionButton`, `shape`, `image` and `pageNavigator`. Any other
   visual type that is not a Zebra BI visual still gets the warning.
+- `write_visual`, `write_page` and `write_report` warn when a Tables+ visual is given
+  `titleSettings.text`, and `propose_pages` carries the same note in its output. Tables+ has been
+  seen to draw its own automatic title instead of the authored text, while Charts+ draws it. Nothing
+  is rewritten: the text is written as asked. `titleSettings.show: false` hides the automatic title,
+  and a text box above the visual carries a title that draws.
 
 ## 0.3.2 — 2026-11-04
 
