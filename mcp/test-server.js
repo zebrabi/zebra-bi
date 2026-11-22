@@ -367,6 +367,14 @@ function rpc(messages) {
     assert.strictEqual(t.annotations.destructiveHint, false);
   });
 
+  check("tools/list advertises write_measures, labelled as editing an existing file", () => {
+    const t = wp.find((x) => x.id === 1).result.tools.find((x) => x.name === "write_measures");
+    assert.ok(t, "write_measures not advertised");
+    assert.deepStrictEqual(t.inputSchema.required, ["projectPath", "table", "measures"]);
+    assert.strictEqual(t.annotations.readOnlyHint, false);
+    assert.strictEqual(t.annotations.destructiveHint, true);
+  });
+
   check("write_project writes a project over stdio and refuses a second write into it", () => {
     const ok = wp.find((x) => x.id === 2).result;
     assert.strictEqual(ok.isError, false, ok.content[0].text.slice(0, 200));
