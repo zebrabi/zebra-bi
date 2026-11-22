@@ -14,6 +14,16 @@ though they shipped would misrepresent what anyone could have installed.
 
 ## Unreleased
 
+- Two more checks. `tmdl-sort-column-reads-the-column-it-sorts` catches a column sorted by a calculated
+  column whose expression reads that column, directly or through other calculated columns of the table:
+  Power BI loads the model and then refuses to evaluate it as a circular dependency, so no data loads and
+  no visual draws. `slicer-selection-is-not-a-value-of-its-column` catches a slicer whose saved selection
+  is a text value its column cannot hold, where the files decide it: a calendar column defined as
+  `FORMAT ( [Date], "mmm" )` in a model with an English culture holds `Sep`, so a slicer selecting
+  `September` filters the page to nothing while still showing September as selected. Both stay silent
+  when the files do not fix the column's values or the model's culture.
+- The authoring skill's slicer guidance now says what a selection naming a value the field lacks does:
+  the slicer still shows it as selected and the page is filtered to nothing.
 - `write_project` takes `order`: the members of a text column in the order its rows take, such as the
   accounts of a P&L and, in its own entry, their groups. Each entry adds a hidden whole-number column
   `<column> Order` inside the embedded rows and makes it the column's `sortByColumn`; members not listed
@@ -256,7 +266,7 @@ thing you can do is tell us when it does not.
 | **`setup-doctor`** | Ten checks on the machine, each with a fix. Two are about your model — scenario measures and a marked date table — and they are the ones that decide whether the report comes out right |
 | **`report-authoring`** | Planning, data binding, IBCS variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates |
 | **`report-publishing`** | The Zebra-specific parts of publishing. Microsoft's own skill does the upload; this covers the visual-track choice and the refresh without which the report arrives empty |
-| **The checker** | 77 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
+| **The checker** | 79 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
 | **18 MCP tools** | Profiling, page proposal, the encoders for the property blobs that cannot be written by hand, and the report writers |
 
 Ten on-demand reference layers sit behind the authoring skill and load only when they are needed:

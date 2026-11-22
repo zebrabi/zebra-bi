@@ -696,6 +696,7 @@ ADDCOLUMNS ( CALENDARAUTO (),
 
 `CALENDARAUTO()` derives the range from the model. Use `CALENDAR(start, end)` when you need to pin
 it. `YearMonth` as `"YYYY-MM"` sorts correctly as text, so it needs no sort column.
+A slicer's saved selection names the text the column holds: `Month` above holds `Sep`, so select `'Sep'`, not `'September'`.
 
 ### ⚠️ `CALENDARAUTO()` CANNOT see a DATATABLE fact — pair calculated models with guarded `CALENDAR`
 

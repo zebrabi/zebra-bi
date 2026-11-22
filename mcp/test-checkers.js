@@ -1137,6 +1137,111 @@ check("a table with no Values is judged as the visual's role assignment does, an
     "judged a reference the visual cannot name");
 });
 
+// --- a slicer selection the column cannot hold (22 Nov 2026) ------------------------------------
+// A month column defined with FORMAT ( [Date], "mmm" ) holds Sep; a slicer that selects 'September' matches
+// no row, so the page is filtered to nothing while the slicer still shows September as selected. Judged only
+// where the files fix the column's values: English culture, a calendar made by ADDCOLUMNS over CALENDAR.
+const SELV = "slicer-selection-is-not-a-value-of-its-column";
+const calSource = (fmt = '"mmm"', col = "Month", last = "") => "ADDCOLUMNS (\n\t\t\t\t\tCALENDAR ( DATE ( 2024, 1, 1 ), DATE ( 2024, 12, 31 ) ),\n"
+  + `\t\t\t\t\t"MonthNo", MONTH ( [Date] ),\n\t\t\t\t\t"${col}", FORMAT ( [Date], ${fmt}${last} )\n\t\t\t\t)`;
+const calTmdl = (source, col = "Month", sourceColumn = null) => "table Calendar\n\tdataCategory: Time\n\n\tcolumn Date\n\t\tdataType: dateTime\n\t\tisKey\n\t\tsummarizeBy: none\n"
+  + "\t\tsourceColumn: [Date]\n\n\tcolumn MonthNo\n\t\tdataType: int64\n\t\tisHidden\n\t\tsummarizeBy: none\n\t\tsourceColumn: [MonthNo]\n\n"
+  + `\tcolumn ${col}\n\t\tdataType: string\n\t\tsummarizeBy: none\n\t\tsourceColumn: [${sourceColumn || col}]\n\t\tsortByColumn: MonthNo\n\n`
+  + "\tpartition Calendar = calculated\n\t\tmode: import\n\t\tsource =\n\t\t\t\t" + source + "\n";
+const MPART = "table Calendar\n\n\tcolumn Month\n\t\tdataType: string\n\t\tsourceColumn: Month\n\n\tpartition Calendar = m\n\t\tmode: import\n\t\tsource =\n"
+  + "\t\t\t\tlet\n\t\t\t\t    S = 1\n\t\t\t\tin\n\t\t\t\t    S\n";
+const selectionOf = (values, { entity = "Calendar", prop = "Month", flat = false, not = false } = {}) => {
+  const inn = { In: { Expressions: [{ Column: { Expression: { SourceRef: { Source: "c" } }, Property: prop } }],
+    Values: values.map((v) => [{ Literal: { Value: v } }]) } };
+  const f = { Version: 2, From: [{ Name: "c", Entity: entity, Type: 0 }], Where: [{ Condition: not ? { Not: { Expression: inn } } : inn }] };
+  return flat ? f : { filter: f };
+};
+function slicerProject({ culture = "en-US", tmdl = calTmdl(calSource()), values = ["'March'"], sel = {}, byPath = null, type = "slicer" } = {}) {
+  const root = project((s) => {
+    s.visuals.MonthPick = { name: "MonthPick", position: { x: 0, y: 0, width: 200, height: 60 },
+      visual: { visualType: type, objects: { general: [{ properties: { filter: selectionOf(values, sel) } }] }, query: { queryState: {} } } };
+    if (byPath) s.pbir.datasetReference.byPath.path = byPath;
+  });
+  const md = path.join(root, "Demo.SemanticModel", "definition");
+  fs.writeFileSync(path.join(md, "model.tmdl"), "model Model\n" + (culture === null ? "" : `\tculture: ${culture}\n`));
+  fs.mkdirSync(path.join(md, "tables"), { recursive: true });
+  fs.writeFileSync(path.join(md, "tables", "Calendar.tmdl"), tmdl);
+  return root;
+}
+const selHits = (opts) => srv.validateReport({ projectPath: slicerProject(opts) }).findings.filter((f) => f.code === SELV);
+
+check("a slicer selecting a month in full, on a column defined with FORMAT mmm, is caught once, at the slicer, as blank", () => {
+  const hits = selHits();
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].severity, "blank");
+  assert.ok(/MonthPick\/visual\.json:objects\.general\.filter \(Calendar\.Month = 'March'\)$/.test(hits[0].location), hits[0].location);
+  // one finding per value the column does not hold, none for the ones it does
+  const two = selHits({ values: ["'Mar'", "'September'", "'Feb'", "'Sept'"] });
+  assert.deepStrictEqual(two.map((h) => /= '(.*)'\)$/.exec(h.location)[1]), ["September", "Sept"]);
+});
+
+check("the selection written as the model produces it, in any case, or on the spelled-out format, is NOT flagged", () => {
+  assert.strictEqual(selHits({ values: ["'Mar'"] }).length, 0, "fired on Mar");
+  assert.strictEqual(selHits({ values: ["'mar'", "'SEP'", "'Dec'"] }).length, 0, "compared with case");
+  assert.strictEqual(selHits({ values: ["' Mar '"] }).length, 0, "fired on a value that matches once trimmed");
+  assert.strictEqual(selHits({ tmdl: calTmdl(calSource('"mmmm"')), values: ["'March'", "'september'"] }).length, 0, "fired on the spelled-out format");
+  assert.strictEqual(selHits({ tmdl: calTmdl(calSource('"MMM"')), values: ["'Mar'"] }).length, 0, "fired on MMM");
+  // the same fixture with the other direction: a short name on the spelled-out format is wrong
+  assert.strictEqual(selHits({ tmdl: calTmdl(calSource('"mmmm"')), values: ["'Mar'"] }).length, 1, "missed a short name on mmmm");
+});
+
+check("weekday formats are judged the same way: ddd holds Mon, dddd holds Monday", () => {
+  const day = (fmt, v) => selHits({ tmdl: calTmdl(calSource(fmt, "Day"), "Day"), values: [v], sel: { prop: "Day" } }).length;
+  assert.strictEqual(day('"ddd"', "'Monday'"), 1, "missed Monday on ddd");
+  assert.strictEqual(day('"ddd"', "'Mon'"), 0, "fired on Mon on ddd");
+  assert.strictEqual(day('"dddd"', "'Mon'"), 1, "missed Mon on dddd");
+  assert.strictEqual(day('"dddd"', "'Monday'"), 0, "fired on Monday on dddd");
+});
+
+check("a model culture that is not English, absent, or an English one that spells the short names differently is NOT judged for them", () => {
+  for (const culture of ["de-DE", "sl-SI", "fr-FR", null]) assert.strictEqual(selHits({ culture }).length, 0, "judged culture " + culture);
+  for (const culture of ["en-GB", "en-AU", "en-IN"]) {
+    assert.strictEqual(selHits({ culture }).length, 0, "judged mmm for " + culture);
+    // the spelled-out names are the same in every English culture
+    assert.strictEqual(selHits({ culture, tmdl: calTmdl(calSource('"mmmm"')), values: ["'Mar'"] }).length, 1, "missed Mar on mmmm for " + culture);
+  }
+  assert.strictEqual(selHits({ culture: "en" }).length, 1, "missed the neutral English culture");
+});
+
+check("a column whose values the files do not fix is NOT judged: other formats, a wrapped call, an M table, another source, a renamed column", () => {
+  const miss = (what, opts) => assert.strictEqual(selHits(opts).length, 0, "judged " + what);
+  miss("mmm yyyy", { tmdl: calTmdl(calSource('"mmm yyyy"')), values: ["'March 2024'"] });
+  miss("a third argument (a locale)", { tmdl: calTmdl(calSource('"mmm"', "Month", ', "de-DE"')) });
+  miss("a call wrapped in a concatenation", { tmdl: calTmdl(calSource().replace('FORMAT ( [Date], "mmm" )', '"M" & FORMAT ( [Date], "mmm" )')) });
+  miss("a call inside IF", { tmdl: calTmdl(calSource().replace('FORMAT ( [Date], "mmm" )', 'IF ( TRUE (), FORMAT ( [Date], "mmm" ), "-" )')) });
+  miss("FORMAT of another column", { tmdl: calTmdl(calSource().replace("FORMAT ( [Date]", "FORMAT ( [Posted]")) });
+  miss("FORMAT of a column written with its table", { tmdl: calTmdl(calSource().replace("FORMAT ( [Date]", "FORMAT ( 'Fact'[Date]")) });
+  miss("an M partition", { tmdl: MPART });
+  miss("a source that is not ADDCOLUMNS", { tmdl: calTmdl("UNION ( " + calSource() + ", ROW ( \"Month\", \"x\" ) )") });
+  miss("ADDCOLUMNS over a table that is not CALENDAR", { tmdl: calTmdl(calSource().replace(/CALENDAR \(.*\),\n/, "'Fact',\n")) });
+  miss("SELECTCOLUMNS", { tmdl: calTmdl(calSource().replace("ADDCOLUMNS", "SELECTCOLUMNS")) });
+  miss("a column with its own expression", { tmdl: calTmdl(calSource()).replace("sourceColumn: [Month]", "= \"x\"") });
+  miss("a column bound to another name", { tmdl: calTmdl(calSource(), "Month", "Mon") });
+  miss("a column that is not text", { tmdl: calTmdl(calSource()).replace("dataType: string", "dataType: int64") });
+  miss("a name defined twice", { tmdl: calTmdl(calSource().replace('"MonthNo", MONTH ( [Date] ),', '"Month", FORMAT ( [Date], "mmmm" ),')) });
+});
+
+check("a selection that is not an In of text on that column, or sits where the rule does not read, is NOT flagged", () => {
+  const miss = (what, opts) => assert.strictEqual(selHits(opts).length, 0, "judged " + what);
+  miss("Not In", { sel: { not: true } });
+  miss("a flat-nested selection", { sel: { flat: true } });
+  miss("a number", { values: ["3L", "null"] });
+  miss("another column", { sel: { prop: "MonthNo" } });
+  miss("another table", { sel: { entity: "Fact" } });
+  miss("a visual that is not a slicer", { type: GUID.tables });
+  miss("a model the report does not point at", { byPath: "../Other.SemanticModel" });
+  assert.strictEqual(selHits({ sel: { entity: "calendar", prop: "month" } }).length, 1, "names are compared without case");
+});
+
+check("a model the report points at by a path with backslashes is the one judged", () => {
+  assert.strictEqual(selHits({ byPath: "..\\Demo.SemanticModel" }).length, 1);
+});
+
 // --- the silence bar -----------------------------------------------------------------------
 // The acceptance test the held catalogue paid for: a rule that fires on a good report is worse than
 // no rule, because it trains the reader to ignore the tool.

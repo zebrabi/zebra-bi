@@ -279,7 +279,7 @@ expression: `column Doubled = [Amount] * 2` — **measured** on a calculated tab
 | `summarizeBy` | `none`, `sum`, `count`, `min`, `max`, `average`, `distinctCount`, `default` | `none` on every key, text, date and ID column |
 | `formatString` | section 8 | |
 | `isHidden`, `isKey`, `isUnique`, `isNullable`, `isDefaultLabel`, `isDefaultImage`, `isAvailableInMdx`, `keepUniqueRows` | booleans | `isKey` exactly one per table, on a column with unique values; `isAvailableInMdx: false` trims Excel exposure; each **measured** alone |
-| `sortByColumn` | the name of another column of the same table, nothing else | `Month` by `MonthNo`; never `'Calendar'[MonthNo]` |
+| `sortByColumn` | the name of another column of the same table, nothing else | `Month` by `MonthNo`; never `'Calendar'[MonthNo]`; never a calculated column that reads the column it sorts (a circular dependency, no data loads) |
 | `dataCategory` | `Country`, `StateOrProvince`, `City`, `PostalCode`, `Continent`, `Latitude`, `Longitude`, `WebUrl`, `ImageUrl`, `Barcode`, `Address`, `Place`, `County` | plus the auto-date values Desktop writes (`Years`, `Months`, …) which you never author |
 | `displayFolder` | `Folder\Sub` | backslash nests |
 | `displayOrdinal`, `alignment`, `encodingHint`, `sourceProviderType` | | rare |

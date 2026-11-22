@@ -201,7 +201,7 @@ Licence                 trial   see references/licence-and-trial.md
 Scenario measures       FAIL    no AC/PL/PY measures — variance will be empty. Fix: 3 lines of DAX.
 Calendar date table     FAIL    Calendar exists, not marked. Add dataCategory: Time + isKey.
 Node.js                 pass    v22.22.3
-Zebra validator         pass    77 rules
+Zebra validator         pass    79 rules
 Desktop Bridge          pass    answered in 0.2s
 
 Tier 2. Validator running.

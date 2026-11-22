@@ -491,8 +491,8 @@ and changing one has a shape worth knowing:
   looks selected, and **silently filters nothing** — the page then shows all-years totals under a
   slicer reading "2020". Confirm by the number, not by the slicer's caption. Shape in the traps.
 - **Changing which field a slicer binds** means updating the projection *and* clearing the old
-  selection. A selection naming a value that no longer exists in the bound field leaves the slicer
-  showing nothing selected and the page unfiltered.
+  selection. A selection naming a value the bound field lacks still shows as selected
+  and filters the page to nothing.
 - **Adding a slicer to an existing page: check for the page filter you are about to fight.** If the
   field already has a hardcoded page filter, the new slicer can only ever narrow within it. Remove
   the page filter and move its value to the slicer's default.

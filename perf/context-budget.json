@@ -4,9 +4,10 @@
   "files": [
     {
       "path": "skills/report-authoring/SKILL.md",
-      "ceiling": 16658,
+      "ceiling": 16652,
       "target": 10700,
       "history": [
+        "16658 -> 16652 (2026-11-22): a LOWERING of 6. The slicer bullet that said a selection naming a value the bound field no longer holds leaves the slicer showing nothing selected and the page unfiltered now says what the slicer and the page do when the selection names a value the field lacks: it still shows as selected and filters the page to nothing. The corrected sentence is shorter than the one it replaces, and the ceiling follows the measurement down.",
         "16659 -> 16658 (2026-11-22): a LOWERING of 1. One paragraph after the opening paragraph tells the agent that when the Zebra BI tools are not in its tool list it calls them with node <plugin folder>/mcp/cli.js <tool> @args.json: on GitHub Copilot CLI, Codex and other hosts that load the skills without registering the local server, an agent that is not told this writes the project files by hand. It sits in the body because the agent decides how to write files before it reads any reference. Paid for in the same passage by cutting a sentence that restated the file's own structure (the session list now reads Come back to this list when deep in a blob), a sentence on authoring from PBIR text, and the not-the-roles-not-the-properties list in the screenshot rule, and the ceiling follows the measurement down.",
         "16660 -> 16659 (2026-11-22): a LOWERING of 1. The row for references/project-files.md now reads Read or repair a project's five files, and one paragraph at plan step 1 tells the agent to create a project from flat files with write_project instead of writing its files, model or DATATABLE tables by hand. Paid for in the same passage by compressing the sources, joins and propose_pages sentences; no instruction was dropped.",
         "16792 -> 16660 (2026-11-19): a LOWERING of 132. The visuals are named Tables+ and Charts+ throughout, and verification-status wording and accounts of how facts were found are removed; where they carried an instruction, the instruction is now stated directly.",
