@@ -137,7 +137,26 @@ try {
     const r = spawnSync(process.execPath, [path.join(scripts, "zbi.js"), "list"], { encoding: "utf8", timeout: 30000 });
     assert.strictEqual(r.status, 0, r.stderr);
     const tools = r.stdout.trim().split("\n").map((l) => l.split(" - ")[0]);
-    for (const t of ["validate_report", "write_report", "profile_source"]) assert.ok(tools.includes(t), `${t} missing`);
+    for (const t of ["validate_report", "write_report", "profile_source", "write_project"]) assert.ok(tools.includes(t), `${t} missing`);
+  });
+
+  check("the bundled checker writes a project with write_project, called from another folder", () => {
+    const data = path.join(tmp, "data");
+    fs.mkdirSync(data, { recursive: true });
+    fs.writeFileSync(path.join(data, "sales.csv"),
+      "Date,Region,Scenario,Amount\n2025-01-01,N,Actual,10\n2025-01-01,N,Budget,12\n2025-02-01,S,Actual,20\n2025-02-01,S,Budget,18\n");
+    const out = path.join(tmp, "written");
+    const args = path.join(tmp, "args.json");
+    fs.writeFileSync(args, JSON.stringify({ name: "Demo", outPath: out, source: { path: path.join(data, "sales.csv") }, pages: "propose" }));
+    const r = spawnSync(process.execPath, [path.join(scripts, "zbi.js"), "write_project", `@${args}`],
+      { cwd: data, encoding: "utf8", timeout: 60000 });
+    assert.strictEqual(r.status, 0, r.stderr || r.stdout.slice(0, 300));
+    const res = JSON.parse(r.stdout);
+    assert.ok(res.files.some((f) => f.path === "Demo.SemanticModel/definition/model.tmdl"));
+    assert.strictEqual(res.validation.wontOpen + res.validation.blank, 0);
+    const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "skills", "report-authoring", "rules.json"), "utf8")).rules;
+    assert.strictEqual(res.validation.rulesRun, rules.length);
+    assert.ok(fs.existsSync(path.join(out, "Demo.pbip")));
   });
 
   check("the bundled checker loads its rules and checks a project", () => {

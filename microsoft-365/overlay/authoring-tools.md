@@ -10,6 +10,10 @@ node /tmp/zbi/scripts/zbi.js <tool_name> @/tmp/args.json
 
 Write the tool arguments to a JSON file and pass it with `@`. Use the writer and encoder tools instead of hand-writing visual, page or report JSON, as this file says.
 
+## In Microsoft 365 Copilot: create the project with `write_project`
+
+Create the project and model with `write_project`; never write the `.pbip`, `definition.pbir`, `report.json`, `definition.pbism` or any `.tmdl` file yourself. It reads the CSV or JSON, embeds the rows, adds a marked calendar and the AC/PL/FC/PY measures, writes everything into a new folder and returns the files, its assumptions and the checker's findings: `{"name": "Sales", "outPath": "/tmp/out/Sales", "source": {"path": "/tmp/data/sales.csv"}, "pages": "propose"}`. A refusal says what to pass. Put every `assumptions` line in your hand-over.
+
 ## In Microsoft 365 Copilot: before you hand anything back
 
 1. Run `validate_report` on the finished project folder (`{"projectPath": "<folder that holds the .pbip>"}`).
