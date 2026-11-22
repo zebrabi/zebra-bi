@@ -1,0 +1,680 @@
+#!/usr/bin/env node
+// Copyright (c) 2026 ZEBRA BI informacijske rešitve d.d. Distributed under the terms in LICENSE-ZEBRA-AGENT-SKILLS at the repository root.
+"use strict";
+/**
+ * Tests for write_project (project.js).
+ *
+ * Every fixture is invented and written into a temp directory per run. The cross-checks run the
+ * real validator over the written project and read it back with the real profilers, and each
+ * zero-finding assertion sits beside a negative control that breaks one written file and expects
+ * the named rule to fire, so a zero is never a blind zero.
+ *
+ *   node test-project.js
+ */
+
+const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const project = require("./project.js");
+const srv = require("./server.js");
+const tmdl = require("./tmdl.js");
+const T = require("./tmdl-tree.js");
+const wr = require("./writers.js");
+
+const results = [];
+const check = (name, fn) => {
+  try { fn(); results.push(["PASS", name, ""]); }
+  catch (e) { results.push(["FAIL", name, String(e && e.stack || e).split("\n").slice(0, 2).join(" | ").slice(0, 220)]); }
+};
+
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "zbi-wp-"));
+let n = 0;
+/** A source folder holding the given files. */
+function bed(files) {
+  const dir = path.join(TMP, `src${++n}`);
+  for (const [rel, content] of Object.entries(files)) {
+    const p = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, content);
+  }
+  return dir;
+}
+/** A target folder that does not exist yet. */
+const target = () => path.join(TMP, `out${++n}`);
+const RULES = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "skills", "report-authoring", "rules.json"), "utf8")).rules;
+
+function write(args) {
+  return project.writeProject(args, { validateReport: srv.validateReport, resolveProject: srv.resolveProject });
+}
+function refuses(args, re) {
+  let err = null;
+  try { write(args); } catch (e) { err = e; }
+  assert.ok(err, "it did not refuse");
+  assert.ok(err instanceof Error && err.name !== "AssertionError", `threw ${err}`);
+  assert.ok(re.test(err.message), `refusal did not match ${re}: ${err.message}`);
+  return err;
+}
+function tree(dir, base = dir, out = {}) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) tree(p, base, out);
+    else out[path.relative(base, p).split(path.sep).join("/")] = fs.readFileSync(p);
+  }
+  return out;
+}
+const csv = (rows) => `${rows.map((r) => r.join(",")).join("\n")}\n`;
+
+// --- fixtures -------------------------------------------------------------------------------
+
+/** Long form: Actual Jan 2024 to Jun 2025, Budget for 2025, two regions, three products. */
+function longRows() {
+  const rows = [["Date", "Region", "Product", "Scenario", "Amount"]];
+  const regions = ["North", "South"];
+  const products = ["Alpha", "Beta", "Gamma"];
+  for (let y = 2024; y <= 2025; y++) {
+    for (let m = 1; m <= 12; m++) {
+      const d = `${y}-${String(m).padStart(2, "0")}-01`;
+      regions.forEach((r, ri) => products.forEach((p, pi) => {
+        const base = 100 * (ri + 1) + 37 * pi + m;
+        if (y === 2024 || m <= 6) rows.push([d, r, p, "Actual", base * (ri ? 9 : 1)]);
+        if (y === 2025) rows.push([d, r, p, "Budget", base * (ri ? 9 : 1) + 5]);
+      }));
+    }
+  }
+  return rows;
+}
+const LONG = csv(longRows());
+const sumWhere = (rows, pred, col) => rows.slice(1).filter(pred).reduce((s, r) => s + Number(r[col]), 0);
+
+// --- the main project -----------------------------------------------------------------------
+
+const longSrc = bed({ "sales.csv": LONG });
+const out1 = target();
+let r1 = null;
+check("a long-form source writes a project and says what it wrote", () => {
+  r1 = write({ name: "Sales", outPath: out1, source: { path: longSrc }, pages: "propose" });
+  assert.strictEqual(r1.ok, true);
+  const paths = r1.files.map((f) => f.path);
+  for (const p of ["Sales.pbip", "Sales.Report/definition.pbir", "Sales.Report/definition/report.json",
+    "Sales.Report/definition/version.json", "Sales.Report/definition/pages/pages.json",
+    "Sales.SemanticModel/definition.pbism", "Sales.SemanticModel/definition/database.tmdl",
+    "Sales.SemanticModel/definition/model.tmdl", "Sales.SemanticModel/definition/relationships.tmdl",
+    "Sales.SemanticModel/definition/tables/sales.tmdl", "Sales.SemanticModel/definition/tables/Calendar.tmdl"]) {
+    assert.ok(paths.includes(p), `${p} not written`);
+  }
+  for (const f of r1.files) assert.strictEqual(fs.statSync(path.join(out1, f.path)).size, f.bytes, f.path);
+  assert.deepStrictEqual(Object.keys(tree(out1)).sort(), paths.slice().sort(), "files on disk differ from the manifest");
+  assert.ok(!paths.some((p) => /\.platform$|cultures\/|\.pbi\//.test(p)), "wrote a file it should not");
+  assert.deepStrictEqual(r1.model.measures, ["sales[Amount AC]", "sales[Amount PL]", "sales[Amount PY]"]);
+  assert.ok(r1.assumptions.length > 3 && r1.assumptions.every((a) => typeof a === "string" && !a.includes("\n")));
+  assert.ok(r1.next.some((x) => /not been rendered/.test(x)) && r1.next.some((x) => /refresh.*save|refreshed and saved/i.test(x)));
+});
+
+check("the result never carries the data rows", () => {
+  const text = JSON.stringify(r1);
+  assert.ok(!text.includes("DATATABLE"), "TMDL text came back");
+  assert.ok(text.length < 20000, `result is ${text.length} characters`);
+});
+
+check("validation ran every rule and found nothing that stops it opening or drawing", () => {
+  assert.strictEqual(r1.validation.rulesRun, RULES.length);
+  assert.ok(r1.validation.rulesRun > 60);
+  const bad = r1.validation.findings.filter((f) => f.severity === "wont-open" || f.severity === "blank");
+  assert.deepStrictEqual(bad, []);
+  assert.strictEqual(r1.validation.wontOpen, 0);
+  assert.strictEqual(r1.validation.blank, 0);
+  // And an independent run of the validator over the same folder agrees.
+  const v = srv.validateReport({ projectPath: out1 });
+  assert.strictEqual(v.rulesRun, RULES.length);
+  assert.strictEqual(v.findings.filter((f) => ["wont-open", "blank"].includes(f.severity)).length, 0);
+});
+
+check("read back from disk, row counts and column types equal the CSV", () => {
+  const rows = longRows();
+  const p = srv.profileProjectTool({ projectPath: out1 });
+  assert.strictEqual(p.ok, true, p.error);
+  const t = p.tables.find((x) => x.name === "sales");
+  assert.strictEqual(t.rowCount, rows.length - 1);
+  const types = Object.fromEntries(t.columns.map((c) => [c.name, c.dataType]));
+  assert.deepStrictEqual(types, { "Date Year": "int64", "Date MonthNo": "int64", "Date Day": "int64",
+    Region: "string", Product: "string", Scenario: "string", Amount: "int64", Date: "dateTime" });
+  assert.deepStrictEqual(t.columns.find((c) => c.name === "Region").members.sort(), ["North", "South"]);
+  const amount = t.columns.find((c) => c.name === "Amount");
+  const nums = rows.slice(1).map((r) => r[4]);
+  assert.strictEqual(amount.min, Math.min(...nums));
+  assert.strictEqual(amount.max, Math.max(...nums));
+  assert.ok(r1.validation.readBack.every((x) => x.ok) && r1.validation.readBack.length === 1);
+});
+
+check("a rerun into a second folder is byte-identical", () => {
+  const out2 = target();
+  write({ name: "Sales", outPath: out2, source: { path: longSrc }, pages: "propose" });
+  const a = tree(out1), b = tree(out2);
+  assert.deepStrictEqual(Object.keys(a).sort(), Object.keys(b).sort());
+  for (const k of Object.keys(a)) assert.ok(a[k].equals(b[k]), `${k} differs`);
+});
+
+check("every file is UTF-8 with no BOM and no carriage return; JSON parses", () => {
+  const files = tree(out1);
+  assert.ok(Object.keys(files).length >= 12);
+  for (const [rel, buf] of Object.entries(files)) {
+    assert.ok(!(buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf), `${rel} has a BOM`);
+    assert.ok(!buf.includes(0x0d), `${rel} has a CR`);
+    if (/\.(json|pbip|pbir|pbism)$/.test(rel)) JSON.parse(buf.toString("utf8"));
+  }
+});
+
+/** Every structural line indented by tabs only; expression bodies at four tabs or deeper. */
+function assertTabs(rel, text) {
+  let depthOfBody = null;
+  text.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    const lead = /^[\t ]*/.exec(line)[0];
+    assert.ok(/^\t* *$/.test(lead), `${rel}:${i + 1} indents with spaces before tabs`);
+    const tabs = lead.replace(/ /g, "").length;
+    if (/^\t\tsource =$/.test(line)) { depthOfBody = 4; return; }
+    if (depthOfBody !== null) {
+      if (tabs >= depthOfBody) return;
+      depthOfBody = null;
+    }
+    if (lead.includes(" ")) {
+      // Spaces are allowed only inside a measure body (three tabs, then DAX).
+      assert.ok(tabs >= 3, `${rel}:${i + 1} has spaces in a structural indent`);
+    }
+  });
+}
+
+check("every TMDL file is tab-indented, rows sit at four tabs, and ref lines start at column 0", () => {
+  const files = tree(out1);
+  const tm = Object.entries(files).filter(([k]) => k.endsWith(".tmdl"));
+  assert.ok(tm.length >= 5, `${tm.length} TMDL files`);
+  for (const [rel, buf] of tm) {
+    const text = buf.toString("utf8");
+    assertTabs(rel, text);
+    assert.ok(text.endsWith("\n") && !text.endsWith("\n\n"), `${rel} ending`);
+  }
+  const fact = files["Sales.SemanticModel/definition/tables/sales.tmdl"].toString("utf8");
+  const rows = fact.split("\n").filter((l) => /^\t*\s*\{\d{4}, /.test(l));
+  assert.strictEqual(rows.length, longRows().length - 1);
+  for (const l of rows) assert.ok(/^\t\t\t\t {12}\{/.test(l), `row not at 4 tabs: ${JSON.stringify(l.slice(0, 20))}`);
+  assert.ok(/\t\tsource =\n\t\t\t\tADDCOLUMNS \(/.test(fact), "source = is not alone on its line");
+  assert.ok(!/\{[^{}\n]*DATE\s*\(/.test(fact), "a row calls DATE");
+  const model = files["Sales.SemanticModel/definition/model.tmdl"].toString("utf8");
+  for (const l of model.split("\n").filter((x) => /ref table/.test(x))) assert.ok(l.startsWith("ref table "), l);
+});
+
+check("every emitted TMDL property and enum value is one tmdl-tree knows", () => {
+  let props = 0;
+  for (const [rel, buf] of Object.entries(tree(out1)).filter(([k]) => k.endsWith(".tmdl"))) {
+    const t = T.parseTree(buf.toString("utf8"));
+    assert.deepStrictEqual(t.faults, [], `${rel} parse faults`);
+    for (const node of t.nodes) {
+      if (node.type === "ref") continue;
+      const sch = T.SCHEMA[node.type];
+      assert.ok(sch, `${rel}: unknown object type ${node.type}`);
+      assert.ok(!node.other, `${rel}: unparsed lines under ${node.type} ${node.name}: ${JSON.stringify(node.other)}`);
+      for (const p of node.props) {
+        props++;
+        const k = p.name.toLowerCase();
+        assert.ok(sch.props.has(k) || sch.children.has(k), `${rel}:${p.line} ${p.name} is not a property of ${node.type}`);
+        if (T.ENUMS[k] && p.delim === ":") assert.ok(T.ENUMS[k].includes(p.value.toLowerCase()), `${rel}:${p.line} ${p.name}: ${p.value}`);
+        if (T.BOOLEANS.has(k)) assert.ok(p.delim === "" || /^(true|false)$/i.test(p.value), `${rel}:${p.line} ${p.name}`);
+      }
+    }
+  }
+  assert.ok(props > 50, `only ${props} properties read`);
+});
+
+check("every column of every calculated table binds by inferred name, every measure has a format", () => {
+  const m = tmdl.readModel(out1);
+  for (const src of m.sources.filter((s) => /tables\//.test(s.rel))) {
+    for (const node of src.tree.nodes) {
+      if (node.type === "column") {
+        assert.ok(T.propBool(node, "isNameInferred"), `${node.name} lacks isNameInferred`);
+        assert.strictEqual(T.propValue(node, "sourceColumn"), `[${node.name}]`);
+        assert.ok(T.propValue(node, "dataType") && T.propValue(node, "summarizeBy"), node.name);
+      }
+      if (node.type === "measure") assert.ok(T.propValue(node, "formatString"), `${node.name} has no formatString`);
+    }
+  }
+});
+
+check("the calendar is marked, starts on 1 January and ends at the last data date", () => {
+  const m = tmdl.readModel(out1);
+  const dt = tmdl.dateTable(m);
+  assert.strictEqual(dt.marked, true);
+  assert.strictEqual(dt.table, "Calendar");
+  assert.strictEqual(dt.keyColumn, "Date");
+  const cal = m.sources.find((s) => /Calendar\.tmdl$/.test(s.rel)).text;
+  assert.ok(cal.includes("CALENDAR ( DATE ( 2024, 1, 1 ), DATE ( 2025, 12, 1 ) )"), cal.match(/CALENDAR \(.*\)/)[0]);
+  assert.ok(!/CALENDARAUTO/.test(cal));
+  const month = m.tables.find((t) => t.name === "Calendar").columns.find((c) => c.name === "Month");
+  assert.strictEqual(month.sortByColumn, "MonthNo");
+  assert.ok(!/Fiscal/.test(cal), "fiscal columns without a fiscal start month");
+  const rel = m.sources.find((s) => /relationships\.tmdl$/.test(s.rel)).text;
+  assert.ok(/fromColumn: sales\.Date\n\ttoColumn: Calendar\.Date/.test(rel), rel);
+});
+
+check("measures are template DAX on the fact table, quoted, one per scenario, PY day-aligned", () => {
+  const m = tmdl.readModel(out1);
+  const t = m.tables.find((x) => x.name === "sales");
+  const by = Object.fromEntries(t.measures.map((x) => [x.name, x.expression]));
+  assert.strictEqual(by["Amount AC"], "CALCULATE ( SUM ( 'sales'[Amount] ), 'sales'[Scenario] = \"Actual\" )");
+  assert.strictEqual(by["Amount PL"], "CALCULATE ( SUM ( 'sales'[Amount] ), 'sales'[Scenario] = \"Budget\" )");
+  assert.ok(/TREATAS \( PYDates, 'Calendar'\[Date\] \)/.test(by["Amount PY"]) && /REMOVEFILTERS \( 'Calendar' \)/.test(by["Amount PY"]));
+  assert.ok(!m.tables.some((x) => /^(measures|kpi|goal|calculations)$/i.test(x.name)), "a measure holder table exists");
+  assert.strictEqual(t.columns.find((c) => c.name === "Amount").dataType, "int64");
+  const amountNode = m.sources.find((s) => /sales\.tmdl$/.test(s.rel)).tree.nodes.find((x) => x.type === "column" && x.name === "Amount");
+  assert.ok(T.propBool(amountNode, "isHidden"), "the raw amount is not hidden");
+  // The totals the measures should reproduce, from the CSV.
+  const rows = longRows();
+  assert.ok(sumWhere(rows, (r) => r[3] === "Actual", 4) > 0 && sumWhere(rows, (r) => r[3] === "Budget", 4) > 0);
+});
+
+check("pages: \"propose\" binds only measures and columns the written model has", () => {
+  const m = tmdl.readModel(out1);
+  const has = (entity, prop, kind) => {
+    const t = m.tables.find((x) => x.name === entity);
+    return Boolean(t && (kind === "Column" ? t.columns : t.measures).some((x) => x.name === prop));
+  };
+  const files = tree(out1);
+  const visuals = Object.entries(files).filter(([k]) => k.endsWith("/visual.json"));
+  assert.ok(visuals.length >= 1, "no visual proposed");
+  let bindings = 0;
+  for (const [rel, buf] of visuals) {
+    const v = JSON.parse(buf.toString("utf8"));
+    for (const [role, q] of Object.entries(v.visual.query.queryState)) {
+      for (const p of q.projections) {
+        const kind = Object.keys(p.field)[0];
+        const ent = p.field[kind].Expression.SourceRef.Entity, prop = p.field[kind].Property;
+        assert.ok(has(ent, prop, kind), `${rel} ${role}: ${ent}.${prop} (${kind}) is not in the model`);
+        bindings++;
+      }
+    }
+    assert.ok(v.visual.query.queryState.Plan, `${rel}: the comparison was not bound`);
+    assert.ok(!JSON.stringify(v.visual.query.queryState.Category).includes("Scenario"), "a page is cut by the scenario column");
+  }
+  assert.ok(bindings >= 3, `${bindings} bindings`);
+});
+
+check("publicCustomVisuals equals the set of custom visual types on the pages", () => {
+  const files = tree(out1);
+  const report = JSON.parse(files["Sales.Report/definition/report.json"].toString("utf8"));
+  const types = new Set(Object.entries(files).filter(([k]) => k.endsWith("/visual.json"))
+    .map(([, b]) => JSON.parse(b.toString("utf8")).visual.visualType));
+  assert.deepStrictEqual(report.publicCustomVisuals, [...types].sort());
+  assert.strictEqual(report.themeCollection.baseTheme.type, "SharedResources");
+  assert.strictEqual(typeof report.themeCollection.baseTheme.reportVersionAtImport, "object");
+  assert.ok(!("layoutOptimization" in report));
+});
+
+check("an explicit page spec with three visual types registers exactly the custom ones", () => {
+  const out = target();
+  const pos = { x: 0, y: 0, width: 400, height: 300 };
+  const r = write({ name: "Spec", outPath: out, source: { path: longSrc }, pages: { pages: [{
+    name: "p1", displayName: "Overview", visuals: [
+      { name: "t1", visualType: "tables+", position: pos, bindings: { Category: ["sales.Region"], Values: ["sales.Amount AC"], Plan: ["sales.Amount PL"] } },
+      { name: "c1", visualType: "cards", position: { ...pos, x: 400 }, bindings: { Values: ["sales.Amount AC"] } },
+      { name: "tx", visualType: "textbox", position: { ...pos, x: 800 } },
+    ] }] } });
+  const report = JSON.parse(fs.readFileSync(path.join(out, "Spec.Report", "definition", "report.json"), "utf8"));
+  assert.deepStrictEqual(report.publicCustomVisuals, [wr.INSTALLED["tables+"], wr.INSTALLED.cards].sort());
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+});
+
+check("a page spec that binds a field the model does not have is refused and writes nothing", () => {
+  const out = target();
+  refuses({ name: "Bad", outPath: out, source: { path: longSrc }, pages: { pages: [{ name: "p1", displayName: "P",
+    visuals: [{ name: "t1", visualType: "tables+", position: { x: 0, y: 0, width: 9, height: 9 },
+      bindings: { Category: ["sales.Region"], Values: ["sales.Amount"] } }] }] } }, /does not have.*sales has no measure 'Amount'/);
+  assert.ok(!fs.existsSync(out), "a refusal wrote files");
+});
+
+check("with pages omitted the report has one empty page and registers no custom visual", () => {
+  const out = target();
+  const r = write({ name: "Empty", outPath: out, source: { path: longSrc } });
+  const report = JSON.parse(fs.readFileSync(path.join(out, "Empty.Report", "definition", "report.json"), "utf8"));
+  assert.ok(!("publicCustomVisuals" in report));
+  const pages = JSON.parse(fs.readFileSync(path.join(out, "Empty.Report", "definition", "pages", "pages.json"), "utf8"));
+  assert.deepStrictEqual(pages.pageOrder, ["p1"]);
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0);
+});
+
+// --- negative controls ----------------------------------------------------------------------
+
+/** Copies the written project, applies one edit, validates the copy. */
+function broken(edit) {
+  const dir = target();
+  fs.cpSync(out1, dir, { recursive: true });
+  edit(dir);
+  return srv.validateReport({ projectPath: dir }).findings.map((f) => f.code);
+}
+const tbl = (dir) => path.join(dir, "Sales.SemanticModel", "definition", "tables", "sales.tmdl");
+const rewrite = (p, f) => fs.writeFileSync(p, f(fs.readFileSync(p, "utf8")));
+
+check("negative control: a related column that binds by source name fires its rule", () => {
+  const codes = broken((d) => rewrite(tbl(d), (s) => s.replace("\t\tisNameInferred\n\t\tsourceColumn: [Date]\n", "\t\tsourceColumn: Date\n")));
+  assert.ok(codes.includes("calculated-column-relationship-binding"), codes.join(", "));
+});
+check("negative control: an indented ref line fires its rule", () => {
+  const codes = broken((d) => rewrite(path.join(d, "Sales.SemanticModel", "definition", "model.tmdl"), (s) => s.replace("ref table Calendar", "\tref table Calendar")));
+  assert.ok(codes.includes("tmdl-ref-line-indented"), codes.join(", "));
+});
+check("negative control: a DATE call in a row fires its rule", () => {
+  const codes = broken((d) => rewrite(tbl(d), (s) => s.replace(/\{2024, 1, 1, /, "{DATE(2024,1,1), 1, 1, ")));
+  assert.ok(codes.includes("tmdl-datatable-row-calls-a-function"), codes.join(", "));
+});
+check("negative control: an old definition.pbism version fires its rule", () => {
+  const codes = broken((d) => rewrite(path.join(d, "Sales.SemanticModel", "definition.pbism"), (s) => s.replace("\"4.2\"", "\"1.0\"")));
+  assert.ok(codes.includes("pbism-version-too-old-for-tmdl"), codes.join(", "));
+});
+check("negative control: report.json without its base theme fires its rule", () => {
+  const codes = broken((d) => rewrite(path.join(d, "Sales.Report", "definition", "report.json"), (s) => {
+    const o = JSON.parse(s); delete o.themeCollection; return JSON.stringify(o);
+  }));
+  assert.ok(codes.includes("report-has-no-base-theme"), codes.join(", "));
+});
+check("negative control: source = with the expression on its line fires its rule", () => {
+  const codes = broken((d) => rewrite(tbl(d), (s) => s.replace("\t\tsource =\n\t\t\t\tADDCOLUMNS (", "\t\tsource = ADDCOLUMNS (")));
+  assert.ok(codes.includes("tmdl-partition-source-on-equals-line"), codes.join(", "));
+});
+check("negative control: a BOM on a table file fires its rule", () => {
+  const codes = broken((d) => rewrite(tbl(d), (s) => `﻿${s}`));
+  assert.ok(codes.includes("tmdl-bom"), codes.join(", "));
+});
+check("negative control: a relationship to a column that is not there fires its rule", () => {
+  const codes = broken((d) => rewrite(path.join(d, "Sales.SemanticModel", "definition", "relationships.tmdl"), (s) => s.replace("Calendar.Date", "Calendar.Day")));
+  assert.ok(codes.includes("tmdl-relationship-endpoint-unresolved"), codes.join(", "));
+});
+
+// --- scenario forms -------------------------------------------------------------------------
+
+const WIDE = csv([["Month", "Region", "Actual", "Budget", "Prior Year"],
+  ...["2025-01-01", "2025-02-01", "2025-03-01"].flatMap((d, i) => [[d, "East", 100 + i, 110 + i, 90 + i], [d, "West", 200 + i, 190 + i, 180 + i]])]);
+
+check("wide form is refused without a scenarios block, and the refusal says what to pass", () => {
+  refuses({ name: "W", outPath: target(), source: { path: bed({ "w.csv": WIDE }) } },
+    /"form": "wide", "columns": \{"AC": "Actual", "PL": "Budget", "PY": "Prior Year"\}/);
+});
+
+check("wide form: one measure per mapped column, PY from its own column", () => {
+  const out = target();
+  const r = write({ name: "W", outPath: out, source: { path: bed({ "w.csv": WIDE }) },
+    scenarios: { form: "wide", columns: { AC: "Actual", PL: "Budget", PY: "Prior Year" } },
+    metrics: [{ name: "Sales", columns: { AC: "Actual", PL: "Budget", PY: "Prior Year" } }], pages: "propose" });
+  const t = tmdl.readModel(out).tables.find((x) => x.name === "w");
+  const by = Object.fromEntries(t.measures.map((x) => [x.name, x.expression]));
+  assert.deepStrictEqual(by, { "Sales AC": "SUM ( 'w'[Actual] )", "Sales PL": "SUM ( 'w'[Budget] )", "Sales PY": "SUM ( 'w'[Prior Year] )" });
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+  const v = Object.entries(tree(out)).find(([k]) => k.endsWith("/visual.json"));
+  assert.ok(v, "no page proposed");
+  const qs = JSON.parse(v[1].toString("utf8")).visual.query.queryState;
+  assert.strictEqual(qs.Values.projections[0].field.Measure.Property, "Sales AC", "the page is not about the actuals");
+});
+
+check("none form: an actual per metric, PY by time intelligence when asked", () => {
+  const rows = [["Date", "Category", "Units"]];
+  for (let m = 1; m <= 24; m++) rows.push([`20${m > 12 ? 25 : 24}-${String(((m - 1) % 12) + 1).padStart(2, "0")}-15`, m % 2 ? "A" : "B", m * 3]);
+  const out = target();
+  const r = write({ name: "N", outPath: out, source: { path: bed({ "units.csv": csv(rows) }) },
+    scenarios: { form: "none", py: "timeIntelligence" } });
+  const t = tmdl.readModel(out).tables.find((x) => x.name === "units");
+  assert.deepStrictEqual(t.measures.map((x) => x.name), ["Units AC", "Units PY"]);
+  assert.strictEqual(t.measures[0].expression, "SUM ( 'units'[Units] )");
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0);
+  const cal = fs.readFileSync(path.join(out, "N.SemanticModel", "definition", "tables", "Calendar.tmdl"), "utf8");
+  assert.ok(cal.includes("DATE ( 2025, 12, 15 )") && cal.includes("\"PY date\""));
+});
+
+check("a source with no scenario column is refused with the three forms spelled out", () => {
+  refuses({ name: "N", outPath: target(), source: { path: bed({ "u.csv": csv([["Date", "Category", "Units"], ["2025-01-01", "A", 1], ["2025-02-01", "B", 2]]) }) } },
+    /"form": "none".*"form": "long".*"form": "wide"/);
+});
+
+check("long form with a PY member takes PY from it", () => {
+  const rows = [["Date", "Region", "Version", "Value"]];
+  for (const v of ["AC", "PY", "PL"]) for (const d of ["2025-01-01", "2025-02-01"]) rows.push([d, "X", v, v.length * 10]);
+  const out = target();
+  write({ name: "P", outPath: out, source: { path: bed({ "v.csv": csv(rows) }) } });
+  const t = tmdl.readModel(out).tables.find((x) => x.name === "v");
+  const by = Object.fromEntries(t.measures.map((x) => [x.name, x.expression]));
+  assert.strictEqual(by["Value PY"], "CALCULATE ( SUM ( 'v'[Value] ), 'v'[Version] = \"PY\" )");
+  assert.ok(!fs.readFileSync(path.join(out, "P.SemanticModel", "definition", "tables", "Calendar.tmdl"), "utf8").includes("PY date"));
+});
+
+check("long form with keyed scenarios is read through the scenario table", () => {
+  const fact = [["DateKey", "ScenarioKey", "AccountKey", "Amount", "Date"]];
+  for (let i = 1; i <= 6; i++) for (const s of [1, 2]) fact.push([20250100 + i, s, (i % 2) + 1, i * 100 * s, `2025-01-0${i}`]);
+  const out = target();
+  const r = write({ name: "K", outPath: out, source: { path: bed({
+    "FactLedger.csv": csv(fact),
+    "DimScenario.csv": csv([["ScenarioKey", "ScenarioName"], [1, "Actual"], [2, "Budget"], [3, "Forecast"]]),
+    "DimAccount.csv": csv([["AccountKey", "AccountName"], [1, "Sales"], [2, "Costs"]]),
+  }) }, pages: "propose" });
+  const t = tmdl.readModel(out).tables.find((x) => x.name === "FactLedger");
+  const by = Object.fromEntries(t.measures.map((x) => [x.name, x.expression]));
+  assert.strictEqual(by["Amount AC"], "CALCULATE ( SUM ( 'FactLedger'[Amount] ), 'FactLedger'[ScenarioKey] = 1 )");
+  assert.strictEqual(by["Amount PL"], "CALCULATE ( SUM ( 'FactLedger'[Amount] ), 'FactLedger'[ScenarioKey] = 2 )");
+  assert.ok(!by["Amount FC"], "a measure for a scenario with no rows");
+  assert.ok(r.model.relationships.some((x) => /FactLedger\[AccountKey\] -> DimAccount\[AccountKey\]/.test(x)));
+  assert.ok(r.assumptions.some((a) => /no categorical column|none could be proposed/i.test(a)) || r.files.some((f) => /visual\.json$/.test(f.path)));
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+});
+
+check("scenario members that do not occur, or map no AC, are refused", () => {
+  refuses({ name: "S", outPath: target(), source: { path: longSrc }, scenarios: { form: "long", column: "Scenario", members: { Actual: "AC", Plan: "PL" } } }, /'Plan', which never occurs/);
+  refuses({ name: "S", outPath: target(), source: { path: longSrc }, scenarios: { form: "long", column: "Scenario", members: { Budget: "PL" } } }, /no value to AC/);
+  refuses({ name: "S", outPath: target(), source: { path: longSrc }, scenarios: { form: "long", column: "Scenario", members: { Actual: "XX" } } }, /use AC, PL, FC or PY/);
+});
+
+check("a ratio metric divides the two metrics per scenario", () => {
+  const rows = [["Date", "Region", "Scenario", "Revenue", "Cost"]];
+  for (const s of ["Actual", "Budget"]) for (const d of ["2025-01-01", "2025-02-01"]) rows.push([d, "N", s, 100, 60]);
+  const out = target();
+  write({ name: "R", outPath: out, source: { path: bed({ "pl.csv": csv(rows) }) },
+    metrics: [{ name: "Revenue", column: "Revenue" }, { name: "Cost", column: "Cost" }, { name: "Cost ratio", numerator: "Cost", denominator: "Revenue" }] });
+  const t = tmdl.readModel(out).tables.find((x) => x.name === "pl");
+  const m = t.measures.find((x) => x.name === "Cost ratio AC");
+  assert.strictEqual(m.expression, "DIVIDE ( [Cost AC], [Revenue AC] )");
+  assert.strictEqual(m.formatString, "0.0%");
+});
+
+// --- the fiscal year ------------------------------------------------------------------------
+
+check("a fiscal start month adds Fiscal Year and Fiscal Period to the calendar", () => {
+  const out = target();
+  const r = write({ name: "F", outPath: out, source: { path: longSrc }, date: { column: "Date", fiscalYearStartMonth: 7 } });
+  const cal = fs.readFileSync(path.join(out, "F.SemanticModel", "definition", "tables", "Calendar.tmdl"), "utf8");
+  assert.ok(cal.includes("\"Fiscal Year\", YEAR ( EDATE ( [Date], 6 ) )"), cal);
+  assert.ok(cal.includes("\"Fiscal Period\", MOD ( MONTH ( [Date] ) - 7, 12 ) + 1"));
+  assert.ok(r.assumptions.some((a) => /Fiscal Year is named by the calendar year in which it ends/.test(a)));
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0);
+  refuses({ name: "F", outPath: target(), source: { path: longSrc }, date: { fiscalYearStartMonth: 13 } }, /1 to 12/);
+});
+
+// --- names ----------------------------------------------------------------------------------
+
+check("reserved, dotted, spaced, duplicate and colliding names are made safe and reported", () => {
+  const out = target();
+  const r = write({ name: "Names", outPath: out, source: { path: bed({
+    "KPI.csv": csv([["Date", "Unit.Name", "Unit  Name", "unit name", "Scenario", "Amount", "Amount AC"],
+      ["2025-01-01", "a", "b", "c", "Actual", 1, 7], ["2025-02-01", "a", "b", "c", "Budget", 2, 8]]),
+    "Measures.csv": csv([["Code", "Label"], ["x1", "One"], ["x2", "Two"]]),
+    "sub/kpi.csv": csv([["Code", "Label"], ["y1", "One"], ["y2", "Two"]]),
+  }) }, metrics: [{ name: "Amount", column: "Amount" }] });
+  const names = r.model.tables.map((t) => t.name);
+  assert.ok(names.includes("KPI Data") && names.includes("kpi Data 2") && names.includes("Measures Data"), names.join(", "));
+  assert.ok(!r.model.tables.filter((t) => t.source).some((t) => /^(kpi|measures|calendar)$/i.test(t.name)));
+  const m = tmdl.readModel(out);
+  const t = m.tables.find((x) => x.name === "KPI Data");
+  const cols = t.columns.map((c) => c.name);
+  for (const c of ["Unit Name", "Unit Name 2", "unit name 3", "Amount", "Amount AC Amt"]) assert.ok(cols.includes(c), `${c} missing: ${cols.join(", ")}`);
+  assert.ok(t.measures.some((x) => x.name === "Amount AC"));
+  assert.ok(r.assumptions.some((a) => /KPI is named KPI Data/.test(a)));
+  assert.ok(r.assumptions.some((a) => /renamed Amount AC Amt and hidden/.test(a)));
+  const text = m.sources.map((s) => s.text).join("\n");
+  assert.ok(/table 'KPI Data'/.test(text) && /column 'Unit Name 2'/.test(text));
+  assert.ok(!/(^|[^'])KPI Data\[/.test(text), "an unquoted table reference in DAX");
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+});
+
+// --- cell encodings -------------------------------------------------------------------------
+
+check("quotes, commas, line breaks and non-ASCII text survive; blanks are written as stated", () => {
+  const body = "Date,Name,Code,Scenario,Amount,Due\n"
+    + "2025-01-01,\"He said \"\"hi\"\", ok\",007,Actual,10,2025-02-01\n"
+    + "2025-01-02,\"two\nlines\",012,Actual,,\n"
+    + "2025-01-03,Zürich ✓ 東京,013,Budget,30,2025-03-01\n"
+    + "2025-01-04,,014,Budget,40,2025-04-01\n";
+  const out = target();
+  const r = write({ name: "Cells", outPath: out, source: { path: bed({ "c.csv": body }) } });
+  const p = srv.profileProjectTool({ projectPath: out });
+  const t = p.tables.find((x) => x.name === "c");
+  assert.strictEqual(t.rowCount, 4);
+  const col = (name) => t.columns.find((c) => c.name === name);
+  assert.deepStrictEqual(col("Name").members.sort(), ["He said \"hi\", ok", "Zürich ✓ 東京", "two lines"].sort());
+  assert.strictEqual(col("Name").nulls, 1);
+  assert.strictEqual(col("Code").dataType, "string");
+  assert.deepStrictEqual(col("Code").members, ["007", "012", "013", "014"]);
+  assert.strictEqual(col("Amount").dataType, "int64");
+  const text = fs.readFileSync(path.join(out, "Cells.SemanticModel", "definition", "tables", "c.tmdl"), "utf8");
+  assert.ok(text.includes("\"He said \"\"hi\"\", ok\""), "a quote was not doubled");
+  assert.ok(text.includes("\"Due\", IF ( [Due Year] = 0, BLANK (), DATE ( [Due Year], [Due MonthNo], [Due Day] ) )"), "a blank date is not guarded");
+  assert.ok(r.assumptions.some((a) => /Code.*leading zeros.*text/.test(a)));
+  assert.ok(r.assumptions.some((a) => /c\[Amount\]: 1 blank cell\(s\) are written as 0/.test(a)));
+  assert.ok(r.assumptions.some((a) => /1 text cell\(s\) held a line break/.test(a)));
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+  assert.ok(r.validation.readBack.every((x) => x.ok));
+});
+
+check("numbers are written culture-invariant with their digits kept", () => {
+  assert.strictEqual(project.plainNumber("+1618.50"), "1618.50");
+  assert.strictEqual(project.plainNumber(".5"), "0.5");
+  assert.strictEqual(project.plainNumber("-.25"), "-0.25");
+  assert.strictEqual(project.plainNumber("1.5e3"), "1500");
+  assert.strictEqual(project.plainNumber("2.5E-4"), "0.00025");
+  assert.strictEqual(project.plainNumber("-0"), "0");
+  assert.strictEqual(project.plainNumber("123456789012345678"), "123456789012345678");
+});
+
+check("a JSON array source is read like a CSV", () => {
+  const data = [];
+  for (let m = 1; m <= 14; m++) data.push({ series: m % 2 ? "Retail" : "Mining", count: m * 7, rate: 1.5, date: `20${m > 12 ? 25 : 24}-${String(((m - 1) % 12) + 1).padStart(2, "0")}-01T08:00:00.000Z` });
+  const out = target();
+  const r = write({ name: "J", outPath: out, source: { path: bed({ "jobs.json": JSON.stringify(data) }) }, scenarios: { form: "none" }, pages: "propose" });
+  assert.deepStrictEqual(r.model.measures, ["jobs[count AC]", "jobs[count PY]"]);
+  assert.ok(r.assumptions.some((a) => /Not made a metric: rate/.test(a)));
+  assert.ok(r.assumptions.some((a) => /time of day/.test(a)));
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+});
+
+// --- refusals that protect the numbers --------------------------------------------------------
+
+check("a decimal comma is refused with the column named", () => {
+  refuses({ name: "D", outPath: target(), source: { path: bed({ "d.csv": "Date;Region;Amount\n2025-01-01;N;1,5\n2025-02-01;S;2,25\n" }) }, scenarios: { form: "none" } },
+    /d\[Amount\] holds numbers written with a comma/);
+});
+check("a mixed-type column is refused, and loads as text when asked", () => {
+  const rows = [["Date", "Region", "Amount"]];
+  for (let i = 1; i <= 60; i++) rows.push([`2025-01-${String((i % 28) + 1).padStart(2, "0")}`, "N", i === 30 ? "n/a" : i]);
+  const src = bed({ "m.csv": csv(rows) });
+  refuses({ name: "M", outPath: target(), source: { path: src }, scenarios: { form: "none" }, metrics: [{ column: "Amount" }] }, /m\[Amount\] is a mixed-type column.*'n\/a'/);
+  refuses({ name: "M", outPath: target(), source: { path: src }, scenarios: { form: "none" }, metrics: [{ column: "Amount" }],
+    tables: [{ source: "m", types: { Amount: "text" } }] }, /is text, so it cannot be summed/);
+});
+check("an unparseable date is refused with the column named", () => {
+  const rows = [["Date", "Region", "Amount"]];
+  for (let i = 1; i <= 60; i++) rows.push([i === 9 ? "2025-13-45" : `2025-02-${String((i % 28) + 1).padStart(2, "0")}`, "N", i]);
+  refuses({ name: "U", outPath: target(), source: { path: bed({ "u.csv": csv(rows) }) }, scenarios: { form: "none" } }, /u\[Date\] is a date column, but '2025-13-45'/);
+});
+check("a one side with keys that differ only in case is refused", () => {
+  refuses({ name: "K", outPath: target(), source: { path: bed({
+    "Fact.csv": csv([["Date", "RegionKey", "Amount"], ["2025-01-01", "north", 1], ["2025-01-02", "North", 2], ["2025-01-03", "south", 3]]),
+    "Region.csv": csv([["RegionKey", "Label"], ["north", "N1"], ["North", "N2"], ["south", "S"]]),
+  }) }, scenarios: { form: "none" } }, /Region\[RegionKey\] would be the one side.*holds 'north' 2 times.*without case/);
+});
+check("a second path between two tables is written inactive", () => {
+  const out = target();
+  const r = write({ name: "Amb", outPath: out, source: { path: bed({
+    "A.csv": csv([["AKey", "BKey", "AName"], [1, 10, "a1"], [2, 10, "a2"], [3, 20, "a3"]]),
+    "B.csv": csv([["BKey", "BName"], [10, "b10"], [20, "b20"]]),
+    "fact.csv": csv([["Date", "AKey", "BKey", "Amount"], ["2025-01-01", 1, 10, 5], ["2025-01-02", 2, 10, 6], ["2025-01-03", 3, 20, 7], ["2025-01-04", 1, 10, 8]]),
+  }) }, scenarios: { form: "none" } });
+  assert.ok(r.model.relationships.some((x) => /fact\[BKey\] -> B\[BKey\] \(inactive\)/.test(x)), r.model.relationships.join("; "));
+  assert.ok(/isActive: false/.test(fs.readFileSync(path.join(out, "Amb.SemanticModel", "definition", "relationships.tmdl"), "utf8")));
+  assert.strictEqual(r.validation.wontOpen + r.validation.blank, 0, JSON.stringify(r.validation.findings));
+});
+check("orphan keys are reported in the assumptions", () => {
+  const r = write({ name: "O", outPath: target(), source: { path: bed({
+    "Fact.csv": csv([["Date", "RegionKey", "Amount"], ["2025-01-01", 1, 1], ["2025-01-02", 2, 2], ["2025-01-03", 9, 3]]),
+    "Region.csv": csv([["RegionKey", "Label"], [1, "N"], [2, "S"]]),
+  }) }, scenarios: { form: "none" } });
+  assert.ok(r.assumptions.some((a) => /1 row\(s\) of Fact carry a RegionKey that Region does not have \(for example 9\)/.test(a)), r.assumptions.join(" | "));
+});
+
+// --- refusals that protect the disk ---------------------------------------------------------
+
+check("a folder that is not empty is refused and left untouched", () => {
+  const out = target();
+  fs.mkdirSync(out);
+  fs.writeFileSync(path.join(out, "keep.txt"), "mine");
+  refuses({ name: "X", outPath: out, source: { path: longSrc } }, /is not empty.*never overwrites or deletes/);
+  assert.deepStrictEqual(fs.readdirSync(out), ["keep.txt"]);
+  assert.strictEqual(fs.readFileSync(path.join(out, "keep.txt"), "utf8"), "mine");
+});
+check("an empty existing folder is accepted", () => {
+  const out = target();
+  fs.mkdirSync(out);
+  assert.strictEqual(write({ name: "E", outPath: out, source: { path: longSrc } }).ok, true);
+});
+check("a second write into the same folder is refused", () => {
+  refuses({ name: "Sales", outPath: out1, source: { path: longSrc } }, /is not empty/);
+});
+check("a relative outPath and a bad name are refused", () => {
+  refuses({ name: "X", outPath: "relative/dir", source: { path: longSrc } }, /must be absolute/);
+  refuses({ name: "bad name!", outPath: target(), source: { path: longSrc } }, /letters, digits, underscores or hyphens/);
+  refuses({ name: "X", outPath: target(), source: { path: longSrc }, colour: "red" }, /unknown write_project field\(s\): colour/);
+});
+check("a path longer than 240 characters is refused before anything is written", () => {
+  const out = path.join(TMP, "p".repeat(Math.max(10, 225 - TMP.length)));
+  refuses({ name: "LongName", outPath: out, source: { path: longSrc }, pages: "propose" }, /characters long.*240-character limit/);
+  assert.ok(!fs.existsSync(out));
+});
+check("over the cell ceiling is refused with the way out named", () => {
+  const head = "Date,A,B,C,D,E,F,G,H,Amount\n";
+  const line = "2025-01-01,a,b,c,d,e,f,g,h,1\n";
+  const out = target();
+  refuses({ name: "Big", outPath: out, source: { path: bed({ "big.csv": head + line.repeat(26000) }) }, scenarios: { form: "none" } },
+    /above the 300000-cell ceiling.*keep-list/);
+  assert.ok(!fs.existsSync(out));
+});
+check("over the 2 MB ceiling is refused even under the cell ceiling", () => {
+  const long = "x".repeat(1100);
+  const body = `Date,Note,Amount\n${Array.from({ length: 2000 }, (_, i) => `2025-01-01,${long}${i},${i}`).join("\n")}\n`;
+  refuses({ name: "Wide", outPath: target(), source: { path: bed({ "notes.csv": body }) }, scenarios: { form: "none" } }, /bytes of TMDL, above the 2097152-byte ceiling/);
+});
+check("a keep-list brings a table under the ceiling, and skip leaves a file out", () => {
+  const head = "Date,A,B,C,D,E,F,G,H,Amount\n";
+  const line = "2025-01-01,a,b,c,d,e,f,g,h,1\n";
+  const r = write({ name: "Kept", outPath: target(), source: { path: bed({ "big.csv": head + line.repeat(26000), "other.csv": "X,Y\n1,2\n" }) },
+    scenarios: { form: "none" }, tables: [{ source: "big", columns: ["Date", "A", "Amount"] }, { source: "other.csv", role: "skip" }] });
+  assert.deepStrictEqual(r.model.tables.map((t) => [t.name, t.rows]), [["big", 26000], ["Calendar", null]]);
+  assert.ok(r.assumptions.some((a) => /Skipped as asked: other\.csv/.test(a)));
+});
+
+// --- the server -----------------------------------------------------------------------------
+
+check("the server lists write_project with explicit write annotations", () => {
+  const e = srv.CALLABLE.write_project;
+  assert.ok(e && typeof e.fn === "function");
+  assert.deepStrictEqual(e.schema.required, ["name", "outPath", "source"]);
+  assert.ok(!srv.ENCODERS.write_project && !srv.WRITERS.write_project);
+});
+
+for (const [s, name, d] of results) console.log(`  ${s}  ${name}${d ? `  <- ${d}` : ""}`);
+const failed = results.filter(([s]) => s === "FAIL").length;
+console.log(`\n${results.length - failed}/${results.length} passed`);
+fs.rmSync(TMP, { recursive: true, force: true });
+process.exit(failed ? 1 : 0);

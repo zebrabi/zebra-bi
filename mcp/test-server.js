@@ -301,6 +301,38 @@ function rpc(messages) {
     assert.deepStrictEqual(JSON.parse(one.content).visual.objects.licenseSettings, kept);
   });
 
+  // write_project over the wire: listed with explicit labels, writes into a new folder, and a
+  // second call into the same folder comes back as a refusal rather than a crash.
+  const wpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zbi-srv-wp-"));
+  fs.writeFileSync(path.join(wpRoot, "sales.csv"),
+    "Date,Region,Scenario,Amount\n2025-01-01,N,Actual,10\n2025-01-01,N,Budget,12\n2025-02-01,S,Actual,20\n2025-02-01,S,Budget,18\n");
+  const wpArgs = { name: "Demo", outPath: path.join(wpRoot, "out"), source: { path: path.join(wpRoot, "sales.csv") } };
+  const wp = await rpc([
+    { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "write_project", arguments: wpArgs } },
+    { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "write_project", arguments: wpArgs } },
+  ]);
+
+  check("tools/list advertises write_project, labelled as writing and not destructive", () => {
+    const t = wp.find((x) => x.id === 1).result.tools.find((x) => x.name === "write_project");
+    assert.ok(t, "write_project not advertised");
+    assert.deepStrictEqual(t.inputSchema.required, ["name", "outPath", "source"]);
+    assert.strictEqual(t.annotations.readOnlyHint, false);
+    assert.strictEqual(t.annotations.destructiveHint, false);
+  });
+
+  check("write_project writes a project over stdio and refuses a second write into it", () => {
+    const ok = wp.find((x) => x.id === 2).result;
+    assert.strictEqual(ok.isError, false, ok.content[0].text.slice(0, 200));
+    const payload = JSON.parse(ok.content[0].text);
+    assert.ok(payload.files.some((f) => f.path === "Demo.pbip"));
+    assert.ok(fs.existsSync(path.join(wpRoot, "out", "Demo.pbip")));
+    const again = wp.find((x) => x.id === 3).result;
+    assert.strictEqual(again.isError, true);
+    assert.ok(/not empty/.test(JSON.parse(again.content[0].text).error));
+  });
+  fs.rmSync(wpRoot, { recursive: true, force: true });
+
   for (const [s, n, d] of results) console.log(`  ${s}  ${n}${d ? "  <- " + d : ""}`);
   const failed = results.filter((r) => r[0] === "FAIL").length;
   console.log(`\n${results.length - failed}/${results.length} passed`);
