@@ -52,8 +52,8 @@ const LIMITS = Object.freeze({
   pathLength: 240,
 });
 
-// The level the delivered, opened projects carry. A higher level refuses to open on an older
-// Desktop, and a project handed to someone else should open on theirs.
+// 1600 opens on older Desktop builds, and a higher level refuses to open there; a project handed to
+// someone else should open on their Desktop. Desktop raises the level in memory when it opens.
 const COMPATIBILITY_LEVEL = 1600;
 const BASE_THEME = "CY23SU08";
 const CALENDAR = "Calendar";
