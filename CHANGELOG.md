@@ -12,6 +12,30 @@ This file starts at the first public release. Versions before it exist in the gi
 never published — the repository was private, with no tags and no releases — so listing them as
 though they shipped would misrepresent what anyone could have installed.
 
+## Unreleased
+
+- `write_visual`, `write_page` and `write_report` no longer warn "not a Zebra visual type" for page
+  furniture: `textbox`, `slicer`, `actionButton`, `shape`, `image` and `pageNavigator`. Any other
+  visual type that is not a Zebra BI visual still gets the warning.
+- `write_visual`, `write_page` and `write_report` warn when a Tables+ visual is given
+  `titleSettings.text`, and `propose_pages` carries the same note in its output. Tables+ has been
+  seen to draw its own automatic title instead of the authored text, while Charts+ draws it. Nothing
+  is rewritten: the text is written as asked. `titleSettings.show: false` hides the automatic title,
+  and a text box above the visual carries a title that draws.
+- `write_visual`, `write_page` and `write_report` warn when a Tables or Tables+ visual has a
+  `Category` and no `sortSettings`. A table with none has been seen to sort its rows by the first
+  `Values` column, descending, which separates subtotals from their components. Nothing is added to
+  the file.
+- `profile_source` reads a comparison held as separate numeric columns (`Actual` and `Plan`,
+  `Sales AC` and `Sales PL`, `Revenue` and `Revenue Budget`) and reports it in a new `wideScenarios`
+  field: which column plays actual, plan, previous year or forecast, and which columns pair by a
+  shared measure name. The brief and the gaps no longer say there is no comparison for such a file.
+  A column name must be a scenario word at its start or end, so `Planet` and `Actuality` match
+  nothing, and a lone `Actual` is not a comparison. A file with a scenario column reads as before.
+  `propose_pages` already proposes an AC against PL page from a model with a measure over each of
+  those columns; when the measures are missing it now names the wide scenario columns in its notes
+  and in its refusal.
+
 ## 0.3.2 — 2026-11-04
 
 - The hand-over now leads with the one step a changed model needs before it is opened again:

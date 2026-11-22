@@ -296,6 +296,58 @@ check("with AC + PY present it DOES bind the comparison", () => {
   assert.ok(v.bindings.PreviousYear, "PreviousYear well left empty");
 });
 
+check("Tables+ pages carry a note about the automatic title; certified Tables pages do not", () => {
+  const plus = proposed({ fact: SIGNAL_FACT, measures: MEASURES });
+  assert.ok(plus.notes && plus.notes.some((n) => /automatic title/.test(n)), JSON.stringify(plus.notes));
+  assert.ok(plus.spec.pages[0].visuals[0].properties["titleSettings.text"], "the authored title went missing");
+  const certified = proposed({ fact: SIGNAL_FACT, measures: MEASURES }, { usePlus: false });
+  assert.ok(!certified.notes, "a certified Tables proposal carries the Tables+ note");
+});
+
+// Actual and plan as two numeric columns (the wide form), with one measure over each column.
+const WIDE_FACT = [
+  "table Costs", "\tcolumn CostCentre", "\t\tdataType: string", "\tcolumn Team", "\t\tdataType: string",
+  "\tcolumn Actual", "\t\tdataType: double", "\tcolumn Plan", "\t\tdataType: double",
+  "\tpartition Costs = calculated", "\t\tmode: import", "\t\tsource =", "\t\t\tDATATABLE(",
+  '\t\t\t\t"CostCentre", string,', '\t\t\t\t"Team", string,', '\t\t\t\t"Actual", double,', '\t\t\t\t"Plan", double,',
+  "\t\t\t\t{",
+  '\t\t\t\t\t{"Staff", "A", 620, 600},', '\t\t\t\t\t{"Travel", "A", 830, 510},',
+  '\t\t\t\t\t{"Marketing", "B", 450, 490},', '\t\t\t\t\t{"IT", "B", 500, 480},',
+  '\t\t\t\t\t{"Facilities", "A", 310, 320},', '\t\t\t\t\t{"Consulting", "B", 280, 240}',
+  "\t\t\t\t}", "\t\t\t)", "",
+].join("\n");
+const WIDE_MEASURES = "table '.Measures'\n\tmeasure 'Cost AC' = SUM(Costs[Actual])\n\tmeasure 'Cost PL' = SUM(Costs[Plan])\n";
+
+check("wide model: measures over an Actual column and a Plan column propose a variance page", () => {
+  const r = proposed({ fact: WIDE_FACT, measures: WIDE_MEASURES });
+  assert.strictEqual(r.ok, true, r.error);
+  assert.ok(r.comparisonBound, "the Actual and Plan measures were not bound as a comparison");
+  assert.strictEqual(r.comparisonBound.actual, ".Measures[Cost AC]");
+  assert.strictEqual(r.comparisonBound.plan, ".Measures[Cost PL]");
+  const v = r.spec.pages[0].visuals[0];
+  assert.ok(v.bindings.Plan && v.bindings.Values, "Plan or Values well left empty");
+  assert.ok(!(r.notes || []).some((n) => /WIDE SCENARIO/.test(n)), "the wide note fired although measures exist");
+});
+
+check("wide model: columns and no measures is refused, and the refusal names the wide scenarios", () => {
+  const r = proposed({ fact: WIDE_FACT });
+  assert.strictEqual(r.ok, false);
+  assert.ok(/WIDE SCENARIOS: Costs\[Actual\] is AC, Costs\[Plan\] is PL/.test(r.error), r.error);
+});
+
+check("wide model: a measure over the Actual column only says the Plan column is the missing comparison", () => {
+  const r = proposed({ fact: WIDE_FACT, measures: "table '.Measures'\n\tmeasure 'Cost AC' = SUM(Costs[Actual])\n" });
+  assert.strictEqual(r.ok, true, r.error);
+  assert.strictEqual(r.comparisonBound, null, "bound a comparison with no plan measure behind it");
+  assert.ok((r.notes || []).some((n) => /WIDE SCENARIOS.*Costs\[Plan\] is PL/.test(n)), JSON.stringify(r.notes));
+  assert.ok(r.youMustStillDecide.some((d) => /NO SCENARIO MEASURE PAIR/.test(d)), "the no-pair line was lost");
+});
+
+check("no wide-scenario note on a model without scenario columns", () => {
+  const r = proposed({ fact: SIGNAL_FACT, measures: "table '.Measures'\n\tmeasure Revenue = SUM(Sales[Amount])\n" });
+  assert.ok(!(r.notes || []).some((n) => /WIDE SCENARIOS/.test(n)), JSON.stringify(r.notes));
+});
+
 check("an unrankable project is REFUSED, not proposed from thin air", () => {
   const pq = "table Sales\n\tcolumn Region\n\t\tdataType: string\n"
            + "\tpartition Sales = m\n\t\tmode: import\n\t\tsource = let x = 1 in x\n";

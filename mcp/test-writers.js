@@ -631,9 +631,83 @@ check("an explicit GUID is written through untouched", () => {
 // Not refused: a Zebra page normally carries slicers and textboxes, and a page generator that
 // cannot emit one is a page generator nobody can finish a page with.
 check("a non-Zebra visual type is written, with a warning saying what does not apply", () => {
-  const r = w.writeVisual({ ...MIN, visualType: "slicer" });
-  assert.strictEqual(JSON.parse(r.content).visual.visualType, "slicer");
+  const r = w.writeVisual({ ...MIN, visualType: "clusteredColumnChart" });
+  assert.strictEqual(JSON.parse(r.content).visual.visualType, "clusteredColumnChart");
   assert.ok(r.warnings.some((x) => /not a Zebra visual type/.test(x)));
+});
+
+// Page furniture is expected on a page, so it is written without that warning.
+check("page furniture is written without the 'not a Zebra visual type' warning", () => {
+  for (const t of ["textbox", "slicer", "actionButton", "shape", "image", "pageNavigator"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t });
+    assert.strictEqual(JSON.parse(r.content).visual.visualType, t);
+    assert.ok(!(r.warnings || []).some((x) => /not a Zebra visual type/.test(x)), `${t} was warned about`);
+  }
+});
+check("page furniture through write_page: no warning, and a native chart beside it still warns", () => {
+  const furniture = w.writePage({ name: "P1", displayName: "Overview", visuals: [
+    { ...MIN, name: "title", visualType: "textbox" }, { ...MIN, name: "pick", visualType: "slicer" }] });
+  assert.ok(!(furniture.warnings || []).some((x) => /not a Zebra visual type/.test(x)),
+    JSON.stringify(furniture.warnings));
+  const chart = w.writePage({ name: "P2", displayName: "Other", visuals: [
+    { ...MIN, name: "c", visualType: "lineChart" }] });
+  assert.ok((chart.warnings || []).some((x) => /not a Zebra visual type/.test(x)),
+    "control: a native chart should still warn");
+});
+
+// Tables+ has been seen to draw its own automatic title instead of an authored titleSettings.text.
+// Only a warning is emitted: what is written is what was asked for, and nothing is routed elsewhere.
+const titleWarned = (r) => (r.warnings || []).some((x) => /automatic title/.test(x));
+check("Tables+ with a static title text warns, and writes the text exactly as asked", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "tables+", title: "Net sales by region" });
+  assert.ok(titleWarned(r), JSON.stringify(r.warnings));
+  const f = JSON.parse(r.content).visual;
+  assert.deepStrictEqual(Object.keys(f.objects), ["titleSettings"], "something else was routed");
+  assert.ok(!("visualContainerObjects" in f), "the title was routed to the container");
+  assert.ok(!(r.warnings || []).some((x) => /\[Measure\] token/.test(x)));
+});
+check("Tables+ with the text set through properties warns as well", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "ZebraBITablesPlus3E6085701D7B426980C3859B16327993",
+    properties: { "titleSettings.show": true, "titleSettings.text": "Net sales" } });
+  assert.ok(titleWarned(r), JSON.stringify(r.warnings));
+});
+check("Tables+ with a [Measure] token in the title says the token may not draw", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "tables+", title: "Net sales, in USD - [Period label]" });
+  assert.ok(titleWarned(r) && r.warnings.some((x) => /\[Measure\] token/.test(x)), JSON.stringify(r.warnings));
+});
+check("no Tables+ title warning when there is no text, or the title is off", () => {
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+" })));
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+",
+    properties: { "titleSettings.show": false } })));
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+", title: { text: "Hidden", show: false } })));
+});
+check("Charts+ and certified Tables/Charts/Cards titles are not warned about", () => {
+  for (const t of ["charts+", "tables", "charts", "cards", "ZebraBITables98F88148E5424E949E69864664EE1860"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t, title: "Net sales by region" });
+    assert.ok(!titleWarned(r), `${t} was warned about`);
+  }
+});
+
+// A Tables visual with a Category and no sortSettings has been seen to sort by the first Values column,
+// descending. The writer says so and writes nothing it was not asked to.
+const sortWarned = (r) => (r.warnings || []).some((x) => /no sortSettings/.test(x));
+const CAT = { Category: [{ entity: "Sales", property: "Region", kind: "Column" }] };
+check("Tables and Tables+ with a Category and no sortSettings warn; nothing is added", () => {
+  for (const t of ["tables", "tables+"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t, bindings: CAT });
+    assert.ok(sortWarned(r), `${t}: ${JSON.stringify(r.warnings)}`);
+    assert.ok(!JSON.parse(r.content).visual.objects, `${t}: the writer invented properties`);
+  }
+});
+check("no sort warning when sortSettings is set, there is no Category, or the visual is not Tables", () => {
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+", bindings: CAT,
+    properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+", bindings: CAT,
+    rawObjects: { sortSettings: [{ properties: {} }] } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+",
+    bindings: { Values: [{ entity: "Sales", property: "AC", kind: "Measure" }] } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "charts+", bindings: CAT })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "cards", bindings: CAT })));
 });
 
 // --- file hygiene -----------------------------------------------------------------------------------
