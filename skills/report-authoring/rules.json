@@ -616,6 +616,22 @@
       "message": "A Tables or Tables+ visual that carries computed rows (`categoriesMetadata.addedFormulas`) keeps them\nin statement order: do not sort it by a value column. Write `sortSettings.categorySort` and\n`sortSettings.chartSort` as `0`, with `sortSettings.columnName` left out or set to `category`, or bind\nan order column, hide it in `chartSettings.columnSettings` and sort on it. A sort by a value column\norders the rows by size, so the gross profit, operating profit and margin rows land among the lines\nthey total and the statement is unreadable, although every number is right.",
       "source": "validator",
       "held": true
+    },
+    {
+      "id": "tmdl-sort-column-reads-the-column-it-sorts",
+      "severity": "wont-open",
+      "check": "tmdl-sort-column-reads-the-column-it-sorts",
+      "message": "Do not sort a column by a calculated column whose expression reads the column it sorts, directly or\nthrough other calculated columns of the same table: `Account` with `sortByColumn: 'Account order'`,\nwhere `'Account order' = SWITCH ( 'T'[Account], ... )`. Power BI refuses the pair as a circular\ndependency (\"A circular dependency was detected\"), the model loads with no data, every calculated\ntable is empty and every visual fails. Put the order in the data instead, as a column of the table's\nown rows or of its embedded `DATATABLE` rows (`write_project` writes one from `order`), or compute the\nsort column from a different column of the table.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "slicer-selection-is-not-a-value-of-its-column",
+      "severity": "blank",
+      "check": "slicer-selection-is-not-a-value-of-its-column",
+      "message": "A slicer's saved selection must name a value its column holds, written as the model produces it. A\ncolumn the model defines with `FORMAT ( [Date], \"mmm\" )` holds `Sep`, not `September`, so a slicer\nthat selects `September` matches no row: the page is filtered to nothing, its visuals draw empty, and\nthe slicer still shows the value as selected. Select `Sep` for `mmm`, `September` for `mmmm`, `Mon`\nfor `ddd` and `Monday` for `dddd`, or change the model column to the format the selection uses.",
+      "source": "validator",
+      "held": true
     }
   ]
 }

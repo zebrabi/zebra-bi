@@ -1154,6 +1154,65 @@ check("sortByColumn written as a bare bracket reference says so, without a table
   assert.ok(hit && /bracketed reference, \[Column\]/.test(hit.detail), hit && hit.detail);
 });
 
+// --- a column sorted by a calculated column that reads it (22 Nov 2026) ---------------------------------
+// Power BI loads the model, then refuses to evaluate it: "A circular dependency was detected". A calculated
+// column depends on the columns its expression reads, and a sorted column depends on its sort column.
+const CYC = "tmdl-sort-column-reads-the-column-it-sorts";
+const ledger = (cols, source) => "table Ledger\n\n\tcolumn Line\n\t\tdataType: string\n\t\tsummarizeBy: none\n\t\tisNameInferred\n\t\tsourceColumn: [Line]\n"
+  + "\t\tsortByColumn: 'Line Order'\n\n\tcolumn Amount\n\t\tdataType: int64\n\t\tsummarizeBy: none\n\t\tisNameInferred\n\t\tsourceColumn: [Amount]\n\n"
+  + cols + "\tpartition Ledger = calculated\n\t\tmode: import\n\t\tsource =\n\t\t\t\tDATATABLE (\n\t\t\t\t\t\"Line\", STRING, \"Amount\", INTEGER,\n"
+  + "\t\t\t\t\t{\n\t\t\t\t\t\t{\"Sales\", 900},\n\t\t\t\t\t\t{\"Staff\", -240}\n\t\t\t\t\t}\n\t\t\t\t)\n";
+const order = (dax, extra = "") => "\tcolumn 'Line Order' =\n\t\t\t\t" + dax + "\n\t\tdataType: int64\n\t\tisHidden\n\t\tsummarizeBy: none\n" + extra + "\n";
+const cycCodes = (tmdl) => codes(project({ extraTmdl: tmdl }));
+const SWITCH = (ref) => `SWITCH ( ${ref}, "Sales", 1, "Staff", 2, 99 )`;
+
+check("a column sorted by a calculated column that reads it is caught, once, at the column, as wont-open", () => {
+  const root = project({ extraTmdl: ledger(order(SWITCH("'Ledger'[Line]"))) });
+  const hits = srv.validateReport({ projectPath: root }).findings.filter((f) => f.code === CYC);
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].severity, "wont-open");
+  assert.ok(/extra\.tmdl:column Line \(sortByColumn Line Order; Line Order reads Line\)$/.test(hits[0].location), hits[0].location);
+  for (const ref of ["Ledger[Line]", "[Line]", "'LEDGER'[LINE]"]) assert.ok(cycCodes(ledger(order(SWITCH(ref)))).has(CYC), "missed " + ref);
+});
+
+check("a cycle through another calculated column of the table is caught, and names the column that reads the sorted one", () => {
+  const chain = order("[Rank] * 10") + "\tcolumn Rank = SWITCH ( Ledger[Line], \"Sales\", 1, 2 )\n\t\tdataType: int64\n\n";
+  const hits = srv.validateReport({ projectPath: project({ extraTmdl: ledger(chain) }) }).findings.filter((f) => f.code === CYC);
+  assert.strictEqual(hits.length, 1);
+  assert.ok(/Rank reads Line\)$/.test(hits[0].location), hits[0].location);
+});
+
+check("a sort column that is data, reads another column, or reads the sorted column only in a string, a comment or another table is NOT flagged", () => {
+  // the sort column is a column of the table's own rows: no expression, no edge
+  const data = "\tcolumn 'Line Order'\n\t\tdataType: int64\n\t\tisHidden\n\t\tsummarizeBy: none\n\t\tisNameInferred\n\t\tsourceColumn: [Line Order]\n\n";
+  assert.ok(!cycCodes(ledger(data)).has(CYC), "fired on a data sort column");
+  // reads another column: the expression edge goes to Amount, not to Line
+  assert.ok(!cycCodes(ledger(order("IF ( Ledger[Amount] > 0, 1, 2 )"))).has(CYC), "fired on a sort column that reads another column");
+  // a chain that never returns to the sorted column
+  const open = order("[Rank] * 10") + "\tcolumn Rank = IF ( [Amount] > 0, 1, 2 )\n\t\tdataType: int64\n\n";
+  assert.ok(!cycCodes(ledger(open)).has(CYC), "fired on a chain that does not return");
+  assert.ok(!cycCodes(ledger(order("IF ( Ledger[Amount] > 0, 1, 2 ) // Ledger[Line]"))).has(CYC), "read a comment");
+  assert.ok(!cycCodes(ledger(order("IF ( Ledger[Amount] > 0, 1, 2 ) & \"Ledger[Line] [Line]\""))).has(CYC), "read a string");
+  assert.ok(!cycCodes(ledger(order("IF ( Ledger[Amount] > 0, RELATED ( Other[Line] ), 2 )"))).has(CYC), "read another table's column");
+  assert.ok(!cycCodes(ledger(order("IF ( Ledger[Amount] > 0, RELATED ( 'Other table' [Line] ), 2 )"))).has(CYC), "read a spaced reference to another table");
+});
+
+check("a bare [Line] that is a measure of the model, and a sort column with no sortByColumn pointing at it, are NOT flagged", () => {
+  // a measure called Line makes a bare [Line] a measure reference, which is not a read of the column
+  const withMeasure = project({ extraTmdl: ledger(order(SWITCH("[Line]"))), fact: FACT + "\n\tmeasure Line = 1\n\t\tformatString: 0\n" });
+  assert.ok(!codes(withMeasure).has(CYC), "read a measure as the column");
+  // the same table without the sortByColumn: a calculated column reading Line is fine on its own
+  const noSort = ledger(order(SWITCH("'Ledger'[Line]"))).replace("\t\tsortByColumn: 'Line Order'\n", "");
+  assert.ok(!cycCodes(noSort).has(CYC), "fired with no sortByColumn");
+});
+
+check("a sortByColumn written as a DAX reference is left to its own rule, not read as a name here", () => {
+  const ref = ledger(order(SWITCH("'Ledger'[Line]"))).replace("sortByColumn: 'Line Order'", "sortByColumn: 'Ledger'[Line Order]");
+  const c = cycCodes(ref);
+  assert.ok(!c.has(CYC), "read a DAX reference as a column name");
+  assert.ok(c.has("tmdl-column-name-property-not-a-plain-name"), "the plain-name rule no longer sees it");
+});
+
 // --- cultures/ is a FACT, like compatibilityLevel -----------------------------------------
 //
 // It kills `file.reload/v1` while the project cold-opens perfectly, so the caller needs to know

@@ -238,6 +238,119 @@ function describeValue(v) {
   return `${typeof v} ${JSON.stringify(v)}`;
 }
 
+/** A column or partition expression as `daxOnly` text, joined by newlines: its inline start, then its body. */
+function nodeDax(n) {
+  const parts = [];
+  if (n.def) parts.push(n.def);
+  if (n.inline) parts.push(n.inline);
+  if (n.value && !n.multiline && n.delim === "=") parts.push(n.value);
+  for (const l of n.body || []) parts.push(l);
+  return daxOnly(parts.join("\n")).join("\n");
+}
+
+/**
+ * `daxOnly` of `raw` with every line padded back to its original length, so an offset in the result is
+ * the same offset in `raw` and a string literal blanked here can be read from `raw`.
+ */
+function daxOnlyAligned(raw) {
+  const rawLines = raw.split(/\r?\n/);
+  return daxOnly(raw).map((l, i) => l.padEnd(rawLines[i].length)).join("\n");
+}
+
+/**
+ * In `daxOnly` text, the index of the `)` that closes the `(` at `open`, or -1. A `[column]`, a
+ * `'Table name'` and a "string" are skipped whole, so a parenthesis inside a name is not a call.
+ */
+function closeParen(s, open) {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (c === "[" || c === "'" || c === '"') { i = endOfName(s, i); continue; }
+    if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** The index of the character that closes the `[column]`, `'Table'` or "string" opened at `i` (`]]` and `''` escape). */
+function endOfName(s, i) {
+  const close = s[i] === "[" ? "]" : s[i];
+  for (let j = i + 1; j < s.length; j++) {
+    if (s[j] !== close) continue;
+    if (s[j + 1] === close && close !== '"') { j++; continue; }
+    return j;
+  }
+  return s.length;
+}
+
+/** The top-level arguments of the call whose `(` is at `open` and `)` at `close`, as [start, end) pairs. */
+function splitArgs(s, open, close) {
+  const out = [];
+  let from = open + 1, depth = 0;
+  for (let i = open + 1; i < close; i++) {
+    const c = s[i];
+    if (c === "[" || c === "'" || c === '"') { i = endOfName(s, i); continue; }
+    if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === "," && depth === 0) { out.push([from, i]); from = i + 1; }
+  }
+  out.push([from, close]);
+  return out;
+}
+
+/** [start, end) of `s` between `a` and `b` with surrounding whitespace removed. */
+function trimSpan(s, a, b) {
+  while (a < b && /\s/.test(s[a])) a++;
+  while (b > a && /\s/.test(s[b - 1])) b--;
+  return [a, b];
+}
+
+/**
+ * The columns a calculated table's source defines as `"Name", FORMAT ( [Date], "<fmt>" )`, with the
+ * date table made by `CALENDAR` or `CALENDARAUTO` under `ADDCOLUMNS` (nested `ADDCOLUMNS` allowed), as
+ * { name, fmt }. Anything else returns nothing: the source must be that one expression and nothing
+ * around it, the format call must have two arguments, and its first must be the bare `[Date]` column.
+ * `b` is the aligned `daxOnly` text, `raw` the same text with its strings, read for names and formats.
+ */
+function formatColumns(b, raw, s, e) {
+  [s, e] = trimSpan(b, s, e);
+  const head = /^ADDCOLUMNS\s*\(/i.exec(b.slice(s, e));
+  if (!head) return null;
+  const open = s + head[0].length - 1;
+  const close = closeParen(b, open);
+  if (close !== e - 1) return null;
+  const args = splitArgs(b, open, close);
+  if (args.length < 3 || (args.length - 1) % 2 !== 0) return null;
+  const [bs, be] = trimSpan(b, args[0][0], args[0][1]);
+  const base = b.slice(bs, be);
+  let found;
+  const cal = /^CALENDAR(?:AUTO)?\s*\(/i.exec(base);
+  if (cal) {
+    const o = bs + cal[0].length - 1;
+    if (closeParen(b, o) !== be - 1) return null;
+    found = [];
+  } else {
+    found = formatColumns(b, raw, bs, be);
+    if (!found) return null;
+  }
+  const literal = (a, z) => { [a, z] = trimSpan(b, a, z); return /^"\s*"$/.test(b.slice(a, z)) ? raw.slice(a + 1, z - 1) : null; };
+  for (let i = 1; i < args.length; i += 2) {
+    const name = literal(args[i][0], args[i][1]);
+    const [xs, xe] = trimSpan(b, args[i + 1][0], args[i + 1][1]);
+    const f = /^FORMAT\s*\(/i.exec(b.slice(xs, xe));
+    if (name === null || !f) continue;
+    const fo = xs + f[0].length - 1;
+    if (closeParen(b, fo) !== xe - 1) continue;
+    const fa = splitArgs(b, fo, xe - 1);
+    if (fa.length !== 2) continue;
+    const [as, ae] = trimSpan(b, fa[0][0], fa[0][1]);
+    if (!/^\[Date\]$/i.test(b.slice(as, ae))) continue;
+    const fmt = literal(fa[1][0], fa[1][1]);
+    if (fmt !== null) found.push({ name: name.replace(/""/g, '"'), fmt: fmt.toLowerCase() });
+  }
+  return found;
+}
+
 
 const checkers = {
   // --- will not open ------------------------------------------------------------------------
@@ -2510,6 +2623,199 @@ const checkers = {
           out.push({ location: `${src.rel}:${c.line}`,
             detail: `column '${c.name}' of calculated table '${t.name}' has no sourceColumn; write sourceColumn: [${c.name}]` });
         }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * A column sorted (`sortByColumn`) by a calculated column whose expression reads the sorted column,
+   * directly or through other calculated columns of the same table. Desktop loads the model, then
+   * refuses to evaluate it: "A circular dependency was detected: T[Group], T[Group order], T[Group]";
+   * every calculated table holds no data and every visual shows "Error fetching data for this visual".
+   * The two edges of the loop: a calculated column cannot be evaluated before the columns its
+   * expression reads, and a column sorted by another is built from that column's values.
+   *
+   * Judged per table, from the TMDL tree, on plain names only: a column of the same table named as
+   * `T[c]` or `'T'[c]` with no space before the bracket, or a bare `[c]` when no measure anywhere in
+   * the model is called c. Not judged, so silent: references across tables (RELATED, LOOKUPVALUE),
+   * context transition (CALCULATE, a measure, EARLIER), a whole-table reference, calculated tables and
+   * calculation groups. These may cycle as well; none was reproduced, so leaving them out costs only
+   * misses. A sort column that is a data column or a calculated-table column has no expression and no
+   * edge; a calculated sort column that reads another column (`Month` by `MONTH ( [Date] )`) is silent.
+   * Strings, comments and descriptions are blanked first (`daxOnly`).
+   */
+  "tmdl-sort-column-reads-the-column-it-sorts"(p) {
+    if (!p.model || !p.model.present) return [];
+    const key = (s) => String(s).toLowerCase();
+    const measures = new Set();
+    for (const src of p.model.sources || []) {
+      if (!src.tree) continue;
+      for (const n of src.tree.nodes) if (n.type === "measure" && !T.underCulture(n)) measures.add(key(n.name));
+    }
+    const out = [];
+    for (const src of p.model.sources || []) {
+      if (!src.tree) continue;
+      for (const t of src.tree.nodes) {
+        if (t.type !== "table" || T.underCulture(t)) continue;
+        const cols = new Map();
+        for (const c of t.children) {
+          if (c.type !== "column") continue;
+          const calc = Boolean(T.expressionOf(c));
+          cols.set(key(c.name), { name: c.name, calc, dax: calc ? nodeDax(c) : "", sortBy: T.propValue(c, "sortByColumn") });
+        }
+        // The columns of this table that an expression reads, by lowercase name.
+        const reads = (c) => {
+          const found = new Set();
+          const re = /(?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z0-9_]*))?\[((?:[^\]]|\]\])+)\]/g;
+          let m;
+          while ((m = re.exec(c.dax))) {
+            const col = key(m[3].replace(/\]\]/g, "]"));
+            const table = m[1] !== undefined ? m[1].replace(/''/g, "'") : m[2];
+            if (table !== undefined) { if (key(table) === key(t.name)) found.add(col); continue; }
+            // A bare [c]: a space after a table name still qualifies it, and a measure of that name is a measure.
+            const before = c.dax.slice(0, m.index).replace(/\s+$/, "");
+            const word = /([A-Za-z_][A-Za-z0-9_]*)$/.exec(before);
+            if (before.endsWith("'") || (word && !/^(?:return|not|in|and|or)$/i.test(word[1]))) continue;
+            if (!measures.has(col)) found.add(col);
+          }
+          return found;
+        };
+        for (const [aKey, a] of cols) {
+          const raw = a.sortBy && a.sortBy.trim();
+          if (!raw || /[[\]]/.test(raw.replace(/^'(?:[^']|'')*'$/, ""))) continue;   // a DAX reference is another rule's
+          const bKey = key(T.unquoteName(raw));
+          const b = cols.get(bKey);
+          if (!b || !b.calc || bKey === aKey) continue;
+          const seen = new Set();
+          const stack = [bKey];
+          let reader = null;
+          while (stack.length && !reader) {
+            const k = stack.pop();
+            if (seen.has(k)) continue;
+            seen.add(k);
+            const c = cols.get(k);
+            if (!c || !c.calc) continue;
+            for (const r of reads(c)) { if (r === aKey) { reader = c; break; } stack.push(r); }
+          }
+          if (reader) out.push({ location: `${src.rel}:column ${a.name} (sortByColumn ${b.name}; ${reader.name} reads ${a.name})` });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * A slicer whose saved selection names a text value that its column cannot hold, decided only where
+   * the files fix the column's values. Power BI applies the filter as written: no row matches, every
+   * measure is blank, and a Tables+ or Charts+ visual with `suppressNulls` draws an empty frame while
+   * the dropdown still shows the missing value as selected. The way in is a month spelled differently
+   * from the model: `"Month", FORMAT ( [Date], "mmm" )` holds `Sep`, the slicer selects `September`.
+   *
+   * What is decidable, and nothing else is judged:
+   *   - the report's own model (the one its definition.pbir points at) has an explicit English
+   *     `culture:`; the names FORMAT produces depend on it, and a model with no culture takes the
+   *     machine's. The abbreviated forms (`mmm`, `ddd`) are judged for `en` and `en-US` only, because
+   *     other English cultures spell some of them differently (September is `Sept` in en-GB);
+   *     the spelled-out forms (`mmmm`, `dddd`) are the same in every English culture;
+   *   - a table whose only partition is `calculated` and whose whole source is `ADDCOLUMNS` over
+   *     `CALENDAR` or `CALENDARAUTO`, the column defined as `FORMAT ( [Date], "<fmt>" )` with `<fmt>`
+   *     exactly mmm, mmmm, ddd or dddd (any case) and no third argument, and the model column bound to
+   *     it by `sourceColumn: [Name]` a plain string column with no expression of its own. Another
+   *     format string, a concatenation around the call or a different source is never judged;
+   *   - a slicer (`visualType: slicer`) whose `general.filter.filter` holds a `Where` of `In` over that
+   *     column and a string literal. `Not In`, flat-nested selections, filter-pane filters and
+   *     non-string literals are not judged. Text is compared as Power BI compares it, without case
+   *     (`'sep'` is `Sep`), and a literal that matches once its surrounding spaces are trimmed is
+   *     not fired on, because the files do not say whether the filter trims.
+   * A column's values the files cannot fix (an M or imported table, any other expression) stay unjudged.
+   */
+  "slicer-selection-is-not-a-value-of-its-column"(p) {
+    if (!p.model || !p.model.present) return [];
+    const key = (s) => String(s).trim().toLowerCase();
+    const sources = p.model.sources || [];
+    // The model this report points at, not merely the first one found beside it.
+    const target = (p.pbirFiles || []).map((f) => String(f.byPath || "").split(/[\\/]/).filter(Boolean).pop())
+      .filter(Boolean);
+    const modelDir = sources.length ? sources[0].rel.split("/")[0] : null;
+    if (!modelDir || target.length !== 1 || key(target[0]) !== key(modelDir)) return [];
+    let culture = null;
+    for (const src of sources) {
+      if (!src.tree) continue;
+      for (const n of src.tree.nodes) if (n.type === "model") culture = T.propValue(n, "culture");
+    }
+    if (!culture) return [];
+    culture = T.unquoteName(culture).toLowerCase();
+    if (culture !== "en" && !culture.startsWith("en-")) return [];
+    const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const SETS = { mmm: MONTHS, mmmm: FULL, ddd: DAYS, dddd: DAYS_FULL };
+    const us = culture === "en" || culture === "en-us";
+    // table.column (the model's own names, lowercase) -> the closed set of values it holds
+    const closed = new Map();
+    for (const src of sources) {
+      if (!src.tree) continue;
+      for (const t of src.tree.nodes) {
+        if (t.type !== "table" || T.underCulture(t)) continue;
+        const parts = t.children.filter((c) => c.type === "partition");
+        if (parts.length !== 1 || String(parts[0].def || "").trim().toLowerCase() !== "calculated") continue;
+        const sp = T.prop(parts[0], "source");
+        if (!sp || sp.delim !== "=") continue;
+        const rawParts = [];
+        if (sp.inline) rawParts.push(sp.inline);
+        if (sp.value && !sp.multiline) rawParts.push(sp.value);
+        for (const l of sp.body || []) rawParts.push(l);
+        const raw = rawParts.join("\n");
+        const defined = formatColumns(daxOnlyAligned(raw), raw, 0, raw.length);
+        if (!defined) continue;
+        const dup = new Set();
+        const seen = new Set();
+        for (const d of defined) { if (seen.has(key(d.name))) dup.add(key(d.name)); seen.add(key(d.name)); }
+        for (const d of defined) {
+          const values = SETS[d.fmt];
+          if (!values || dup.has(key(d.name)) || (!us && (d.fmt === "mmm" || d.fmt === "ddd"))) continue;
+          for (const c of t.children) {
+            if (c.type !== "column" || T.expressionOf(c)) continue;
+            const sc = T.propValue(c, "sourceColumn");
+            const dt = T.propValue(c, "dataType");
+            if (!sc || key(sc.replace(/^\[|\]$/g, "")) !== key(d.name)) continue;
+            if (dt && key(dt) !== "string") continue;
+            closed.set(`${key(t.name)}\u0000${key(c.name)}`, { table: t.name, column: c.name, values: new Set(values.map(key)) });
+          }
+        }
+      }
+    }
+    if (!closed.size) return [];
+    const out = [];
+    for (const v of p.visuals || []) {
+      if (v.visualType !== "slicer" || v.parseError) continue;
+      const f = obj(v.parsed, "general")?.filter?.filter;
+      if (!f || typeof f !== "object" || !Array.isArray(f.Where)) continue;
+      const alias = new Map();
+      for (const s of Array.isArray(f.From) ? f.From : []) {
+        if (s && typeof s.Name === "string" && typeof s.Entity === "string" && (s.Type === undefined || s.Type === 0)) alias.set(s.Name, s.Entity);
+      }
+      for (const w of f.Where) {
+        const inn = w?.Condition?.In;
+        if (!inn || !Array.isArray(inn.Expressions) || !Array.isArray(inn.Values)) continue;
+        inn.Expressions.forEach((ex, i) => {
+          const ref = ex?.Column;
+          const src = ref?.Expression?.SourceRef;
+          const entity = src && (src.Source !== undefined ? alias.get(src.Source) : src.Entity);
+          if (!entity || typeof ref.Property !== "string") return;
+          const col = closed.get(`${key(entity)}\u0000${key(ref.Property)}`);
+          if (!col) return;
+          for (const row of inn.Values) {
+            const raw = Array.isArray(row) ? row[i]?.Literal?.Value : undefined;
+            const m = typeof raw === "string" ? /^'([\s\S]*)'$/.exec(raw) : null;
+            if (!m) continue;
+            const value = m[1].replace(/''/g, "'");
+            if (col.values.has(key(value))) continue;
+            out.push({ location: `${v.rel}:objects.general.filter (${col.table}.${col.column} = '${value}')` });
+          }
+        });
       }
     }
     return out;
