@@ -49,6 +49,24 @@ though they shipped would misrepresent what anyone could have installed.
 - `validate_report` returns `clean` (true only when there are no findings) and `counts` (findings per
   severity, and the total) beside `ok`. `ok` is unchanged and means the check ran; the tool description
   now says so.
+- `encode_table_calculations` takes comparison pairs only, one per variance slot, in the order the slots
+  draw: `<value>-<reference>` from `actual`, `previousYear`, `plan`, `plan2`, `plan3`, `forecast`,
+  `forecast2` and `forecast3`, for example `["actual-previousYear","actual-plan"]` for a table with
+  Actual, Previous year and Plan. Each pair brings its absolute and its percent column. Tables and
+  Tables+ read the list by position and read `actual-plan-percent` as `actual-plan`, so a list with
+  `-percent` entries, such as `["actual-plan","actual-plan-percent","actual-previousYear",
+  "actual-previousYear-percent"]`, drew the first comparison twice and left out the second. A
+  `-percent` entry and a repeated pair are now refused. A pair's `-percent` column is a legal
+  `columnSettings` key whenever the pair is listed, so it no longer needs listing itself. With `roles`,
+  or with the bindings of the same `write_visual` spec, a list that would draw one comparison in two
+  slots is refused: `["actual-plan"]` on a table with Previous year and Plan bound leaves the second
+  slot on its default, the plan comparison, and drops the previous-year one.
+- `write_visual`, `write_page` and `write_report` check `chartSettings.calculations` on Tables and
+  Tables+ however it is given (`tableCalculations`, `properties` or `rawObjects`). A value whose drawn
+  slots repeat a comparison is refused, with the list to write instead. A value that draws correctly
+  but carries `-percent` or repeated entries is written as given, with a warning naming the pairs-only
+  form; it is not rewritten, because dropping entries moves later ones into earlier slots and can
+  change what a correct table draws.
 
 ## 0.3.2 — 2026-11-04
 

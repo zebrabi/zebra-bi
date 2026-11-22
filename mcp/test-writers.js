@@ -584,7 +584,7 @@ check("tableCalculations hands its legal key set to tableColumns automatically",
   const r = w.writeVisual({ ...MIN,
     tableCalculations: { comparisons: ["actual-plan"] },
     tableColumns: { mode: "table", columns: [{ key: "forecast-plan" }] } });
-  assert.ok(r.warnings.some((x) => /not in the legal key set/.test(x)),
+  assert.ok(r.warnings.some((x) => /not a column of the comparisons/.test(x)),
     `the key set was not handed over: ${JSON.stringify(r.warnings)}`);
 });
 
@@ -611,6 +611,63 @@ check("an escape-hatch path that collides with an encoder warns rather than over
     tableCalculations: { comparisons: ["actual-plan"] },
     properties: { "chartSettings.calculations": { __json: ["actual-previousYear"] } } });
   assert.ok(r.warnings.some((x) => /was set twice/.test(x)), "the collision was silent");
+});
+
+// --- chartSettings.calculations: one comparison pair per variance slot, on every path ----------
+const T3 = { ...MIN, visualType: "tables+", bindings: {
+  Category: ["Fin.Line"], Values: ["Fin.Value AC"], PreviousYear: ["Fin.Value PY"], Plan: ["Fin.Value PL"] } };
+const FOUR = ["actual-plan", "actual-plan-percent", "actual-previousYear", "actual-previousYear-percent"];
+const calcOf = (r) => JSON.parse(JSON.parse(r.content).visual.objects.chartSettings[0].properties
+  .calculations.expr.Literal.Value.replace(/^'|'$/g, ""));
+
+check("calculations: the four-key list is refused on the encoder route", () => {
+  refuses(w.writeVisual, { ...T3, tableCalculations: { comparisons: FOUR } }, "is a column, not a comparison");
+});
+
+check("calculations: the four-key list is refused through properties, as JSON and as a string", () => {
+  refuses(w.writeVisual, { ...T3, properties: { "chartSettings.calculations": { __json: FOUR } } },
+    "draw 'actual-plan' in variance slots 1 and 2, and leaves out 'actual-previousYear'");
+  refuses(w.writeVisual, { ...T3, properties: { "chartSettings.calculations": JSON.stringify(FOUR) } },
+    "leaves out 'actual-previousYear'");
+});
+
+check("calculations: the four-key list is refused through rawObjects", () => {
+  refuses(w.writeVisual, { ...T3, rawObjects: { chartSettings: [{ properties: { calculations:
+    { expr: { Literal: { Value: `'${JSON.stringify(FOUR)}'` } } } } }] } }, "leaves out 'actual-previousYear'");
+});
+
+check("calculations: a lone pair that repeats another slot's default is refused (AC/FC/PL)", () => {
+  refuses(w.writeVisual, { ...T3, bindings: { Category: ["Fin.Line"], Values: ["Fin.Value AC"],
+    Forecast: ["Fin.Value FC"], Plan: ["Fin.Value PL"] }, tableCalculations: { comparisons: ["actual-plan"] } },
+    "leave out 'actual-forecast'");
+});
+
+check("calculations: the pair list for three scenarios is written exactly, with no warning", () => {
+  const r = w.writeVisual({ ...T3, tableCalculations: { comparisons: ["actual-previousYear", "actual-plan"] } });
+  assert.deepStrictEqual(calcOf(r), ["actual-previousYear", "actual-plan"]);
+  assert.ok(!(r.warnings || []).some((x) => /calculations/.test(x)), JSON.stringify(r.warnings));
+});
+
+check("calculations: a -percent list that draws correctly is written as given, with a warning", () => {
+  // Two scenarios: the second entry fills a slot that does not draw, so the table is right today.
+  // The writer must not rewrite it, only say what the pairs-only form is.
+  const r = w.writeVisual({ ...MIN, visualType: "tables+", bindings: { Category: ["Fin.Line"],
+    Values: ["Fin.Value AC"], PreviousYear: ["Fin.Value PY"] },
+    properties: { "chartSettings.calculations": { __json: ["actual-previousYear", "actual-previousYear-percent"] } } });
+  assert.deepStrictEqual(calcOf(r), ["actual-previousYear", "actual-previousYear-percent"]);
+  assert.ok(r.warnings.some((x) => /Written as given.*\["actual-previousYear"\]/.test(x)), JSON.stringify(r.warnings));
+});
+
+check("calculations: a list that is not an array is warned about, not refused", () => {
+  const r = w.writeVisual({ ...T3, properties: { "chartSettings.calculations": { __json: "actual-plan" } } });
+  assert.ok(r.warnings.some((x) => /not a JSON array/.test(x)), JSON.stringify(r.warnings));
+});
+
+check("calculations: a non-Tables visual is not checked", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "charts+", bindings: { Category: ["Fin.Month"],
+    Values: ["Fin.Value AC"], PreviousYear: ["Fin.Value PY"], Plan: ["Fin.Value PL"] },
+    properties: { "chartSettings.calculations": { __json: FOUR } } });
+  assert.ok(!(r.warnings || []).some((x) => /comparison pair/.test(x)), JSON.stringify(r.warnings));
 });
 
 // --- the products ---------------------------------------------------------------------------------
@@ -841,7 +898,7 @@ const FULL_REPORT = {
           Values: ["Sales.Value AC"],
           Plan: ["Sales.Value PL"],
         },
-        tableCalculations: { comparisons: ["actual-plan", "actual-plan-percent"] },
+        tableCalculations: { comparisons: ["actual-plan"] },
         tableColumns: { mode: "table", columns: [{ key: "actual", order: 0, bold: true }] },
         properties: { "chartSettings.showAsTable": true, "designSettings.style": 4 },
       },

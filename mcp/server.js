@@ -419,7 +419,8 @@ const ENCODERS = {
           type: "object",
           properties: {
             key: { type: "string", description: "A scenario role (actual, plan, previousYear, "
-              + "forecast), a comparison from encode_table_calculations, or a measure name." },
+              + "forecast), a comparison from encode_table_calculations or its percent column "
+              + "('actual-plan-percent'), or a measure name." },
             order: { type: "number" },
             inCellChart: { type: "string", enum: ["none", "bar"] },
             bold: { type: "boolean" },
@@ -443,10 +444,21 @@ const ENCODERS = {
   },
   encode_table_calculations: {
     fn: enc.encodeTableCalculations,
-    description: "Declare which variance columns a Zebra Table has. This governs which column "
-      + "keys are legal, so call it before encode_table_columns and pass its legalColumnKeys on.",
+    description: "Set which comparison each variance slot of a Zebra Table (Tables or Tables+) "
+      + "draws: chartSettings.calculations. It takes comparison PAIRS, one per slot, in the order "
+      + "the slots draw, e.g. ['actual-previousYear','actual-plan'] for Actual, Previous year and "
+      + "Plan. Each pair brings its absolute and its percent column, so never list a '-percent' "
+      + "key: the visual reads 'actual-plan-percent' as 'actual-plan' and draws it twice. Without "
+      + "this property the table draws its default comparisons from the bound roles. Pass roles to "
+      + "have the drawn slots checked. Returns legalColumnKeys for encode_table_columns, including "
+      + "each pair's '-percent' column.",
     schema: { type: "object", properties: {
-      comparisons: { type: "array", items: { type: "string", enum: enc.COMPARISONS } },
+      comparisons: { type: "array", items: { type: "string", enum: enc.COMPARISONS },
+        description: "'<value>-<reference>' from the scenario names actual, previousYear, plan, "
+          + "plan2, plan3, forecast, forecast2, forecast3. One per variance slot, no repeats." },
+      roles: { type: "object", description: "Optional. The bound roles as counts or binding "
+        + "arrays, e.g. {Values: 1, PreviousYear: 1, Plan: 1}. When given, a list that would draw "
+        + "one comparison in two slots, or names a scenario that is not bound, is refused." },
     }, required: ["comparisons"] },
   },
   encode_added_formulas: {
@@ -681,8 +693,9 @@ const VISUAL_SPEC_SCHEMA = {
       + "[Measure] tokens, which the visual resolves at render." },
     properties: { type: "object", description: PROPERTY_MAP_DESC },
     tableCalculations: { type: "object", description: "Routes to encode_table_calculations: which "
-      + "variance columns the Table has. Its legal column keys are handed to tableColumns "
-      + "automatically when both are in one spec.",
+      + "comparison each variance slot draws, as pairs in slot order (never a '-percent' key). The "
+      + "spec's bindings are passed as roles, and the legal column keys are handed to tableColumns "
+      + "automatically when both are in one spec. Omit it to draw the defaults of the bound roles.",
       properties: { comparisons: { type: "array", items: { type: "string" } } } },
     tableColumns: { type: "object", description: "Routes to encode_table_columns: per-column "
       + "order, formatting, in-cell charts and visibility. Needs mode ('table' or 'chart') and "
