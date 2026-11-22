@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .zebra/
 .DS_Store
+microsoft-365/dist/
