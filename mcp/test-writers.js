@@ -631,9 +631,28 @@ check("an explicit GUID is written through untouched", () => {
 // Not refused: a Zebra page normally carries slicers and textboxes, and a page generator that
 // cannot emit one is a page generator nobody can finish a page with.
 check("a non-Zebra visual type is written, with a warning saying what does not apply", () => {
-  const r = w.writeVisual({ ...MIN, visualType: "slicer" });
-  assert.strictEqual(JSON.parse(r.content).visual.visualType, "slicer");
+  const r = w.writeVisual({ ...MIN, visualType: "clusteredColumnChart" });
+  assert.strictEqual(JSON.parse(r.content).visual.visualType, "clusteredColumnChart");
   assert.ok(r.warnings.some((x) => /not a Zebra visual type/.test(x)));
+});
+
+// Page furniture is expected on a page, so it is written without that warning.
+check("page furniture is written without the 'not a Zebra visual type' warning", () => {
+  for (const t of ["textbox", "slicer", "actionButton", "shape", "image", "pageNavigator"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t });
+    assert.strictEqual(JSON.parse(r.content).visual.visualType, t);
+    assert.ok(!(r.warnings || []).some((x) => /not a Zebra visual type/.test(x)), `${t} was warned about`);
+  }
+});
+check("page furniture through write_page: no warning, and a native chart beside it still warns", () => {
+  const furniture = w.writePage({ name: "P1", displayName: "Overview", visuals: [
+    { ...MIN, name: "title", visualType: "textbox" }, { ...MIN, name: "pick", visualType: "slicer" }] });
+  assert.ok(!(furniture.warnings || []).some((x) => /not a Zebra visual type/.test(x)),
+    JSON.stringify(furniture.warnings));
+  const chart = w.writePage({ name: "P2", displayName: "Other", visuals: [
+    { ...MIN, name: "c", visualType: "lineChart" }] });
+  assert.ok((chart.warnings || []).some((x) => /not a Zebra visual type/.test(x)),
+    "control: a native chart should still warn");
 });
 
 // --- file hygiene -----------------------------------------------------------------------------------

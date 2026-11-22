@@ -12,6 +12,12 @@ This file starts at the first public release. Versions before it exist in the gi
 never published — the repository was private, with no tags and no releases — so listing them as
 though they shipped would misrepresent what anyone could have installed.
 
+## Unreleased
+
+- `write_visual`, `write_page` and `write_report` no longer warn "not a Zebra visual type" for page
+  furniture: `textbox`, `slicer`, `actionButton`, `shape`, `image` and `pageNavigator`. Any other
+  visual type that is not a Zebra BI visual still gets the warning.
+
 ## 0.3.2 — 2026-11-04
 
 - The hand-over now leads with the one step a changed model needs before it is opened again:

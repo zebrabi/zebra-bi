@@ -103,6 +103,9 @@ const VISUAL_ALIASES = { ...INSTALLED, ...FILE_IMPORTED };
 // anything matching Zebra charts by "waterfall" misses every Charts+ visual in silence.
 const ZEBRA_PREFIXES = ["ZebraBITables", "ZebraBICharts", "waterfall", "zebraBiCards"];
 const isZebraType = (t = "") => ZEBRA_PREFIXES.some((p) => t.startsWith(p));
+// Page furniture: visual types a page is expected to carry beside its Zebra visuals. Writing one is
+// ordinary, so it is not warned about as "not a Zebra visual type".
+const PAGE_FURNITURE = new Set(["textbox", "slicer", "actionButton", "shape", "image", "pageNavigator"]);
 
 // --- what must never be written ---------------------------------------------------------------
 /**
@@ -556,10 +559,11 @@ function writeVisual(spec = {}) {
   const warnings = [];
   const companions = [];
   const visualType = VISUAL_ALIASES[String(spec.visualType).toLowerCase()] ?? spec.visualType;
-  if (!isZebraType(visualType)) {
+  if (!isZebraType(visualType) && !PAGE_FURNITURE.has(visualType)) {
     // Not refused. A Zebra page normally carries slicers and textboxes, and a page generator that
-    // cannot emit one is a page generator nobody can finish a page with. But the encoder routes
-    // and every landmine they close are Zebra-specific, so the caller is told which half applies.
+    // cannot emit one is a page generator nobody can finish a page with. Those page furniture types
+    // are expected and not warned about. For any other non-Zebra type the encoder routes and every
+    // landmine they close are Zebra-specific, so the caller is told which half applies.
     warnings.push(`'${visualType}' is not a Zebra visual type. The file is written as asked, but `
       + `nothing Zebra-specific applies to it: the encoder routes (tableColumns, annotations, `
       + `cardInvert and so on) build Zebra blobs and would be meaningless here.`);
