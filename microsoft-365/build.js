@@ -215,6 +215,14 @@ function copyVisible(src, dst) {
   }
 }
 
+// The package's mcp.json: Microsoft 365 takes remote connectors only, so it carries the one hosted
+// server and leaves out every local one (the checker ships inside report-authoring as scripts).
+function packagedMcpJson(mcpJson) {
+  const remote = Object.entries(mcpJson.mcpServers || {}).filter(([, s]) => /^https:/.test(s.url || ""));
+  if (remote.length !== 1 || remote[0][0] !== CONFIG.app.connector.id) fail(`mcp.json must list exactly one HTTPS server named ${CONFIG.app.connector.id}`);
+  return { ...mcpJson, mcpServers: Object.fromEntries(remote) };
+}
+
 // Writes the plugin as Microsoft 365 Copilot takes it into `dir`: plugin.json, mcp.json and the
 // configured skills with the overlay applied. Returns what it measured, for the test and the log.
 function stage(dir) {
@@ -222,8 +230,7 @@ function stage(dir) {
   const pluginJson = JSON.parse(fs.readFileSync(path.join(ROOT, "plugin.json"), "utf8"));
   if (/^0\./.test(pluginJson.version)) fail(`plugin version ${pluginJson.version}: a Microsoft 365 app version may not start with 0`);
   const mcpJson = JSON.parse(fs.readFileSync(path.join(ROOT, "mcp.json"), "utf8"));
-  const remote = Object.entries(mcpJson.mcpServers || {}).filter(([, s]) => /^https:/.test(s.url || ""));
-  if (remote.length !== 1 || remote[0][0] !== CONFIG.app.connector.id) fail(`mcp.json must list exactly one HTTPS server named ${CONFIG.app.connector.id}`);
+  const packaged = packagedMcpJson(mcpJson);
 
   const onDisk = fs.readdirSync(path.join(ROOT, "skills")).filter((s) => fs.existsSync(path.join(ROOT, "skills", s, "SKILL.md")));
   const unlisted = onDisk.filter((s) => !(s in CONFIG.skills));
@@ -234,9 +241,6 @@ function stage(dir) {
 
   fs.mkdirSync(path.join(dir, "skills"), { recursive: true });
   fs.writeFileSync(path.join(dir, "plugin.json"), JSON.stringify(pluginJson, null, 2) + "\n");
-  // Microsoft 365 takes remote connectors only: the package's mcp.json carries the hosted server and
-  // leaves out the local checker, which ships inside report-authoring as scripts.
-  const packaged = { ...mcpJson, mcpServers: Object.fromEntries(remote) };
   fs.writeFileSync(path.join(dir, "mcp.json"), JSON.stringify(packaged, null, 2) + "\n");
 
   const report = { version: pluginJson.version, skills: {} };
@@ -345,7 +349,7 @@ function main(argv) {
   }
 }
 
-module.exports = { stage, applyOverlay, moveSections, bundleChecker, descriptionOf, msLength, CONFIG };
+module.exports = { stage, packagedMcpJson, applyOverlay, moveSections, bundleChecker, descriptionOf, msLength, CONFIG };
 
 if (require.main === module) {
   try { main(process.argv.slice(2)); } catch (e) {

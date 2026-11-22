@@ -178,6 +178,21 @@ try {
     assert.strictEqual(packaged.$schema, JSON.parse(fs.readFileSync(path.join(ROOT, "mcp.json"), "utf8")).$schema);
   });
 
+  // The root mcp.json lists only the hosted server, so a package built from it cannot show whether the
+  // local servers are dropped. This one lists a local stdio server and a second hosted one beside it.
+  check("a manifest that also lists a local server gives a package with the hosted server only", () => {
+    const id = CONFIG.app.connector.id;
+    const manifest = { $schema: "https://example.invalid/schema.json", mcpServers: {
+      [id]: { type: "streamable-http", url: "https://mcp.example.invalid/mcp" },
+      "zebra-bi-reports": { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/mcp/server.js"] },
+    } };
+    const packaged = build.packagedMcpJson(manifest);
+    assert.deepStrictEqual(Object.keys(packaged.mcpServers), [id]);
+    assert.strictEqual(packaged.$schema, manifest.$schema);
+    assert.ok(!JSON.stringify(packaged).includes("server.js"), "a local server reached the package");
+    assert.throws(() => build.packagedMcpJson({ mcpServers: { "zebra-bi-reports": { command: "node" } } }), /exactly one HTTPS server/);
+  });
+
   check("the plugin's own files are unchanged by the build", () => {
     const r = spawnSync("git", ["status", "--porcelain", "--", "skills", "mcp", "plugin.json", "mcp.json"], { cwd: ROOT, encoding: "utf8" });
     if (r.status === 0) assert.strictEqual(r.stdout.trim(), "");
