@@ -77,7 +77,7 @@ function longRows() {
     for (let m = 1; m <= 12; m++) {
       const d = `${y}-${String(m).padStart(2, "0")}-01`;
       regions.forEach((r, ri) => products.forEach((p, pi) => {
-        const base = 100 * (ri + 1) + 37 * pi + m;
+        const base = 100 * (ri + 1) + 37 * pi + m + (y === 2025 ? 3 : 0);
         if (y === 2024 || m <= 6) rows.push([d, r, p, "Actual", base * (ri ? 9 : 1)]);
         if (y === 2025) rows.push([d, r, p, "Budget", base * (ri ? 9 : 1) + 5]);
       }));
@@ -272,7 +272,7 @@ check("pages: \"propose\" binds only measures and columns the written model has"
     return Boolean(t && (kind === "Column" ? t.columns : t.measures).some((x) => x.name === prop));
   };
   const files = tree(out1);
-  const visuals = Object.entries(files).filter(([k]) => k.endsWith("/visual.json"));
+  const visuals = Object.entries(files).filter(([k]) => k.endsWith("/visual.json") && !k.includes("/periodSlicer/"));
   assert.ok(visuals.length >= 1, "no visual proposed");
   let bindings = 0;
   for (const [rel, buf] of visuals) {
@@ -291,11 +291,56 @@ check("pages: \"propose\" binds only measures and columns the written model has"
   assert.ok(bindings >= 3, `${bindings} bindings`);
 });
 
+check("the proposed page opens on one window, and AC, PL and PY under its slicer cover the same months", () => {
+  const files = tree(out1);
+  const slicer = JSON.parse(files["Sales.Report/definition/pages/p1/visuals/periodSlicer/visual.json"].toString("utf8"));
+  assert.strictEqual(slicer.visual.visualType, "slicer");
+  const f = slicer.visual.objects.general[0].properties.filter.filter;      // double-nested
+  assert.strictEqual(f.From[0].Entity, "Calendar");
+  assert.strictEqual(f.Where[0].Condition.In.Expressions[0].Column.Property, "YearMonth");
+  const months = f.Where[0].Condition.In.Values.map((v) => v[0].Literal.Value.replace(/'/g, ""));
+  assert.deepStrictEqual(months, ["2025-01", "2025-02", "2025-03", "2025-04", "2025-05", "2025-06"]);
+  assert.deepStrictEqual(r1.period.months, months);
+  // Evaluate the three measures' definitions under that selection, over the rows as written.
+  const text = files["Sales.SemanticModel/definition/tables/sales.tmdl"].toString("utf8");
+  const rows = text.split("\n").filter((l) => /^\t+\{\d{4}, /.test(l)).map((l) => l.trim().replace(/,$/, "").slice(1, -1).split(", "));
+  const mon = (r) => `${r[0]}-${String(r[1]).padStart(2, "0")}`;
+  const back = (m) => `${Number(m.slice(0, 4)) - 1}${m.slice(4)}`;
+  const sum = (pred) => rows.filter(pred).reduce((s, r) => s + Number(r[6]), 0);
+  const inW = new Set(months);
+  const ac = sum((r) => r[5] === "\"Actual\"" && inW.has(mon(r)));
+  const pl = sum((r) => r[5] === "\"Budget\"" && inW.has(mon(r)));
+  const py = sum((r) => r[5] === "\"Actual\"" && inW.has(`${Number(r[0]) + 1}-${String(r[1]).padStart(2, "0")}`));
+  // The same three straight from the fixture.
+  const src = longRows().slice(1);
+  const exp = (s, inMonths) => src.filter((r) => r[3] === s && inMonths.includes(r[0].slice(0, 7))).reduce((t, r) => t + Number(r[4]), 0);
+  assert.strictEqual(ac, exp("Actual", months));
+  assert.strictEqual(pl, exp("Budget", months));
+  assert.strictEqual(py, exp("Actual", months.map(back)));
+  // Like with like: every scenario has rows in every month of the window.
+  for (const m of months) {
+    assert.ok(rows.some((r) => r[5] === "\"Actual\"" && mon(r) === m), `no AC in ${m}`);
+    assert.ok(rows.some((r) => r[5] === "\"Budget\"" && mon(r) === m), `no PL in ${m}`);
+    assert.ok(rows.some((r) => r[5] === "\"Actual\"" && mon(r) === back(m)), `no PY for ${m}`);
+  }
+  assert.ok(ac > 0 && pl > 0 && py > 0 && ac !== py, `ac ${ac} pl ${pl} py ${py}`);
+  assert.ok(r1.assumptions.some((a) => /^Period: each proposed page opens on Jan 2025 to Jun 2025 .* PL and PY are read over the same months/.test(a)), r1.assumptions.join(" | "));
+  const table = JSON.parse(files["Sales.Report/definition/pages/p1/visuals/p1Table/visual.json"].toString("utf8"));
+  assert.ok(/Jan 2025 to Jun 2025'$/.test(table.visual.objects.titleSettings[0].properties.text.expr.Literal.Value), "title");
+  assert.ok(!r1.validation.findings.some((x) => x.code === "page-filter-hardcodes-the-period" || x.code === "slicer-filter-double-nested"), JSON.stringify(r1.validation.findings));
+});
+
+check("a plan that does not cover the whole window is stated as a limitation", () => {
+  const rows = longRows().filter((r, i) => i === 0 || !(r[3] === "Budget" && r[0] >= "2025-04"));
+  const r = write({ name: "Short", outPath: target(), source: { path: bed({ "sales.csv": csv(rows) }) }, pages: "propose" });
+  assert.ok(r.assumptions.some((a) => a === "Period: PL has no rows for 2025-04, 2025-05, 2025-06, so those months compare against nothing."), r.assumptions.join(" | "));
+});
+
 check("publicCustomVisuals equals the set of custom visual types on the pages", () => {
   const files = tree(out1);
   const report = JSON.parse(files["Sales.Report/definition/report.json"].toString("utf8"));
   const types = new Set(Object.entries(files).filter(([k]) => k.endsWith("/visual.json"))
-    .map(([, b]) => JSON.parse(b.toString("utf8")).visual.visualType));
+    .map(([, b]) => JSON.parse(b.toString("utf8")).visual.visualType).filter(project.isCustomVisualType));
   assert.deepStrictEqual(report.publicCustomVisuals, [...types].sort());
   assert.strictEqual(report.themeCollection.baseTheme.type, "SharedResources");
   assert.strictEqual(typeof report.themeCollection.baseTheme.reportVersionAtImport, "object");
@@ -454,7 +499,7 @@ check("long form with keyed scenarios is read through the scenario table", () =>
   assert.ok(r.model.relationships.some((x) => /FactLedger\[AccountKey\] -> DimAccount\[AccountKey\]/.test(x)));
   // A star: the fact holds only keys, so the page is cut by the related dimension's column, never by
   // the scenario table's.
-  const v = Object.entries(tree(out)).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8")));
+  const v = Object.entries(tree(out)).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8"))).filter((x) => x.visual.visualType !== "slicer");
   assert.ok(v.length >= 1, `no page proposed: ${r.assumptions.join(" | ")}`);
   const cats = v.map((x) => x.visual.query.queryState.Category.projections[0].field.Column);
   assert.ok(cats.some((c) => c.Expression.SourceRef.Entity === "DimAccount" && c.Property === "AccountName"), JSON.stringify(cats));
@@ -496,7 +541,7 @@ check("an order column on the category's table sorts the proposed statement in t
   const t = T.parseTree(files["PL.SemanticModel/definition/tables/pl.tmdl"].toString("utf8"));
   const line = t.nodes.find((n) => n.type === "column" && n.name === "Line");
   assert.strictEqual(T.propValue(line, "sortByColumn"), "LineNo");
-  const vis = Object.entries(files).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8")));
+  const vis = Object.entries(files).filter(([k]) => k.endsWith("/visual.json")).map(([, b]) => JSON.parse(b.toString("utf8"))).filter((x) => x.visual.visualType !== "slicer");
   const onLine = vis.find((x) => x.visual.query.queryState.Category.projections[0].field.Column.Property === "Line");
   assert.ok(onLine, "no page by Line");
   const s = onLine.visual.objects.sortSettings[0].properties;

@@ -1019,6 +1019,105 @@ function proposeSpec(model, fact, metrics, sc, rels, assumptions) {
   return { spec: r.spec, rationale: r.rationale };
 }
 
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const ym = (iso) => iso.slice(0, 7);
+const shiftMonths = (m, k) => { const [y, mo] = m.split("-").map(Number); const t = y * 12 + (mo - 1) + k; return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`; };
+
+/**
+ * The reporting window of a proposed page: from the start of the latest year that has actuals (the
+ * fiscal year when one is set) to the last month with actuals. All scenarios on the page are then
+ * read over the same months; previous year is the same months a year earlier. Returns the months,
+ * a label, and a line for each bound comparison that does not cover the whole window.
+ */
+function reportingWindow(fact, sc, dateCol, fiscalStart, bound) {
+  const di = dateCol.index;
+  const monthsWhere = (pred) => new Set(fact.rows.filter(pred)
+    .map((r) => String(r[di] || "").trim()).filter((v) => !isBlank(v)).map((v) => ym(ps.toIsoDate(v, dateCol.dayFirst))));
+  const val = (r, c) => String(r[c.index] === undefined ? "" : r[c.index]).trim();
+  const memberOf = {};
+  if (sc.form === "long") for (const [v, code] of Object.entries(sc.members)) memberOf[code] = v;
+  const covers = (code) => {
+    if (sc.form === "long") return memberOf[code] === undefined ? null : monthsWhere((r) => val(r, sc.column) === memberOf[code]);
+    if (sc.form === "wide") return sc.columns[code] ? monthsWhere((r) => !isBlank(val(r, sc.columns[code]))) : null;
+    return code === "AC" ? monthsWhere(() => true) : null;
+  };
+  const ac = covers("AC");
+  if (!ac || !ac.size) return null;
+  const actualDates = fact.rows.filter((r) => sc.form !== "long" || val(r, sc.column) === memberOf.AC)
+    .map((r) => String(r[di] || "").trim()).filter((v) => !isBlank(v)).map((v) => ps.toIsoDate(v, dateCol.dayFirst)).sort();
+  const lastDate = actualDates[actualDates.length - 1];
+  const last = ym(lastDate);
+  const [ly, lm] = last.split("-").map(Number);
+  const startYear = lm >= fiscalStart ? ly : ly - 1;
+  const start = `${startYear}-${String(fiscalStart).padStart(2, "0")}`;
+  const months = [];
+  for (let m = start; m <= last; m = shiftMonths(m, 1)) months.push(m);
+  const limits = [];
+  for (const role of bound) {
+    let have;
+    if (role === "PY" && sc.py === "timeIntelligence") have = new Set([...ac].map((m) => shiftMonths(m, 12)));
+    else have = covers(role);
+    if (!have) continue;
+    const missing = months.filter((m) => !have.has(m));
+    if (missing.length) limits.push(`${role} has no rows for ${missing.join(", ")}${role === "PY" ? " (a year earlier)" : ""}, so those months compare against nothing`);
+  }
+  const monthStartsOnly = actualDates.every((d) => d.endsWith("-01"));
+  const lastDay = new Date(Date.UTC(ly, lm, 0)).getUTCDate();
+  if (!monthStartsOnly && Number(lastDate.slice(8, 10)) < lastDay) {
+    limits.push(`the actuals stop on ${lastDate}, so ${last} is a part month; previous year follows the same days through the calendar, plan does not`);
+  }
+  const name = (m) => `${MONTH_NAMES[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
+  const label = months.length === 1 ? name(months[0]) : `${name(months[0])} to ${name(months[months.length - 1])}`;
+  return { months, label, limits, fiscal: fiscalStart !== 1 };
+}
+
+/** A native slicer on the calendar's YearMonth, preset to the window, in the double-nested form. */
+function windowSlicer(window) {
+  return {
+    name: "periodSlicer", visualType: "slicer",
+    position: { x: 16, y: 16, z: 2000, width: 260, height: 64, tabOrder: 0 },
+    bindings: { Values: [{ entity: CALENDAR, property: "YearMonth", kind: "Column" }] },
+    properties: {
+      "data.mode": "Dropdown", "data.textSize": 10, "general.orientation": 0, "slicerHeader.show": true,
+      "general.filter": { __raw: { filter: {
+        Version: 2,
+        From: [{ Name: "c", Entity: CALENDAR, Type: 0 }],
+        Where: [{ Condition: { In: {
+          Expressions: [{ Column: { Expression: { SourceRef: { Source: "c" } }, Property: "YearMonth" } }],
+          Values: window.months.map((m) => [{ Literal: { Value: `'${m}'` } }]),
+        } } }],
+      } } },
+    },
+    visualContainerObjects: { "title.show": false },
+  };
+}
+
+/** Adds the period slicer to every proposed page and names the window in each table's title. */
+function applyReportingWindow(spec, fact, sc, dateInfo, fiscalStart, assumptions) {
+  if (!dateInfo) return null;
+  const roles = new Set();
+  for (const p of spec.pages || []) for (const v of p.visuals || []) {
+    if (v.bindings && v.bindings.Plan) roles.add("PL");
+    if (v.bindings && v.bindings.PreviousYear) roles.add("PY");
+    if (v.bindings && v.bindings.Forecast) roles.add("FC");
+  }
+  const w = reportingWindow(fact, sc, dateInfo.col, fiscalStart, [...roles]);
+  if (!w) return null;
+  for (const p of spec.pages || []) {
+    for (const v of p.visuals || []) {
+      if (v.position) { v.position = { ...v.position, y: 96, height: 608 }; }
+      if (v.properties && typeof v.properties["titleSettings.text"] === "string") {
+        v.properties["titleSettings.text"] = `${v.properties["titleSettings.text"]}, ${w.label}`;
+      }
+    }
+    p.visuals = [windowSlicer(w), ...(p.visuals || [])];
+  }
+  assumptions.push(`Period: each proposed page opens on ${w.label} (${w.fiscal ? "fiscal" : "calendar"} year to date, ending with the last month that has actuals), set as the default of a slicer on ${CALENDAR}[YearMonth] that the reader can change; ${[...roles].length ? `${[...roles].join(" and ")} ${[...roles].length > 1 ? "are" : "is"} read over the same months` : "no comparison is bound"}. With nothing selected the page would add up every year in the data.`);
+  for (const l of w.limits) assumptions.push(`Period: ${l}.`);
+  assumptions.push(`Period: the table titles name ${w.label}; a title does not follow the slicer when the reader changes it, and Tables+ may draw its own automatic title instead (see warnings), so the slicer is where the window shows for certain.`);
+  return w;
+}
+
 /** A column that gives the order of the rows of a statement: Sort, Order, LineNo, AccountSort. */
 const ORDER_LAST_WORDS = new Set(["sort", "order", "ordinal", "sequence", "seq", "position"]);
 function isOrderName(name) {
@@ -1371,6 +1470,7 @@ function writeProject(args = {}, deps = {}) {
   }
   let spec;
   let rationale;
+  let reportWindow = null;
   if (args.pages === undefined) {
     spec = { pages: [{ name: "p1", displayName: "Page 1" }] };
     assumptions.push("Pages: one empty page, so the project opens. Pass pages as a write_report spec, or \"propose\".");
@@ -1384,6 +1484,7 @@ function writeProject(args = {}, deps = {}) {
       rationale = p.rationale;
       // A sortByColumn changes the category's table file, which is rebuilt before anything is written.
       for (const m of applyStatementOrder(spec, models, assumptions)) modelFiles[m.fileRel] = tableText(m, m.lay, { lineBreaks: 0 });
+      reportWindow = applyReportingWindow(spec, fact, sc, dateInfo, fiscalStart, assumptions);
     }
   } else {
     spec = args.pages;
@@ -1458,6 +1559,7 @@ function writeProject(args = {}, deps = {}) {
       ...src.notes, ...assumptions],
     skipped: src.skipped,
     ...(rationale ? { pageRationale: rationale } : {}),
+    ...(reportWindow ? { period: { field: `${CALENDAR}[YearMonth]`, months: reportWindow.months, label: reportWindow.label } } : {}),
     ...(rep.warnings ? { warnings: rep.warnings } : {}),
     validation: {
       rulesRun: v.ok ? v.rulesRun : 0,
