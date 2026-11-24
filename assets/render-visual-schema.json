@@ -34,13 +34,13 @@
    "type": "string"
   },
   "category_columns": {
-   "description": "Category column(s). One column, or two for a hierarchy (parent first). A time axis cannot be part of a hierarchy.",
+   "description": "Category column(s). One column, or up to 5 for a hierarchy (parent first, e.g. Region, Country, City). A time axis cannot be part of a hierarchy. Use more than one column ONLY for a parent-child hierarchy, where every child value belongs to exactly one parent (e.g. Country > City). For two independent dimensions, whose values repeat under each other (e.g. Region and Channel), put the one with fewer values in group_columns (groups) instead.",
    "items": {
     "maxLength": 100,
     "minLength": 1,
     "type": "string"
    },
-   "maxItems": 2,
+   "maxItems": 5,
    "minItems": 1,
    "type": "array"
   },
@@ -63,6 +63,24 @@
    ],
    "default": null,
    "description": "Set when the category column is a time period, so it is drawn as a chart: year for integer years (2025), semester for half-years (H1 or 2025-H1), quarter for quarters (Q1 or 2025-Q1), month for month names (Jan or January), yearmonth for YYYY-MM (2025-01), date for days as YYYY-MM-DD (2025-01-31). Send the rows in time order. Leave it out for any other category."
+  },
+  "group_columns": {
+   "anyOf": [
+    {
+     "items": {
+      "maxLength": 100,
+      "minLength": 1,
+      "type": "string"
+     },
+     "maxItems": 2,
+     "type": "array"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "description": "Optional column(s) that split the visual by a second dimension. On a chart (a time_axis category) each group value gets its own small chart, and two columns give a grid (first = rows, second = columns); in a table each group value gets its own columns with a total. Send one row per category and group combination. Use a time period as a group only without time_axis. About 6 groups read well."
   },
   "measure": {
    "additionalProperties": false,
@@ -143,9 +161,27 @@
    ],
    "type": "object"
   },
+  "additional_measures": {
+   "anyOf": [
+    {
+     "items": {
+      "maxLength": 100,
+      "minLength": 1,
+      "type": "string"
+     },
+     "maxItems": 20,
+     "type": "array"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "description": "Optional columns of further measures to show next to the measure, e.g. Units or Margin %. Each is labelled with its column name and shows actuals only. A table shows every one as its own column; a chart shows only the first, as a second series."
+  },
   "negative_impact": {
    "default": false,
-   "description": "True when an increase is bad, e.g. costs or expenses. Flips the variance colours.",
+   "description": "True when an increase of the measure is bad, e.g. costs or expenses. Flips the variance colours.",
    "type": "boolean"
   },
   "sort_by": {
@@ -227,6 +263,39 @@
    "minItems": 1,
    "type": "array",
    "maxItems": 10000
+  },
+  "totals": {
+   "anyOf": [
+    {
+     "type": "array",
+     "maxItems": 10000,
+     "items": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+       "anyOf": [
+        {
+         "type": "number",
+         "minimum": -1e+18,
+         "maximum": 1e+18
+        },
+        {
+         "type": "string",
+         "maxLength": 200
+        },
+        {
+         "type": "null"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "description": "Optional totals, computed from the source data, for measures whose totals are not the sum of their rows: ratios such as Margin %, averages, and stock values such as headcount or balances. Leave it out when every measure sums, like revenue, costs or units; those totals are summed from the rows automatically. One row per total in the order of columns, with null in each category or group column the total spans: with category columns Region, Country, [Europe, null, ...] is the Europe total and [null, null, ...] the grand total. Fill the measure columns that don't sum and leave the others null. A measure column with totals needs one for the grand total and every parent category; with group_columns also for every group total, i.e. every combination of rows with nulls at the end of the category columns, the group columns, or both."
   }
  },
  "required": [
