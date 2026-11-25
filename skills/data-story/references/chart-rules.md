@@ -9,9 +9,9 @@
 | --- | --- | --- |
 | A time period, with `time_axis` set | a chart (columns, variance pins/bars) | trend, period against previous period or plan |
 | Anything else | a table with inline charts, one row per member | comparing regions, products, segments |
-| Two columns, parent first (not time) | a collapsible two-level table | category > sub-category |
+| Two to five columns, parent first (not time) | a collapsible table, one level per column | category > sub-category |
 
-`time_axis` names the period type and the format to send: `year` (2025), `semester` (2025-H1), `quarter` (2025-Q1), `month` (Jan), `yearmonth` (2025-01) or `date` (2025-01-31). Send the rows in time order. Prefer `yearmonth` once the year is known, so months of two years never merge. Without `time_axis` a time column is drawn as a table. A time column can never be part of a two-level hierarchy, and `sort_by` is ignored on a time axis.
+`time_axis` names the period type and the format to send: `year` (2025), `semester` (2025-H1), `quarter` (2025-Q1), `month` (Jan), `yearmonth` (2025-01) or `date` (2025-01-31). Send the rows in time order. Prefer `yearmonth` once the year is known, so months of two years never merge. Without `time_axis` a time column is drawn as a table. A column with `time_axis` can never be part of a hierarchy, and `sort_by` is ignored on a time axis and on line and area charts.
 
 The tool's own description and the `chart-from-data` skill carry the same rules; where they differ, the tool wins.
 
@@ -31,13 +31,16 @@ The tool's own description and the `chart-from-data` skill carry the same rules;
 - One column per scenario: `Val` = actuals (AC), `PY` previous year, `PM` previous month (never both PY and PM), `PL` plan or budget, `FC` forecast.
 - `negative_impact: true` for costs, expenses, churn, defects: an increase is then red.
 - `measure.name` is the reader's word: "Sales", "Revenue", "Signups".
+- `additional_measures` lists further columns to show next to the measure (Units, Margin %), actuals only. A table shows each one, a chart only the first.
 
 ## Data shape
 
-- Aggregate first: one row per category, or per parent/child pair. Duplicate combinations are rejected.
+- Aggregate first: one row per category, or per combination of a hierarchy's levels, and per group when `group_columns` is set. Duplicate combinations are rejected.
+- A hierarchy is parent and child only: every child belongs to one parent (Country > City). For two independent dimensions (Region and Channel), keep one as the category and put the one with fewer values in `group_columns`: a chart becomes small multiples, a table gets a column group per value. About six groups read well.
+- Totals are summed from the rows. For a ratio, an average or a stock value (Margin %, average price, headcount, balance), compute the totals from the source data and send them in `totals`; its description in the tool gives the format.
 - `columns` lists every column in row order; `rows` is at most 10,000 rows of 50 columns.
 - Numbers as numbers, not strings; nulls allowed for missing scenarios.
-- Keep a table to about 20 members. Group the tail into "Other" when there are more.
+- Keep a table to about 20 members. Group the tail into "Other" when there are more. For a ratio, an average or a stock value, compute the Other row from the source data.
 
 ## Labels (IBCS title elements)
 

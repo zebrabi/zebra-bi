@@ -14,11 +14,14 @@ Before the first chart in a conversation, say in one line that its labels and ag
 
 ## Shape the data
 
-1. Aggregate first. Send one row per category, or one row per category pair for a two-level hierarchy with the parent column first. Duplicate category combinations are rejected.
+1. Aggregate first. Send one row per category, or per combination of categories for a hierarchy of up to five columns, parent first. Use more than one category column only when every child belongs to exactly one parent, such as Country and City. For two independent dimensions, such as Region and Channel, put the one with fewer values in `group_columns` (step 7). Duplicate combinations are rejected.
 2. Send `columns` plus `rows`, with each scenario in its own column. Every row lists its values in the order of `columns`.
 3. Map the scenario columns in `measure`. `Val` is actuals and is required. Add `PY` for previous year or `PM` for previous month (one of them, not both), `PL` for plan or budget, and `FC` for forecast. What each one means: [references/scenarios.md](references/scenarios.md).
 4. When the category is a time period, set `time_axis` and send the rows in time order. Its description in the tool lists each period and the format to send. Months read best when the question allows it.
 5. Set `negative_impact` to `true` for costs and expenses, so an increase shows as bad.
+6. Totals are summed from the rows. That is wrong for a ratio, an average or a stock value, such as Margin %, an average price, headcount or a balance. For such a measure, compute the totals from the source data and send them in `totals`. Its description in the tool gives the row format and which totals to send. Leave `totals` out when every measure sums.
+7. To compare the same view across a few values of another dimension, such as regions or years, set `group_columns` and send one row per category and group. A chart becomes small multiples, and a table gets a column group per value. About six groups read well. Use a time period as a group only when the category has no `time_axis`.
+8. To show further measures next to the main one, such as units next to revenue, list their columns in `additional_measures`. They show actuals only. A table shows each one, a chart only the first.
 
 ## Pick the chart
 
@@ -63,7 +66,7 @@ Monthly sales against last year and plan:
 When an answer needs two or more charts, such as revenue by month next to revenue by region, or the user asks for a dashboard, draw them together with one `render_dashboard` call instead of one `render_visual` call per chart. Charts called separately land together, and some apps then show only one of them.
 
 - `title`: the reporting unit and period ("Sales · Q1 2026").
-- `visuals`: 2 to 6, in reading order, the overview first. Each takes the `render_visual` arguments above plus `width`, columns of a 12-column grid. Two visuals a row (6 each) read best. Give the whole row (12) to a chart with many periods, small multiples, and a table with `additional_measures` or `group_columns`.
+- `visuals`: 2 to 6 (2 to 4 read best), in reading order, the overview first. Each takes the `render_visual` arguments above plus `width`, columns of a 12-column grid, from 3 to 12. Make the widths in each row sum to 12: a row that falls short is left with a gap. Two a row (6 each) is the default. Give the whole row (12) to a chart with many periods, small multiples, and a table with `additional_measures` or `group_columns`. Use a width of 4 (three a row) only for simple charts with few categories.
 - The dashboard is drawn whole or not at all. When the result says it was not drawn, fix the visuals it names and send all of them again.
 - Without a `render_dashboard` tool (an older Zebra BI MCP), call `render_visual` once per chart, one at a time, waiting for each before the next.
 
