@@ -166,6 +166,14 @@ check("a JSON array of records is read like a table", () => {
   assert.strictEqual(r.files[0].columns.find((c) => c.name === "Series").distinct, 2);
 });
 
+check("a day past the end of its month is not a date", () => {
+  for (const bad of ["2024-02-30", "2023-02-29", "2024-04-31", "2024/06/31"]) assert.strictEqual(ps.toIsoDate(bad, false), null, bad);
+  assert.strictEqual(ps.toIsoDate("31/02/2024", true), null);
+  assert.strictEqual(ps.toIsoDate("2024-02-29", false), "2024-02-29");
+  assert.strictEqual(ps.toIsoDate("29/02/2024", true), "2024-02-29");
+  assert.strictEqual(ps.toIsoDate("2025-12-31", false), "2025-12-31");
+});
+
 check("column types: date, dateKey, integer, number, text", () => {
   const f = full.files.find((x) => x.table === "FactFinance");
   const t = Object.fromEntries(f.columns.map((c) => [c.name, c.type]));
@@ -412,6 +420,82 @@ check("a single file that is not a data file is refused, a CSV beside it is read
     assert.ok(!JSON.stringify(out).includes(secret), `${n} leaked its content`);
   }
   assert.strictEqual(ps.profileSource({ path: path.join(dir, "sales.csv") }).ok, true);
+});
+
+// --- wide scenarios: actual and comparison figures as separate numeric columns ---------------------
+// Invented data. The reported shape was `CostCentre, Sort, Actual, Plan`, which the profiler read as
+// a dimension with "no scenario column", so the brief said a variance needs a benchmark.
+
+const wideOf = (files) => ps.profileSource({ path: bed(files) });
+const WIDE_TWO = "CostCentre,Sort,Actual,Plan\nStaff,1,620,600\nTravel,2,830,510\nMarketing,3,450,490\nIT,4,500,480\n";
+
+check("wide: Actual and Plan as two numeric columns are a comparison, not a gap", () => {
+  const r = wideOf({ "costs.csv": WIDE_TWO });
+  assert.strictEqual(r.ok, true, r.error);
+  assert.ok(r.wideScenarios, "no wide-scenario signal");
+  const roles = Object.fromEntries(r.wideScenarios.columns.map((c) => [c.column, c.scenario]));
+  assert.deepStrictEqual(roles, { Actual: "actual", Plan: "plan" });
+  assert.deepStrictEqual(r.wideScenarios.pairs.map((p) => [p.actual, p.against.map((a) => a.column)]), [["Actual", ["Plan"]]]);
+  const cmp = r.analystBrief.find((b) => /^Comparison:/.test(b));
+  assert.ok(/wide form/.test(cmp) && /Actual is AC/.test(cmp) && /Plan is PL/.test(cmp), cmp);
+  assert.ok(!/no scenario column and under two years|a variance needs a benchmark/.test(cmp), cmp);
+  assert.ok(!r.gaps.some((g) => /NO COMPARATIVE/.test(g)), JSON.stringify(r.gaps));
+  assert.strictEqual(r.scenarios, null, "the long-form signal was reshaped");
+  // Still no date column, and with no previous-year column the line keeps saying so.
+  assert.ok(r.gaps.some((g) => /NO DATE COLUMN.*PY and YTD are unavailable/.test(g)), JSON.stringify(r.gaps));
+});
+
+check("wide: columns that share a measure stem pair up (Sales AC with Sales PL, Sales PY with Sales AC)", () => {
+  const r = wideOf({ "p.csv": "Region,Sales AC,Sales PL,Sales PY,Units AC,Units PL\nN,100,90,80,10,12\nS,120,130,110,14,13\nE,90,95,85,9,9\n" });
+  const w = r.wideScenarios;
+  assert.ok(w, "no wide-scenario signal");
+  const byStem = Object.fromEntries(w.pairs.map((p) => [p.measure, p]));
+  assert.deepStrictEqual(Object.keys(byStem).sort(), ["sales", "units"]);
+  assert.strictEqual(byStem.sales.actual, "Sales AC");
+  assert.deepStrictEqual(byStem.sales.against.map((a) => [a.scenario, a.column]), [["plan", "Sales PL"], ["previousYear", "Sales PY"]]);
+  assert.deepStrictEqual(byStem.units.against.map((a) => a.column), ["Units PL"], "Units was paired with Sales columns");
+  const cmp = r.analystBrief.find((b) => /^Comparison:/.test(b));
+  assert.ok(/Sales AC vs Sales PL and Sales PY/.test(cmp), cmp);
+});
+
+check("wide: the plain measure beside its scenario columns is the actual; a bare Forecast stays unpaired", () => {
+  const r = wideOf({ "p.csv": "Product,Revenue,Revenue Budget,Forecast\nA,100,90,95\nB,50,60,55\nC,70,70,72\n" });
+  const w = r.wideScenarios;
+  assert.ok(w, "no wide-scenario signal");
+  const rev = w.columns.find((c) => c.column === "Revenue");
+  assert.ok(rev && rev.scenario === "actual" && rev.implied === true, JSON.stringify(w.columns));
+  assert.ok(w.columns.some((c) => c.column === "Forecast" && c.scenario === "forecast"));
+  assert.deepStrictEqual(w.pairs.map((p) => [p.actual, p.against.map((a) => a.column)]), [["Revenue", ["Revenue Budget"]]]);
+});
+
+check("wide: a previous-year column changes the no-date gap; the long form is untouched", () => {
+  const r = wideOf({ "p.csv": "Region,Sales AC,Sales PY\nN,100,80\nS,120,110\n" });
+  assert.ok(r.wideScenarios);
+  assert.ok(r.gaps.some((g) => /NO DATE COLUMN.*YTD is unavailable and PY comes only from the previous-year column/.test(g)), JSON.stringify(r.gaps));
+});
+
+check("wide, false friends: Planet, Actuality, Budget Holder, Plan Variance and a lone Actual match nothing", () => {
+  assert.strictEqual(wideOf({ "a.csv": "Name,Planet,Actuality,Count\nx,1,2,3\ny,4,5,6\n" }).wideScenarios, null);
+  assert.strictEqual(wideOf({ "b.csv": "Name,Actual,Planet\nx,1,2\ny,4,5\n" }).wideScenarios, null, "Actual alone is not a comparison");
+  assert.strictEqual(wideOf({ "c.csv": "Name,Actual,Plan Variance\nx,1,2\ny,4,5\n" }).wideScenarios, null, "a variance column is not the plan");
+  assert.strictEqual(wideOf({ "d.csv": "Name,Actual,Budget Holder\nx,1,2\ny,4,5\n" }).wideScenarios, null);
+  assert.strictEqual(wideOf({ "e.csv": "Name,Plan,Budget\nx,1,2\ny,4,5\n" }).wideScenarios, null, "two plans and no actual is not a comparison");
+  const r = wideOf({ "a.csv": "Name,Planet,Actuality,Count\nx,1,2,3\ny,4,5,6\n" });
+  assert.ok(r.analystBrief.some((b) => /no scenario column and under two years/.test(b)), "the no-comparison brief was lost");
+});
+
+check("wide: the long form is unchanged, and a file with both is read as the long form", () => {
+  assert.strictEqual(full.wideScenarios, null);
+  assert.strictEqual(clean.wideScenarios, null);
+  assert.ok(full.scenarios && full.scenarios.withRows.length >= 2, "the long form regressed");
+  const cmp = full.analystBrief.find((b) => /^Comparison:/.test(b));
+  assert.ok(/scenarios with rows are/.test(cmp) && !/wide form/.test(cmp), cmp);
+  // Long form plus numeric columns named for scenarios: the long-form brief still leads.
+  const rows = [];
+  for (let m = 1; m <= 12; m++) for (const sc of ["Actual", "Budget"]) rows.push(`2026-${pad(m)}-01,${sc},N,${m},${m + 1}`);
+  const both = wideOf({ "f.csv": "Date,Scenario,Region,Sales,Sales Budget"+"\n"+rows.join("\n")+"\n" });
+  assert.ok(both.scenarios, "long form not detected");
+  assert.ok(!both.analystBrief.some((b) => /wide form/.test(b)), JSON.stringify(both.analystBrief));
 });
 
 // --- report ---------------------------------------------------------------------------------

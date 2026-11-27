@@ -266,8 +266,9 @@ if ($issues.Count -eq 0) { "PRE-FLIGHT: PASS" } else { "PRE-FLIGHT: $($issues.Co
   `definition.pbism` and `.platform` are three lines each, they carry a pinned `$schema`, and there is
   no upside to writing one from memory. **Copy a working project's copy and change the path/name**
   (and re-stamp `.platform`'s `logicalId` so the copy has its own identity). Guessing a `$schema` by
-  analogy with the neighbouring files is exactly how the check above came to exist. When there is no
-  working project to copy, write the five files the writers don't write from `references/project-files.md`, exactly.
+  analogy with the neighbouring files is exactly how the check above came to exist. A new project from flat
+  files comes from `write_project`; to repair or extend an existing one, the five files are in
+  `references/project-files.md`, exactly.
 - **Never `Set-Content -Encoding utf8`** in PowerShell 5.1 — it writes a BOM. Use
   `[System.IO.File]::WriteAllText($p, $t, (New-Object System.Text.UTF8Encoding($false)))`.
 - **Assert the shape of GENERATED data before you write it.** Building DAX/JSON rows in a loop and

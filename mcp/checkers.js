@@ -16,6 +16,7 @@
 // Version-robust prefixes rather than full GUIDs, since the GUID carries a version suffix.
 const tmdl = require("./tmdl.js");
 const T = require("./tmdl-tree.js");
+const enc = require("./encoders.js");
 
 // Tables+ shares the Tables prefix, so it is covered by ZEBRA.tables. Charts+ does NOT
 // share the Charts prefix: certified Charts is `waterfall…` for historical reasons, while
@@ -27,12 +28,15 @@ const ZEBRA = {
   chartsPlus: "ZebraBICharts",
   cards: "zebraBiCards",
 };
-const isZebra = (t = "") => Object.values(ZEBRA).some((p) => t.startsWith(p));
-const isTable = (t = "") => t.startsWith(ZEBRA.tables);
-const isCards = (t = "") => t.startsWith(ZEBRA.cards);
+const isZebra = (t) => typeof t === "string" && Object.values(ZEBRA).some((p) => t.startsWith(p));
+const isTable = (t) => typeof t === "string" && t.startsWith(ZEBRA.tables);
+const isCards = (t) => typeof t === "string" && t.startsWith(ZEBRA.cards);
+// Charts (certified, `waterfall…`) and Charts+ (`ZebraBICharts…`) are the two Zebra visuals that draw a
+// category axis and take `chartSettings`.
+const isCharts = (t) => typeof t === "string" && (t.startsWith(ZEBRA.charts) || t.startsWith(ZEBRA.chartsPlus));
 // Tables+ and Charts+ are the two visuals whose GUID carries "Plus" after the product name. View-mode
 // comments exist only on them; the certified twins declare the same property and ignore it.
-const isPlus = (t = "") => /^ZebraBI(?:Tables|Charts)Plus/.test(t);
+const isPlus = (t) => typeof t === "string" && /^ZebraBI(?:Tables|Charts)Plus/.test(t);
 
 /** `visual.objects.<name>` is a list of one. Reach into the first entry's properties. */
 const obj = (v, name) => {
@@ -56,7 +60,11 @@ const blob = (p) => {
   if (!s) return null;
   try { return JSON.parse(s); } catch { return null; }
 };
-const projections = (v, role) => v?.visual?.query?.queryState?.[role]?.projections ?? [];
+// An array, always: a malformed file can hold anything where a list belongs, and a checker reports, never throws.
+const projections = (v, role) => {
+  const list = v?.visual?.query?.queryState?.[role]?.projections;
+  return Array.isArray(list) ? list : [];
+};
 
 /**
  * Which lines sit inside a ``` fenced body.
@@ -91,22 +99,28 @@ function fencedLines(text) {
  * Blank out everything in a TMDL file that is NOT executable DAX, line by line, returning an array
  * the same length as the input so line numbers still line up.
  *
- * Blanked: `///` descriptions (prose, and prose can quote DAX), `//` and `--` line comments, and
- * the CONTENTS of string literals. What remains is code.
+ * Blanked: `///` descriptions (prose, and prose can quote DAX), `//` and `--` line comments,
+ * `/* ... *\/` block comments (across lines), and the CONTENTS of string literals. What remains is code.
  *
  * ☠️ This is the guard the `//` rule learned the hard way -- matching DAX-shaped text anywhere in a
  * .tmdl file produced 207 false positives across 7 of the 20 shipped templates, because vendor
  * measures are full of commented-out DAX. Any new DAX rule must go through here.
  */
 function daxOnly(text) {
+  let inBlock = false;                                // inside /* ... */, which can span lines
   return text.split(/\r?\n/).map((line) => {
-    if (/^\s*\/\/\//.test(line)) return "";          // description: prose
+    if (!inBlock && /^\s*\/\/\//.test(line)) return "";   // description: prose
     let out = "";
     let inString = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
+      if (inBlock) {
+        if (ch === "*" && line[i + 1] === "/") { inBlock = false; i++; out += "  "; } else out += " ";
+        continue;
+      }
       if (ch === '"') { inString = !inString; out += '"'; continue; }
       if (inString) { out += " "; continue; }          // keep length, drop content
+      if (ch === "/" && line[i + 1] === "*") { inBlock = true; i++; out += "  "; continue; }
       if ((ch === "/" && line[i + 1] === "/") || (ch === "-" && line[i + 1] === "-")) break;
       out += ch;
     }
@@ -161,6 +175,59 @@ function partitionSources(src, lines) {
     }
   }
   return out;
+}
+
+/**
+ * The 0-based line indexes of a model source that hold M, not DAX: the `source` body of a partition
+ * written `= m`, and the body of a shared `expression`. A name such as `KPI` is an ordinary step or
+ * record in M (`KPI[Name]` is a field access there), so a DAX-name rule must not read those lines.
+ */
+function mLineSet(src) {
+  const skip = new Set();
+  if (!src.tree) return skip;
+  const mark = (owner) => {
+    const from = owner.line - 1;
+    const to = Math.max(owner.bodyEnd ?? 0, from + (owner.body ? owner.body.length : 0) + (owner.fenced ? 1 : 0));
+    for (let k = from; k <= to; k++) skip.add(k);
+  };
+  for (const n of src.tree.nodes) {
+    if (n.type === "expression") mark(n);
+    if (n.type !== "partition" || String(n.def || "").trim().toLowerCase() !== "m") continue;
+    for (const pr of n.props) if (pr.name.toLowerCase() === "source") mark(pr);
+  }
+  return skip;
+}
+
+/** The first `SourceRef.Entity` anywhere under a query expression, or null. */
+function entityOf(x) {
+  if (!x || typeof x !== "object") return null;
+  if (x.SourceRef && typeof x.SourceRef.Entity === "string") return x.SourceRef.Entity;
+  for (const k of Object.keys(x)) { const r = entityOf(x[k]); if (r) return r; }
+  return null;
+}
+
+/**
+ * Whether a query field is a point on a time axis, judged from the model: a column typed `dateTime`,
+ * any column of a table marked `dataCategory: Time` (a date table's Year, Quarter, Month, Day), or a
+ * level of Power BI's own `Date Hierarchy`. A column the model does not declare is not judged.
+ */
+function fieldIsTime(model, field) {
+  const tables = model.tables || [];
+  const tableOf = (name) => tables.find((t) => t.name.trim().toLowerCase() === String(name || "").trim().toLowerCase());
+  const marked = (t) => t && (t.dataCategory || "").trim() === "Time";
+  if (field && field.Column) {
+    const t = tableOf(entityOf(field.Column.Expression));
+    if (!t) return false;
+    if (marked(t)) return true;
+    const c = t.columns.find((x) => x.name.trim().toLowerCase() === String(field.Column.Property || "").trim().toLowerCase());
+    return Boolean(c) && /^datetime$/i.test((c.dataType || "").trim());
+  }
+  if (field && field.HierarchyLevel) {
+    const hl = field.HierarchyLevel;
+    if (hl.Expression?.Hierarchy?.Hierarchy === "Date Hierarchy" && /^(Year|Quarter|Month|Day)$/.test(hl.Level || "")) return true;
+    return marked(tableOf(entityOf(hl.Expression)));
+  }
+  return false;
 }
 
 /** A short rendering of a found value for a finding's detail: absent, number 0, string "5.59". */
@@ -605,17 +672,19 @@ const checkers = {
 
   /**
    * ---------------------------------------------------------------------------------------------
-   * THE FOUR DAX RULES. Read this before adding a fifth.
+   * THE DAX RULES. Read this before adding another.
    *
    * Everything from the first `=` onward is DAX, and this file has always treated it as opaque on
    * purpose: judging an expression needs the model's names and types, which no file check has.
-   * These four are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
+   * These are the exception because each is a HARD PARSE OR EVALUATION ERROR whose shape is
    * visible in the text alone. That matters for false positives: an expression that trips one of
    * these cannot work, so the rule cannot fire on a correct report -- which is the bar AGENTS.md
    * sets and the reason the wider "is this DAX sensible" rules were not written.
    *
    * The fourth is `datatable-rows-must-be-constants`, above: it reads a partition's `source`
-   * through `daxOnly()` and flags only DATE in a row.
+   * through `daxOnly()` and flags only DATE in a row. The fifth is `dax-kpi-table-must-be-quoted`,
+   * at the end of this object: the sibling of the Calculations rule for the one other word with
+   * field evidence, skipping lines of M.
    *
    * The three below are hard errors on Desktop 2.157 against a live model.
    * See feedback/2026-09-05-dax-layer-measured.md.
@@ -953,7 +1022,7 @@ const checkers = {
     };
     const out = [];
     for (const v of p.visuals) {
-      const prefix = Object.values(ZEBRA).find((z) => (v.visualType ?? "").startsWith(z));
+      const prefix = Object.values(ZEBRA).find((z) => typeof v.visualType === "string" && v.visualType.startsWith(z));
       if (!prefix) continue;
       for (const [role, cap] of Object.entries(MAX[prefix])) {
         const n = projections(v.parsed, role).length;
@@ -1209,6 +1278,28 @@ const checkers = {
         return sd.isDefaultSort !== true;
       })
       .map((v) => ({ location: `${v.rel}:visual.query.sortDefinition` }));
+  },
+
+  /**
+   * A table with computed rows sorted by a value column: the subtotals land among the lines they total.
+   *
+   * The predicate is `enc.computedRowsSortedByValue` and its comment states what counts and why.
+   * Measured over every Tables and Tables+ with `addedFormulas` in the 20 shipped templates and the
+   * working projects (31 tables): silent on all of them, because each writes `categorySort` 0 with
+   * `chartSort` 0, `columnName` only, or no sort at all. The branch that catches a `categorySort` 0
+   * with a value column and no `chartSort` rests on one Desktop render and is vacuous against the
+   * templates (all certified Tables, none omits `chartSort`): a single sighting, kept narrow.
+   */
+  "computed-rows-sorted-by-value"(p) {
+    const out = [];
+    for (const v of p.visuals) {
+      if (!isTable(v.visualType)) continue;
+      const cats = projections(v.parsed, "Category")
+        .flatMap((x) => [x?.field?.Column?.Property, x?.field?.Hierarchy?.Hierarchy, x?.field?.HierarchyLevel?.Level, x?.nativeQueryRef, x?.displayName]);
+      const hit = enc.computedRowsSortedByValue(v.parsed?.visual?.objects, cats);
+      if (hit) out.push({ location: `${v.rel}:sortSettings (${hit.computedRows} computed rows)` });
+    }
+    return out;
   },
 
   /** A handful of properties accept a value and change nothing at all. */
@@ -2106,6 +2197,318 @@ const checkers = {
         if (f.kind === "property-in-body") {
           const o = f.owner.kind === "prop" ? f.owner.owner : f.owner;
           out.push({ location: `${s.rel}:${f.line}`, detail: `'${f.property}:' sits inside the DAX body of ${o.type} '${o.name}' -- indent the body one level deeper than the properties` });
+        }
+      }
+    }
+    return out;
+  },
+
+  // --- rules added 22 Nov 2026, each from a field report ---
+  //
+  // Every one is gated on the exact shape in the report, and every one was run over the corpus of
+  // projects known to open (the 20 shipped templates and the agent-built projects that render) before
+  // it was kept.
+
+  /**
+   * `KPI` is a reserved word in DAX, like `Calculations`: a table named `KPI` loads, and every
+   * unquoted reference (`SELECTEDVALUE ( KPI[Name] )`) fails with "The syntax for 'KPI' is
+   * incorrect", which blanks every visual that uses the measure. `'KPI'[Name]` is fine.
+   *
+   * Only the evidenced word, only in the column-reference position `KPI[`, and only when the model
+   * declares such a table (a variable called kpi is never followed by a bracket). Lines of M (a partition written
+   * `= m`, a shared expression) are skipped: there `KPI[Name]` is a record field access. Read through
+   * `daxOnly`, so a comment or a string that says KPI[Name] is not code.
+   */
+  "dax-kpi-table-must-be-quoted"(p) {
+    if (!p.model || !p.model.present) return [];
+    const declares = (p.model.sources || []).some((s) => /^\s*table\s+'?KPI'?\s*$/im.test(s.text));
+    if (!declares) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      const lines = daxOnly(src.text);
+      const m = mLineSet(src);
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i] || m.has(i)) continue;
+        if (/(?<!['\w.])KPI\s*\[/i.test(lines[i])) {
+          out.push({ location: `${src.rel}:${i + 1}`, detail: "the table 'KPI' is referenced without quotes; write 'KPI'[Column]" });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * A Zebra BI visual type used on a page must be registered in `report.json`. A type that is not
+   * leaves the visual an unresolved placeholder, so the page draws without it. The AppSource visuals
+   * register as a bare GUID in `publicCustomVisuals`; a visual embedded in the report or minted by
+   * the organization's store registers through `resourcePackages` instead (and then
+   * `publicCustomVisuals` is correctly empty), so a type found there is registered too. The check is
+   * the exact type string, ignoring case. A report with no readable `report.json` is not judged.
+   *
+   * MEASURED 22 Nov 2026, why the registration is read from all three places: the first form of this
+   * rule, "listed in `publicCustomVisuals`" alone, fires on all 20 shipped templates, 17 of which
+   * leave `publicCustomVisuals` empty and register every Zebra BI visual through `resourcePackages`.
+   * Every one of them opens. With the three mechanisms read, the 20 templates and 69 further working
+   * projects give zero findings.
+   */
+  "zebra-visual-type-must-be-registered"(p) {
+    const r = p.files.get("definition/report.json");
+    if (!r || r.parseError || !r.parsed || typeof r.parsed !== "object") return [];
+    const listed = new Set((Array.isArray(r.parsed.publicCustomVisuals) ? r.parsed.publicCustomVisuals : [])
+      .filter((x) => typeof x === "string").map((x) => x.toLowerCase()));
+    const packaged = JSON.stringify([r.parsed.resourcePackages ?? null, r.parsed.organizationCustomVisuals ?? null]).toLowerCase();
+    const used = new Map();     // visualType -> how many visuals use it
+    for (const v of p.visuals) if (isZebra(v.visualType)) used.set(v.visualType, (used.get(v.visualType) || 0) + 1);
+    const missing = [...used].filter(([type]) => !listed.has(type.toLowerCase()) && !packaged.includes(type.toLowerCase()));
+    if (!missing.length) return [];
+    // One finding for the one fault, the registration list; the detail names every type it lacks.
+    return [{ location: "definition/report.json:publicCustomVisuals",
+      detail: `not registered: ${missing.map(([type, n]) => `'${type}' (${n} visual${n === 1 ? "" : "s"})`).join(", ")}; add each to publicCustomVisuals` }];
+  },
+
+  /**
+   * A textbox keeps its `paragraphs` in `visual.objects.general`. Written under
+   * `visualContainerObjects.general` (where the title, background and border live) it is a property
+   * the container schema does not declare, and Desktop refuses the visual: "An additional property
+   * 'paragraphs' was included". `textbox-height-below-font-floor` reads either place for its font
+   * sizes, so the two agree on where the paragraphs are; this one says which place is wrong.
+   */
+  "textbox-paragraphs-must-be-in-objects"(p) {
+    const out = [];
+    for (const v of p.visuals) {
+      if (v.visualType !== "textbox") continue;
+      const general = v.parsed?.visual?.visualContainerObjects?.general;
+      if (!Array.isArray(general)) continue;
+      general.forEach((e, i) => {
+        const props = e && typeof e === "object" ? e.properties : null;
+        if (props && typeof props === "object" && Object.prototype.hasOwnProperty.call(props, "paragraphs")) {
+          out.push({ location: `${v.rel}:visualContainerObjects.general[${i}].properties.paragraphs` });
+        }
+      });
+    }
+    return out;
+  },
+
+  /**
+   * Time runs along a Charts X axis. `chartSettings.showVerticalCharts: true` turns the chart on its
+   * side, which puts months or years down the page. Read from the model: the Category is a column typed
+   * `dateTime`, a column of a table marked `dataCategory: Time`, or a level of the `Date Hierarchy`.
+   * An account, product or region category (a ranking, a cash-flow bridge) is silent, and so is a
+   * report with no model to read. Only the first Category level is judged: in a drill hierarchy it
+   * is the level the chart opens on, so Account then Month is a ranking with a drill.
+   */
+  "charts-vertical-orientation-needs-a-non-time-category"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const v of p.visuals) {
+      if (!isCharts(v.visualType)) continue;
+      if (lit(obj(v.parsed, "chartSettings")?.showVerticalCharts) !== "true") continue;
+      const first = projections(v.parsed, "Category")[0];
+      const hit = first && typeof first === "object" && fieldIsTime(p.model, first.field) ? first : null;
+      if (hit) {
+        const f = hit.field.Column || hit.field.HierarchyLevel;
+        const what = hit.field.Column ? `${entityOf(f.Expression)}[${f.Property}]` : `${entityOf(f.Expression) || "Date Hierarchy"} ${f.Level}`;
+        out.push({ location: `${v.rel}:chartSettings.showVerticalCharts`, detail: `the Category ${what} is a time field` });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * A calculated table's expression is indented with tabs all the way down. Desktop refuses a body
+   * that starts tab-indented and then continues with space-indented lines (rows of a DATATABLE written
+   * with eight spaces under a tab-indented `source =`): "Invalid indentation was detected!" at the
+   * first such line. A file indented with spaces throughout is consistent and is not judged, and the
+   * rule reads only a partition written `= calculated`.
+   *
+   * The body is found by the characters of the leading whitespace, not by its width: a space-indented
+   * row can measure the same width as `source`, which is exactly why a width test would end the body
+   * before it.
+   */
+  "calculated-source-lines-must-be-tab-indented"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      if (!src.tree) continue;
+      const raw = src.text.split(/\r?\n/);
+      const lead = (l) => /^[\t ]*/.exec(l)[0];
+      for (const n of src.tree.nodes) {
+        if (n.type !== "partition" || String(n.def || "").trim().toLowerCase() !== "calculated") continue;
+        for (const pr of n.props) {
+          if (pr.delim !== "=" || pr.name.toLowerCase() !== "source") continue;
+          // A body between ``` fences is read verbatim, indentation included, so it is not judged.
+          if (pr.fenced) continue;
+          const i = pr.line - 1;
+          if (!lead(raw[i]).includes("\t") || lead(raw[i]).includes(" ")) continue;
+          const srcTabs = lead(raw[i]).length;
+          let started = false;
+          for (let j = i + 1; j < raw.length; j++) {
+            if (raw[j].trim() === "") continue;
+            const ws = lead(raw[j]);
+            if (ws.includes("\t")) {
+              // A line led by a tab is body while it is deeper than `source`; otherwise it is the
+              // next property or object. (A tab followed by alignment spaces still counts as tabs.)
+              if ((ws.match(/\t/g) || []).length <= srcTabs) break;
+              started = true;
+              continue;
+            }
+            if (ws.length === 0) break;                         // column 0: an object
+            if (ws.length < srcTabs * 4) break;                 // narrower than `source`: a property, not a row
+            if (!started) break;                                // the body did not start in tabs
+            out.push({ location: `${src.rel}:${j + 1}`,
+              detail: `a space-indented line follows tab-indented lines in the source of partition '${n.name}'; indent every line with tabs` });
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * `sortByColumn`, a hierarchy level's `column` and `groupByColumn` take the NAME of a column of the
+   * same table: bare (`MonthNumber`) or single-quoted when it needs quoting (`'Month Number'`, with
+   * `''` for a quote inside). A DAX-style reference, `'Calendar'[Month Number]` or
+   * `Calendar[Month Number]`, or a quote that is not a well-formed quoted name, is refused by the
+   * TMDL loader and the whole model does not load: "Parsing error type - InvalidName ...
+   * single-quote character in name must be escaped!". A dot outside quotes is not judged.
+   *
+   * Covered because the accepted form is stated in the reference and every one of the 369 uses in
+   * the corpus of real models (710 .tmdl files) is a bare or a quoted name. Relationship `fromColumn` and `toColumn`
+   * (which take `Table.Column`) are read by `tmdl-relationship-endpoints-must-resolve`, so they are
+   * not repeated here. Not covered: a variation's `relationship`, `defaultHierarchy` and
+   * `defaultColumn` (Desktop writes them on its own date tables and the reference says never author
+   * them), a calendar group's `primaryColumn` / `associatedColumn` / `column`, `alternateOf`'s
+   * `baseTable` / `baseColumn`, and a model's `defaultMeasure`: the corpus has no instance of those,
+   * so silence on it would prove nothing.
+   */
+  "tmdl-column-name-property-must-be-a-plain-name"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    // Returns why a value is not a plain (bare or well-formed quoted) name, or null.
+    const problem = (v) => {
+      let i = 0;
+      const n = v.length;
+      if (v[0] === "'") {
+        i = 1;
+        for (;;) {
+          if (i >= n) return "its quote is never closed";
+          if (v[i] === "'") { if (v[i + 1] === "'") { i += 2; continue; } break; }
+          i++;
+        }
+        const rest = v.slice(i + 1);
+        if (rest === "") return null;
+        return rest.startsWith("[") ? "it is a DAX reference, 'Table'[Column]" : "text follows the closing quote";
+      }
+      if (v[0] === "[") return "it is a bracketed reference, [Column]";
+      if (/[[\]]/.test(v)) return "it is a DAX reference, Table[Column]";
+      if (v.includes("'")) return "it holds a single quote that is not escaped";
+      return null;
+    };
+    const WHERE = { column: ["sortbycolumn"], level: ["column"], relatedcolumndetails: ["groupbycolumn"] };
+    for (const src of p.model.sources || []) {
+      if (!src.tree) continue;
+      for (const n of src.tree.nodes) {
+        const names = WHERE[n.type];
+        if (!names) continue;
+        for (const pr of n.props) {
+          if (!names.includes(pr.name.toLowerCase()) || pr.delim !== ":" || !pr.value) continue;
+          const why = problem(pr.value.trim());
+          if (why) out.push({ location: `${src.rel}:${pr.line}`, detail: `${pr.name}: ${pr.value.trim()} -- ${why}; write the column name alone` });
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * `chartSettings.calculations` on a Tables or Tables+ visual is read as ONE COMPARISON PAIR PER
+   * VARIANCE SLOT, by array position: each entry is split on `-` and only the first two parts are
+   * kept, and an entry that names a scenario that is not bound ends the loop. So
+   * `["actual-plan","actual-plan-percent","actual-previousYear","actual-previousYear-percent"]` draws
+   * the plan variance in slots 1 and 2 and never the previous-year variance, with no error. Read from
+   * the visual's own parser (certified Tables 8.3.0.37 and Tables+ 8.3.0.16 carry the same code).
+   *
+   * The slots are simulated by `tableComparisonSlots` in encoders.js, the one implementation the
+   * encoder, the writers and this rule share: slot k starts as (value scenario, k-th bound reference),
+   * the entries overwrite the slots they reach, and the rule fires when two DRAWN slots end up holding
+   * the same pair. That
+   * is the render-verified defect; an entry that merely carries a `-percent` tail but leaves every
+   * drawn slot distinct is not flagged, and neither is a `-percent` entry that lands past the drawn
+   * slots (a table with two scenarios draws one variance, so
+   * `["actual-previousYear","actual-previousYear-percent"]` is harmless there).
+   *
+   * The bound references come from the roles and their projection counts in the visual's own order
+   * (PreviousYear, then Plan and Forecast: Plan before Forecast when PreviousYear is bound, Forecast
+   * before Plan when it is not); a role with several projections adds plan2 / plan3 and
+   * forecast2 / forecast3, and no more: the visual names three measures per role, and a table with no
+   * Values bound takes its value scenario from Forecast, Previous year or Plan, as the visual's own role
+   * assignment does. A `calculations` value that is not a JSON array is not judged (the visual falls
+   * back to its defaults).
+   */
+  "tables-calculations-must-name-distinct-drawn-pairs"(p) {
+    const out = [];
+    for (const v of p.visuals) {
+      if (!isTable(v.visualType)) continue;
+      const calcs = blob(obj(v.parsed, "chartSettings")?.calculations);
+      if (!Array.isArray(calcs)) continue;
+      const roles = {};
+      for (const role of ["Values", "PreviousYear", "Plan", "Forecast"]) roles[role] = projections(v.parsed, role).length;
+      // One implementation of the visual's slot logic, shared with the encoder and the writers.
+      const sim = enc.tableComparisonSlots(roles, calcs);
+      if (!sim.repeats.length) continue;
+      out.push({ location: `${v.rel}:chartSettings.calculations`,
+        detail: `the variance slots draw ${sim.slots.map((s) => s.comparison).join(", ")}`
+          + (sim.missing.length ? `; ${sim.missing.join(", ")} is not drawn` : "") });
+    }
+    return out;
+  },
+
+  /**
+   * `definition.pbir` carries the PBIR `$schema` and `"version": "4.0"`. One build wrote
+   * `{ "version": "1.0", "datasetReference": ... }` with no `$schema` beside a report folder in the PBIR
+   * format (a `definition/` folder of JSON files), and Desktop opened an empty Page 1 with no dialog
+   * instead of its pages. What is known is the mismatch between the file and the folder, not the
+   * mechanism, so the finding says only that. A `$schema` that is present is `pbir-schema-url-invalid`'s;
+   * a missing `$schema` beside version 4.0 is NOT flagged (Desktop loaded those builds).
+   */
+  "pbir-version-must-match-the-pbir-folder-format"(p) {
+    if (!p.files.has("definition/report.json")) return [];
+    const out = [];
+    for (const f of p.pbirFiles || []) {
+      if (f.parseError || !f.parsed || typeof f.parsed !== "object") continue;
+      const v = f.parsed.version;
+      if (typeof v !== "string" && typeof v !== "number") continue;
+      if (typeof f.parsed.$schema === "string") continue;
+      const m = /^(\d+)/.exec(String(v).trim());
+      if (m && Number(m[1]) < 4) {
+        out.push({ location: `${f.rel}:version`,
+          detail: `version is ${JSON.stringify(v)} and there is no $schema, beside a report folder in the PBIR format; write the $schema and "version": "4.0"` });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * Every column a calculated table declares carries `sourceColumn: [Name]` (with `isNameInferred`).
+   * Desktop: "Column 'Year' in calculated table 'Financials' is missing the SourceColumn property".
+   * Judged on a `column` of a table whose partition is written `= calculated` and that has no `=` of
+   * its own: a column with an expression is a calculated COLUMN, which carries its DAX and no
+   * `sourceColumn`, and a column of an imported table is another rule's business.
+   */
+  "calculated-table-column-must-declare-sourcecolumn"(p) {
+    if (!p.model || !p.model.present) return [];
+    const out = [];
+    for (const src of p.model.sources || []) {
+      if (!src.tree) continue;
+      for (const t of src.tree.nodes) {
+        if (t.type !== "table") continue;
+        if (!t.children.some((c) => c.type === "partition" && String(c.def || "").trim().toLowerCase() === "calculated")) continue;
+        for (const c of t.children) {
+          if (c.type !== "column" || c.hasDefault) continue;
+          if (T.prop(c, "sourceColumn")) continue;
+          out.push({ location: `${src.rel}:${c.line}`,
+            detail: `column '${c.name}' of calculated table '${t.name}' has no sourceColumn; write sourceColumn: [${c.name}]` });
         }
       }
     }

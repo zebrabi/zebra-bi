@@ -15,7 +15,7 @@ them.
 | You use | Route | State |
 |---|---|---|
 | Claude Code (terminal, desktop app, VS Code or JetBrains) | **[1. Marketplace](#1-claude-code-marketplace)** | Works. This is the supported route |
-| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands, plus an optional one for the checker |
+| GitHub Copilot CLI | **[1b. Copilot CLI](#1b-github-copilot-cli)** | The same marketplace, two commands. Skills and the hosted server register; the checker is one more command |
 | Codex, Cursor, Gemini CLI, OpenCode, Kiro, or anything else that reads agent skills | **[2. Skills folder](#2-the-skills-folder-any-other-agent)** | The skills are plain Markdown and the checker is a plain stdio MCP server |
 | A machine with no git, or a locked-down build | **[3. Release zip](#3-release-zip-no-git)** | Same bytes, downloaded instead of cloned |
 
@@ -53,11 +53,50 @@ copilot plugin marketplace add zebrabi/zebra-bi
 copilot plugin install zebra-bi@zebrabi
 ```
 
-Then start GitHub Copilot CLI and ask for the skill by name: *"use the setup-doctor skill"*.
+That installs the 11 skills and registers `zebra-bi`, the hosted server that draws charts. Copilot
+CLI takes a plugin's servers from its `mcp.json` only, and that file lists the hosted server alone,
+so the checker and the writers are not in the agent's tool list until you register them. The next
+command does that, and it is optional: without it the skill tells the agent to call the same tools
+through `mcp/cli.js` (see below). It needs [Node.js](https://nodejs.org) on the PATH and points at the
+checker inside the installed plugin.
 
-The plugin install registers the hosted `zebra-bi` server and not the checker. Add the checker as
-`zebra-bi-reports` with `copilot mcp add`, using the `node …\mcp\server.js` command from route 2.
-We recommend it, but you can skip it.
+Windows, in PowerShell:
+
+```
+copilot mcp add zebra-bi-reports -- node "$HOME\.copilot\installed-plugins\zebrabi\zebra-bi\mcp\server.js"
+```
+
+macOS and Linux:
+
+```
+copilot mcp add zebra-bi-reports -- node "$HOME/.copilot/installed-plugins/zebrabi/zebra-bi/mcp/server.js"
+```
+
+If you set `COPILOT_HOME`, use that folder in place of `~/.copilot`. `copilot mcp list` then shows
+`zebra-bi-reports` under *User servers* and `zebra-bi` under *Plugin servers*, and `copilot skill
+list` shows the skills. The command stores the absolute path, so run it again if you move or
+reinstall the plugin under a different marketplace name.
+
+**Without that command.** The plugin carries a script front end to the same tools, so a host that
+does not register the local server still gets them. The skill names it to the agent when the tools
+are not in its list, and you can run it yourself:
+
+```
+node "$HOME/.copilot/installed-plugins/zebrabi/zebra-bi/mcp/cli.js" list
+node "$HOME/.copilot/installed-plugins/zebrabi/zebra-bi/mcp/cli.js" validate_report @args.json
+```
+
+`list` names every tool; `<tool> @args.json` calls one with its arguments from a JSON file and prints
+the tool's JSON result, exiting with a non-zero code when the tool reports an error. It runs the same
+code as the server, one call per process. What the registered server adds is the tool list and the
+host's per-call confirmation for the tools that write to disk.
+
+Then start Copilot and ask for the skill by name: *"use the setup-doctor skill"*.
+
+**What is verified:** on Windows with Copilot CLI 1.0.108 and 1.0.114 (2026-11-22), the install
+commands register the skills and the hosted server, the `copilot mcp add` command registers the
+checker, and a session calls its `validate_report` on a Power BI project. **What is not:** macOS and
+Linux. If you try either, tell us what happened.
 
 ## 2. The skills folder (any other agent)
 
@@ -85,7 +124,10 @@ Copy-Item -Recurse -Force .\skills\report-authoring, .\skills\report-publishing,
 That gives you `report-authoring`, `report-publishing` and `setup-doctor`. The agent reads them the
 way Claude Code does.
 
-**Half two: the checker.** Recommended, and it needs [Node.js](https://nodejs.org). The MCP server is
+**Half two: the checker.** Recommended, and it needs [Node.js](https://nodejs.org). Registering the
+server is optional: without it the skill tells the agent to call the tools through
+`node <this repo>\mcp\cli.js <tool> @args.json` (`list` names them). `install.ps1` copies the skills
+only, so give the agent the path of this repository for that script. The MCP server is
 a single stdio process with **no dependencies and nothing to install**: there is no `package.json`
 in this repository and no `npm install` step:
 
@@ -125,7 +167,7 @@ server does.
 ### Other hosts
 
 The server starts under Node 24 with no dependencies, answers MCP protocol `2025-06-18`, and lists
-its 18 tools. That is the interface every host on this route talks to. The skills are Markdown with no
+its 20 tools. That is the interface every host on this route talks to. The skills are Markdown with no
 Claude-specific syntax in the bodies. If your host does not load the skills or the checker,
 [open an issue](https://github.com/zebrabi/zebra-bi/issues/new/choose) telling us which host and
 what broke.

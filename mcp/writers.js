@@ -44,8 +44,11 @@
  * output tokens into input tokens. That is still most of the wall-clock win, because output tokens
  * are the expensive term, but the bytes do not vanish.
  *
- * Nothing here writes to disk. `validate_report` only reads, and a tool that silently writes into
- * a customer's project would be a different and much larger promise.
+ * Nothing here writes to disk: these writers return content for the agent host to save. Two tools
+ * write: write_project (project.js) creates a new project in a folder that does not exist or is
+ * empty, never overwrites or deletes a file, and returns the list of files it wrote; write_measures
+ * (measures.js) inserts measures into one existing table file, or replaces a measure of the same
+ * name when asked, keeps every other byte of that file, and returns the text it added.
  */
 
 const fs = require("fs");
@@ -103,6 +106,89 @@ const VISUAL_ALIASES = { ...INSTALLED, ...FILE_IMPORTED };
 // anything matching Zebra charts by "waterfall" misses every Charts+ visual in silence.
 const ZEBRA_PREFIXES = ["ZebraBITables", "ZebraBICharts", "waterfall", "zebraBiCards"];
 const isZebraType = (t = "") => ZEBRA_PREFIXES.some((p) => t.startsWith(p));
+// Page furniture: visual types a page is expected to carry beside its Zebra visuals. Writing one is
+// ordinary, so it is not warned about as "not a Zebra visual type".
+const PAGE_FURNITURE = new Set(["textbox", "slicer", "actionButton", "shape", "image", "pageNavigator"]);
+
+/**
+ * Tables+ draws its own automatic title in place of an authored `titleSettings.text` (three renders
+ * across two Desktop sessions, two models and two plugin versions; Charts+ drew the same key). Only
+ * the warning is emitted. Which alternative draws on Tables+ is not settled by those renders:
+ * `titleSettings.show: false` hid the automatic title, and a text box above the visual carried a
+ * title that drew, but the Power BI container title (`visualContainerObjects.title`) was used as a
+ * workaround without a recorded render, so nothing is routed there.
+ */
+function tablesPlusTitleWarning(objects, visualType) {
+  if (!isTablesPlus(visualType)) return null;
+  const props = objects.titleSettings && objects.titleSettings[0] && objects.titleSettings[0].properties;
+  const lit = (v) => v && v.expr && v.expr.Literal && v.expr.Literal.Value;
+  const text = lit(props && props.text);
+  if (typeof text !== "string") return null;
+  if (lit(props.show) === "false") return null;   // the title is off, so there is nothing to draw
+  const token = /\[[^\]]+\]/.test(text);
+  return "Tables+ has been seen to draw its own automatic title instead of titleSettings.text "
+    + "(for example 'AC and PY by Company, Line'), while Charts+ draws the authored text."
+    + (token ? " This title carries a [Measure] token, which Tables+ may not draw either." : "")
+    + " titleSettings.show: false hides the automatic title, and a text box above the visual carries "
+    + "a title that draws. Check a render of the title text.";
+}
+
+/**
+ * `chartSettings.calculations` on Tables and Tables+, however it arrived: the encoder route, the
+ * `properties` escape hatch or `rawObjects`. The visual reads the list by position, one comparison
+ * pair per variance slot, and reads only the first two `-`-separated parts of each entry (see
+ * `encodeTableCalculations`).
+ *
+ * Refused, never rewritten, when the bound roles make two drawn slots show the same comparison:
+ * that table draws one comparison twice and leaves another out, and the writer cannot know which
+ * comparison the author meant to keep. Rewriting the list (dropping `-percent` entries and repeats)
+ * moves later entries into earlier slots, which can reorder or change what a table that draws
+ * correctly today shows. So a list that draws correctly is written exactly as given, with a warning
+ * when it carries `-percent` or repeated entries that only happen not to draw.
+ */
+function checkTableCalculations(objects, visualType, bindings, warnings) {
+  if (!visualType.startsWith("ZebraBITables")) return;
+  const v = objects.chartSettings && objects.chartSettings[0] && objects.chartSettings[0].properties
+    && objects.chartSettings[0].properties.calculations;
+  const raw = v && v.expr && v.expr.Literal && v.expr.Literal.Value;
+  if (typeof raw !== "string") return;
+  let list;
+  try { list = JSON.parse(raw.replace(/^'|'$/g, "").replace(/''/g, "'")); } catch { list = undefined; }
+  if (!Array.isArray(list)) {
+    warnings.push("chartSettings.calculations is not a JSON array of comparison pairs, so the visual "
+      + "draws its default comparisons. Write a list such as [\"actual-previousYear\",\"actual-plan\"] "
+      + "or leave the property out.");
+    return;
+  }
+  const { percent, repeated } = enc.calculationsFaults(list);
+  const pairsOnly = [...new Set(list.filter((c) => typeof c === "string")
+    .map((c) => c.split("-").slice(0, 2).join("-")))];
+  // Bindings that are not lists of fields get their own, plainer error where the query is built.
+  const roles = bindings && typeof bindings === "object" && Object.values(bindings).every(Array.isArray) ? bindings : null;
+  if (roles) {
+    const sim = enc.tableComparisonSlots(roles, list);
+    need(!sim.repeats.length,
+      `chartSettings.calculations ${JSON.stringify(list)} makes this table draw `
+      + `'${sim.repeats[0] && sim.repeats[0].comparison}' in variance slots `
+      + `${sim.repeats[0] && sim.repeats[0].slots.join(" and ")}, and leaves out `
+      + `${sim.missing.map((m) => `'${m}'`).join(", ") || "nothing else"}. The list holds one comparison `
+      + `pair per variance slot, in order, and the visual reads 'x-y-percent' as 'x-y'. Write `
+      + `${JSON.stringify(enc.suggestCalculations(list, roles))} for these roles, or leave the `
+      + `property out to draw the defaults.`);
+    // The same rule as the encoder route: a list that draws correctly is written, with a warning.
+    if (sim.stoppedAt !== null) {
+      warnings.push(`chartSettings.calculations entry '${list[sim.stoppedAt]}' names a scenario that is not bound `
+        + `(bound: ${[sim.value, ...sim.references].filter(Boolean).join(", ") || "none"}), so the visual stops `
+        + `reading the list at that entry and the entries after it are not read.`);
+    }
+  }
+  if (percent.length || repeated.length) {
+    warnings.push(`chartSettings.calculations carries ${[...percent, ...repeated].map((c) => `'${c}'`)
+      .join(", ")}. The list holds comparison pairs, one per variance slot, and each pair already `
+      + `brings its percent column. Written as given${roles ? ", because with these roles no drawn "
+        + "slot repeats a comparison" : ""}; the pairs-only form is ${JSON.stringify(pairsOnly)}.`);
+  }
+}
 
 // --- what must never be written ---------------------------------------------------------------
 /**
@@ -311,7 +397,7 @@ function projectionFor(role, binding) {
  * group is written unattended. Refusing would be worse still — it would be a false positive on an
  * author who sets it two lines later.
  */
-function applyEncoders(spec, objects, seen, warnings, companions) {
+function applyEncoders(spec, objects, seen, warnings, companions, visualType = "") {
   const put = (r, where) => {
     if (!r || !r.property) return;
     setObjectProperty(objects, r.property, r.literal, seen, warnings, where);
@@ -322,7 +408,10 @@ function applyEncoders(spec, objects, seen, warnings, companions) {
 
   let legalColumnKeys;
   if (spec.tableCalculations) {
-    const r = enc.encodeTableCalculations(spec.tableCalculations);
+    // With the bindings in the same spec the encoder can check what the slots will draw, which
+    // is how a lone pair that repeats another slot's default comparison is caught.
+    const roles = visualType.startsWith("ZebraBITables") && spec.bindings ? spec.bindings : undefined;
+    const r = enc.encodeTableCalculations({ ...(roles ? { roles } : {}), ...spec.tableCalculations });
     legalColumnKeys = r.legalColumnKeys;
     put(r, "tableCalculations");
   }
@@ -556,10 +645,11 @@ function writeVisual(spec = {}) {
   const warnings = [];
   const companions = [];
   const visualType = VISUAL_ALIASES[String(spec.visualType).toLowerCase()] ?? spec.visualType;
-  if (!isZebraType(visualType)) {
+  if (!isZebraType(visualType) && !PAGE_FURNITURE.has(visualType)) {
     // Not refused. A Zebra page normally carries slicers and textboxes, and a page generator that
-    // cannot emit one is a page generator nobody can finish a page with. But the encoder routes
-    // and every landmine they close are Zebra-specific, so the caller is told which half applies.
+    // cannot emit one is a page generator nobody can finish a page with. Those page furniture types
+    // are expected and not warned about. For any other non-Zebra type the encoder routes and every
+    // landmine they close are Zebra-specific, so the caller is told which half applies.
     warnings.push(`'${visualType}' is not a Zebra visual type. The file is written as asked, but `
       + `nothing Zebra-specific applies to it: the encoder routes (tableColumns, annotations, `
       + `cardInvert and so on) build Zebra blobs and would be meaningless here.`);
@@ -583,7 +673,7 @@ function writeVisual(spec = {}) {
   const objects = {};
   const seen = new Map();
 
-  applyEncoders(spec, objects, seen, warnings, companions);
+  applyEncoders(spec, objects, seen, warnings, companions, visualType);
 
   // Sugar, applied after the encoders and before the escape hatch. `title` is the one property
   // present on 83.7% of visuals, which is still not enough to default -- so it is written only
@@ -617,6 +707,37 @@ function writeVisual(spec = {}) {
       `rawObjects.${group} collides with a group already built from properties or an encoder. `
       + `Write the group once, one way.`);
     objects[group] = entries;
+  }
+
+  checkTableCalculations(objects, visualType, spec.bindings, warnings);
+
+  const titleWarning = tablesPlusTitleWarning(objects, visualType);
+  if (titleWarning) warnings.push(titleWarning);
+
+  // Tables and Tables+ with a Category and no sortSettings: the rows are not in the model's order.
+  // Observed on certified Tables (no sortSettings object at all, reproduced), with one matching
+  // sighting on Tables+. The default is stated as observed, not as a documented guarantee.
+  if (visualType.startsWith("ZebraBITables") && (spec.bindings?.Category?.length ?? 0) > 0
+      && !objects.sortSettings && !spec.queryExtras?.sortDefinition) {
+    warnings.push("This Tables visual has a Category and no sortSettings and no sortDefinition. A table with none has been seen "
+      + "to sort its rows by the first Values column, descending, which separates subtotals from their "
+      + "components and moves rows inserted after a named row. Set sortSettings.columnName and "
+      + "sortSettings.categorySort (0 keeps the model's own order, 1 descending, 2 ascending).");
+  }
+
+  // Computed rows (added formulas) and a sort by a value column: the rows are ordered by size and the
+  // subtotals land among the lines they total. Read from the merged objects, so every route that
+  // supplies addedFormulas, properties or rawObjects is covered. The file is written as asked.
+  if (visualType.startsWith("ZebraBITables")) {
+    const cats = (Array.isArray(spec.bindings?.Category) ? spec.bindings.Category : [])
+      .flatMap((b) => (b && typeof b === "object" ? [b.property, b.nativeQueryRef, b.displayName] : []));
+    const sorted = enc.computedRowsSortedByValue(objects, cats);
+    if (sorted) {
+      warnings.push(`This table has ${sorted.computedRows} computed row${sorted.computedRows === 1 ? "" : "s"} `
+        + `(addedFormulas) and its rows are sorted by ${sorted.columnName ? `the '${sorted.columnName}' column` : "its first Values column"}, `
+        + "so the computed rows land among the lines by size instead of under the rows they total. "
+        + enc.COMPUTED_ROWS_SORT_FIX);
+    }
   }
 
   // A licence key in the spec is written with a fresh appliedTimestamp (Tables+ and Charts+), then

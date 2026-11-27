@@ -22,6 +22,7 @@ something near X". Work the list in order; `X` is the token the parser gave up o
 |---|---|---|
 | a **table name with a space** | missing single quotes | `'Opportunity Calendar'[Date]` |
 | **`Calculations`** | a reserved word | quote it, or rename the table |
+| **`KPI`** | a reserved word, the same way | quote it, `'KPI'[Name]`, or rename the table |
 | your **`VAR` name** | it collides with a DAX function name — see §2 | rename the variable |
 | a **table name after `DEFINE MEASURE`** | same two causes as above | quote it |
 | the token after a **`;`** | `;` is not an argument separator | use `,` |

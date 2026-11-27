@@ -584,7 +584,7 @@ check("tableCalculations hands its legal key set to tableColumns automatically",
   const r = w.writeVisual({ ...MIN,
     tableCalculations: { comparisons: ["actual-plan"] },
     tableColumns: { mode: "table", columns: [{ key: "forecast-plan" }] } });
-  assert.ok(r.warnings.some((x) => /not in the legal key set/.test(x)),
+  assert.ok(r.warnings.some((x) => /not a column of the comparisons/.test(x)),
     `the key set was not handed over: ${JSON.stringify(r.warnings)}`);
 });
 
@@ -613,6 +613,92 @@ check("an escape-hatch path that collides with an encoder warns rather than over
   assert.ok(r.warnings.some((x) => /was set twice/.test(x)), "the collision was silent");
 });
 
+// --- chartSettings.calculations: one comparison pair per variance slot, on every path ----------
+const T3 = { ...MIN, visualType: "tables+", bindings: {
+  Category: ["Fin.Line"], Values: ["Fin.Value AC"], PreviousYear: ["Fin.Value PY"], Plan: ["Fin.Value PL"] } };
+const FOUR = ["actual-plan", "actual-plan-percent", "actual-previousYear", "actual-previousYear-percent"];
+const calcOf = (r) => JSON.parse(JSON.parse(r.content).visual.objects.chartSettings[0].properties
+  .calculations.expr.Literal.Value.replace(/^'|'$/g, ""));
+
+check("calculations: the four-key list is refused on the encoder route", () => {
+  refuses(w.writeVisual, { ...T3, tableCalculations: { comparisons: FOUR } }, "is a column, not a comparison");
+});
+
+check("calculations: the four-key list is refused through properties, as JSON and as a string", () => {
+  refuses(w.writeVisual, { ...T3, properties: { "chartSettings.calculations": { __json: FOUR } } },
+    "draw 'actual-plan' in variance slots 1 and 2, and leaves out 'actual-previousYear'");
+  refuses(w.writeVisual, { ...T3, properties: { "chartSettings.calculations": JSON.stringify(FOUR) } },
+    "leaves out 'actual-previousYear'");
+});
+
+check("calculations: the four-key list is refused through rawObjects", () => {
+  refuses(w.writeVisual, { ...T3, rawObjects: { chartSettings: [{ properties: { calculations:
+    { expr: { Literal: { Value: `'${JSON.stringify(FOUR)}'` } } } } }] } }, "leaves out 'actual-previousYear'");
+});
+
+check("calculations: a lone pair that repeats another slot's default is refused (AC/FC/PL)", () => {
+  refuses(w.writeVisual, { ...T3, bindings: { Category: ["Fin.Line"], Values: ["Fin.Value AC"],
+    Forecast: ["Fin.Value FC"], Plan: ["Fin.Value PL"] }, tableCalculations: { comparisons: ["actual-plan"] } },
+    "leave out 'actual-forecast'");
+});
+
+check("calculations: the pair list for three scenarios is written exactly, with no warning", () => {
+  const r = w.writeVisual({ ...T3, tableCalculations: { comparisons: ["actual-previousYear", "actual-plan"] } });
+  assert.deepStrictEqual(calcOf(r), ["actual-previousYear", "actual-plan"]);
+  assert.ok(!(r.warnings || []).some((x) => /calculations/.test(x)), JSON.stringify(r.warnings));
+});
+
+check("calculations: a -percent list that draws correctly is written as given, with a warning", () => {
+  // Two scenarios: the second entry fills a slot that does not draw, so the table is right today.
+  // The writer must not rewrite it, only say what the pairs-only form is.
+  const r = w.writeVisual({ ...MIN, visualType: "tables+", bindings: { Category: ["Fin.Line"],
+    Values: ["Fin.Value AC"], PreviousYear: ["Fin.Value PY"] },
+    properties: { "chartSettings.calculations": { __json: ["actual-previousYear", "actual-previousYear-percent"] } } });
+  assert.deepStrictEqual(calcOf(r), ["actual-previousYear", "actual-previousYear-percent"]);
+  assert.ok(r.warnings.some((x) => /Written as given.*\["actual-previousYear"\]/.test(x)), JSON.stringify(r.warnings));
+});
+
+check("calculations: one list, one outcome on every route: a pair for an unbound scenario is written with a warning when the table still draws correctly", () => {
+  const two = { ...MIN, visualType: "tables+", bindings: { Category: ["Fin.Line"], Values: ["Fin.Value AC"], PreviousYear: ["Fin.Value PY"] } };
+  const list = ["actual-previousYear", "actual-plan"];
+  const viaEncoder = w.writeVisual({ ...two, tableCalculations: { comparisons: list } });
+  const viaProperties = w.writeVisual({ ...two, properties: { "chartSettings.calculations": { __json: list } } });
+  for (const r of [viaEncoder, viaProperties]) {
+    assert.deepStrictEqual(calcOf(r), list);
+    assert.ok((r.warnings || []).some((x) => /'actual-plan'.*not bound/.test(x)), JSON.stringify(r.warnings));
+  }
+});
+
+check("calculations: the refusal for the four-entry list suggests the author's own order, pairs only", () => {
+  // The author put plan first; the suggestion keeps it rather than the default order.
+  try {
+    w.writeVisual({ ...T3, properties: { "chartSettings.calculations": { __json: FOUR } } });
+    assert.fail("not refused");
+  } catch (e) {
+    assert.ok(e.message.includes(JSON.stringify(["actual-plan", "actual-previousYear"])), e.message);
+    assert.ok(!e.message.includes('Write ["actual-previousYear","actual-plan"]'), e.message);
+  }
+});
+
+check("calculations: bindings that are not lists get the bindings error, not a calculations error", () => {
+  refuses(w.writeVisual, { ...MIN, visualType: "tables+", bindings: { Values: "Fin.Value AC", PreviousYear: "Fin.Value PY" },
+    tableCalculations: { comparisons: ["actual-previousYear"] } }, "must be a non-empty array");
+  refuses(w.writeVisual, { ...MIN, visualType: "tables+", bindings: { Values: "Fin.Value AC" },
+    properties: { "chartSettings.calculations": { __json: ["actual-plan"] } } }, "must be a non-empty array");
+});
+
+check("calculations: a list that is not an array is warned about, not refused", () => {
+  const r = w.writeVisual({ ...T3, properties: { "chartSettings.calculations": { __json: "actual-plan" } } });
+  assert.ok(r.warnings.some((x) => /not a JSON array/.test(x)), JSON.stringify(r.warnings));
+});
+
+check("calculations: a non-Tables visual is not checked", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "charts+", bindings: { Category: ["Fin.Month"],
+    Values: ["Fin.Value AC"], PreviousYear: ["Fin.Value PY"], Plan: ["Fin.Value PL"] },
+    properties: { "chartSettings.calculations": { __json: FOUR } } });
+  assert.ok(!(r.warnings || []).some((x) => /comparison pair/.test(x)), JSON.stringify(r.warnings));
+});
+
 // --- the products ---------------------------------------------------------------------------------
 
 check("aliases resolve to the installed GUIDs, and every product is reachable", () => {
@@ -631,9 +717,126 @@ check("an explicit GUID is written through untouched", () => {
 // Not refused: a Zebra page normally carries slicers and textboxes, and a page generator that
 // cannot emit one is a page generator nobody can finish a page with.
 check("a non-Zebra visual type is written, with a warning saying what does not apply", () => {
-  const r = w.writeVisual({ ...MIN, visualType: "slicer" });
-  assert.strictEqual(JSON.parse(r.content).visual.visualType, "slicer");
+  const r = w.writeVisual({ ...MIN, visualType: "clusteredColumnChart" });
+  assert.strictEqual(JSON.parse(r.content).visual.visualType, "clusteredColumnChart");
   assert.ok(r.warnings.some((x) => /not a Zebra visual type/.test(x)));
+});
+
+// Page furniture is expected on a page, so it is written without that warning.
+check("page furniture is written without the 'not a Zebra visual type' warning", () => {
+  for (const t of ["textbox", "slicer", "actionButton", "shape", "image", "pageNavigator"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t });
+    assert.strictEqual(JSON.parse(r.content).visual.visualType, t);
+    assert.ok(!(r.warnings || []).some((x) => /not a Zebra visual type/.test(x)), `${t} was warned about`);
+  }
+});
+check("page furniture through write_page: no warning, and a native chart beside it still warns", () => {
+  const furniture = w.writePage({ name: "P1", displayName: "Overview", visuals: [
+    { ...MIN, name: "title", visualType: "textbox" }, { ...MIN, name: "pick", visualType: "slicer" }] });
+  assert.ok(!(furniture.warnings || []).some((x) => /not a Zebra visual type/.test(x)),
+    JSON.stringify(furniture.warnings));
+  const chart = w.writePage({ name: "P2", displayName: "Other", visuals: [
+    { ...MIN, name: "c", visualType: "lineChart" }] });
+  assert.ok((chart.warnings || []).some((x) => /not a Zebra visual type/.test(x)),
+    "control: a native chart should still warn");
+});
+
+// Tables+ has been seen to draw its own automatic title instead of an authored titleSettings.text.
+// Only a warning is emitted: what is written is what was asked for, and nothing is routed elsewhere.
+const titleWarned = (r) => (r.warnings || []).some((x) => /automatic title/.test(x));
+check("Tables+ with a static title text warns, and writes the text exactly as asked", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "tables+", title: "Net sales by region" });
+  assert.ok(titleWarned(r), JSON.stringify(r.warnings));
+  const f = JSON.parse(r.content).visual;
+  assert.deepStrictEqual(Object.keys(f.objects), ["titleSettings"], "something else was routed");
+  assert.ok(!("visualContainerObjects" in f), "the title was routed to the container");
+  assert.ok(!(r.warnings || []).some((x) => /\[Measure\] token/.test(x)));
+});
+check("Tables+ with the text set through properties warns as well", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "ZebraBITablesPlus3E6085701D7B426980C3859B16327993",
+    properties: { "titleSettings.show": true, "titleSettings.text": "Net sales" } });
+  assert.ok(titleWarned(r), JSON.stringify(r.warnings));
+});
+check("Tables+ with a [Measure] token in the title says the token may not draw", () => {
+  const r = w.writeVisual({ ...MIN, visualType: "tables+", title: "Net sales, in USD - [Period label]" });
+  assert.ok(titleWarned(r) && r.warnings.some((x) => /\[Measure\] token/.test(x)), JSON.stringify(r.warnings));
+});
+check("no Tables+ title warning when there is no text, or the title is off", () => {
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+" })));
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+",
+    properties: { "titleSettings.show": false } })));
+  assert.ok(!titleWarned(w.writeVisual({ ...MIN, visualType: "tables+", title: { text: "Hidden", show: false } })));
+});
+check("Charts+ and certified Tables/Charts/Cards titles are not warned about", () => {
+  for (const t of ["charts+", "tables", "charts", "cards", "ZebraBITables98F88148E5424E949E69864664EE1860"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t, title: "Net sales by region" });
+    assert.ok(!titleWarned(r), `${t} was warned about`);
+  }
+});
+
+// A Tables visual with a Category and no sortSettings has been seen to sort by the first Values column,
+// descending. The writer says so and writes nothing it was not asked to.
+const sortWarned = (r) => (r.warnings || []).some((x) => /no sortSettings/.test(x));
+const CAT = { Category: [{ entity: "Sales", property: "Region", kind: "Column" }] };
+check("Tables and Tables+ with a Category and no sortSettings warn; nothing is added", () => {
+  for (const t of ["tables", "tables+"]) {
+    const r = w.writeVisual({ ...MIN, visualType: t, bindings: CAT });
+    assert.ok(sortWarned(r), `${t}: ${JSON.stringify(r.warnings)}`);
+    assert.ok(!JSON.parse(r.content).visual.objects, `${t}: the writer invented properties`);
+  }
+});
+check("no sort warning when sortSettings is set, there is no Category, or the visual is not Tables", () => {
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+", bindings: CAT,
+    properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+", bindings: CAT,
+    rawObjects: { sortSettings: [{ properties: {} }] } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "tables+",
+    bindings: { Values: [{ entity: "Sales", property: "AC", kind: "Measure" }] } })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "charts+", bindings: CAT })));
+  assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: "cards", bindings: CAT })));
+});
+
+check("no sort warning when the visual carries a sortDefinition; a Category with neither sort still warns", () => {
+  const sort = { sort: [{ field: { Column: { Expression: { SourceRef: { Entity: "Sales" } }, Property: "Region" } }, direction: "Ascending" }] };
+  for (const t of ["tables", "tables+"]) {
+    assert.ok(!sortWarned(w.writeVisual({ ...MIN, visualType: t, bindings: CAT, queryExtras: { sortDefinition: sort } })), `${t} warned despite a sortDefinition`);
+    assert.ok(sortWarned(w.writeVisual({ ...MIN, visualType: t, bindings: CAT, queryExtras: { isDrillDisabled: true } })), `${t} did not warn with neither sort`);
+  }
+});
+
+// Computed rows (addedFormulas) sorted by a value column: the subtotals land among the lines they total.
+// The writer warns in one sentence with the fix, on every route that supplies the formulas or the sort,
+// and writes the file as asked.
+const rowsWarned = (r) => (r.warnings || []).some((x) => /computed row/.test(x) && /sorted by/.test(x));
+const FORMULAS = { categoryField: "Fin.Account", formulas: [{ name: "Gross profit", expression: "[Revenue] + [Cost of sales]",
+  position: "Cost of sales", aggregatesOtherRows: false }] };
+check("computed rows sorted by a value column warn with the fix, on Tables and Tables+, by every route", () => {
+  for (const t of ["tables", "tables+"]) {
+    const props = { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 };
+    const r = w.writeVisual({ ...MIN, visualType: t, bindings: CAT, addedFormulas: FORMULAS, properties: props });
+    assert.ok(rowsWarned(r), `${t}: ${JSON.stringify(r.warnings)}`);
+    const msg = r.warnings.find((x) => /computed row/.test(x));
+    assert.ok(/categorySort and sortSettings.chartSort to 0/.test(msg) && /order column/.test(msg), msg);
+    assert.ok(JSON.parse(r.content).visual.objects.sortSettings, `${t}: the sort was not written as asked`);
+    // the same sort through rawObjects, and the value sort that leaves chartSort out
+    const lit = (v) => ({ expr: { Literal: { Value: v } } });
+    assert.ok(rowsWarned(w.writeVisual({ ...MIN, visualType: t, bindings: CAT, addedFormulas: FORMULAS,
+      rawObjects: { sortSettings: [{ properties: { columnName: lit("'actual'"), categorySort: lit("0D") } }] } })), `${t}: rawObjects`);
+    assert.ok(rowsWarned(w.writeVisual({ ...MIN, visualType: t, bindings: CAT, addedFormulas: FORMULAS,
+      properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 0 } })), `${t}: 0 with no chartSort`);
+  }
+});
+check("no computed-row sort warning for statement order, a sort on the category, no formulas, or another visual", () => {
+  const ok = (spec) => assert.ok(!rowsWarned(w.writeVisual({ ...MIN, bindings: CAT, ...spec })), JSON.stringify(spec).slice(0, 120));
+  for (const t of ["tables", "tables+"]) {
+    ok({ visualType: t, addedFormulas: FORMULAS, properties: { "sortSettings.categorySort": 0, "sortSettings.chartSort": 0 } });
+    ok({ visualType: t, addedFormulas: FORMULAS, properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 0, "sortSettings.chartSort": 0 } });
+    ok({ visualType: t, addedFormulas: FORMULAS, properties: { "sortSettings.columnName": "category", "sortSettings.categorySort": 1 } });
+    ok({ visualType: t, addedFormulas: FORMULAS, properties: { "sortSettings.columnName": "Region", "sortSettings.categorySort": 2 } });
+    ok({ visualType: t, addedFormulas: FORMULAS });
+    ok({ visualType: t, properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 } });
+  }
+  ok({ visualType: "charts+", addedFormulas: undefined, properties: { "sortSettings.columnName": "actual", "sortSettings.categorySort": 1 } });
 });
 
 // --- file hygiene -----------------------------------------------------------------------------------
@@ -767,7 +970,7 @@ const FULL_REPORT = {
           Values: ["Sales.Value AC"],
           Plan: ["Sales.Value PL"],
         },
-        tableCalculations: { comparisons: ["actual-plan", "actual-plan-percent"] },
+        tableCalculations: { comparisons: ["actual-plan"] },
         tableColumns: { mode: "table", columns: [{ key: "actual", order: 0, bold: true }] },
         properties: { "chartSettings.showAsTable": true, "designSettings.style": 4 },
       },

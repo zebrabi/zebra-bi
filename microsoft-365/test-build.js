@@ -79,9 +79,21 @@ try {
       assert.ok(kept.split("\n").some((l) => l.startsWith(h)), `${h} heading not kept in SKILL.md`);
     }
     const src = fs.readFileSync(path.join(ROOT, "skills", "report-authoring", "SKILL.md"), "utf8");
+    // A paragraph the overlay drops on purpose is not a lost line.
+    const dropped = (CONFIG.skills["report-authoring"].overlay || []).filter((o) => o.op === "drop-paragraph").map((o) => o.startsWith);
+    let inDropped = false;
     for (const line of src.split("\n")) {
-      if (line.trim()) assert.ok(kept.includes(line) || moved.includes(line), `line lost: ${line.slice(0, 60)}`);
+      if (!line.trim()) { inDropped = false; continue; }
+      if (dropped.some((d) => line.startsWith(d))) inDropped = true;
+      if (!inDropped) assert.ok(kept.includes(line) || moved.includes(line), `line lost: ${line.slice(0, 60)}`);
     }
+  });
+
+  check("the packaged skill points to scripts/zbi.js and not to the plugin's mcp/cli.js", () => {
+    const kept = read("skills/report-authoring/SKILL.md");
+    assert.ok(kept.includes("scripts/zbi.js"), "the overlay's instruction is missing");
+    assert.ok(!kept.includes("mcp/cli.js"), "the plugin's instruction to call mcp/cli.js reached the package");
+    assert.ok(!fs.existsSync(path.join(dir, "skills", "report-authoring", "scripts", "cli.js")), "cli.js reached the package");
   });
 
   check("every overlay is applied", () => {
@@ -137,7 +149,26 @@ try {
     const r = spawnSync(process.execPath, [path.join(scripts, "zbi.js"), "list"], { encoding: "utf8", timeout: 30000 });
     assert.strictEqual(r.status, 0, r.stderr);
     const tools = r.stdout.trim().split("\n").map((l) => l.split(" - ")[0]);
-    for (const t of ["validate_report", "write_report", "profile_source"]) assert.ok(tools.includes(t), `${t} missing`);
+    for (const t of ["validate_report", "write_report", "profile_source", "write_project", "write_measures"]) assert.ok(tools.includes(t), `${t} missing`);
+  });
+
+  check("the bundled checker writes a project with write_project, called from another folder", () => {
+    const data = path.join(tmp, "data");
+    fs.mkdirSync(data, { recursive: true });
+    fs.writeFileSync(path.join(data, "sales.csv"),
+      "Date,Region,Scenario,Amount\n2025-01-01,N,Actual,10\n2025-01-01,N,Budget,12\n2025-02-01,S,Actual,20\n2025-02-01,S,Budget,18\n");
+    const out = path.join(tmp, "written");
+    const args = path.join(tmp, "args.json");
+    fs.writeFileSync(args, JSON.stringify({ name: "Demo", outPath: out, source: { path: path.join(data, "sales.csv") }, pages: "propose" }));
+    const r = spawnSync(process.execPath, [path.join(scripts, "zbi.js"), "write_project", `@${args}`],
+      { cwd: data, encoding: "utf8", timeout: 60000 });
+    assert.strictEqual(r.status, 0, r.stderr || r.stdout.slice(0, 300));
+    const res = JSON.parse(r.stdout);
+    assert.ok(res.files.some((f) => f.path === "Demo.SemanticModel/definition/model.tmdl"));
+    assert.strictEqual(res.validation.wontOpen + res.validation.blank, 0);
+    const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "skills", "report-authoring", "rules.json"), "utf8")).rules;
+    assert.strictEqual(res.validation.rulesRun, rules.length);
+    assert.ok(fs.existsSync(path.join(out, "Demo.pbip")));
   });
 
   check("the bundled checker loads its rules and checks a project", () => {
@@ -150,6 +181,28 @@ try {
     const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "skills", "report-authoring", "rules.json"), "utf8")).rules;
     assert.strictEqual(out.rulesRun, rules.length, `rulesRun ${out.rulesRun}, catalogue ${rules.length}`);
     assert.ok(out.findings.length > 0, "a project with no version.json must have findings");
+  });
+
+  check("the package's mcp.json carries the hosted server only, whatever mcp.json lists besides it", () => {
+    const packaged = JSON.parse(read("mcp.json"));
+    assert.deepStrictEqual(Object.keys(packaged.mcpServers), [CONFIG.app.connector.id]);
+    assert.ok(/^https:/.test(packaged.mcpServers[CONFIG.app.connector.id].url), "the connector is not an HTTPS server");
+    assert.strictEqual(packaged.$schema, JSON.parse(fs.readFileSync(path.join(ROOT, "mcp.json"), "utf8")).$schema);
+  });
+
+  // The root mcp.json lists only the hosted server, so a package built from it cannot show whether the
+  // local servers are dropped. This one lists a local stdio server and a second hosted one beside it.
+  check("a manifest that also lists a local server gives a package with the hosted server only", () => {
+    const id = CONFIG.app.connector.id;
+    const manifest = { $schema: "https://example.invalid/schema.json", mcpServers: {
+      [id]: { type: "streamable-http", url: "https://mcp.example.invalid/mcp" },
+      "zebra-bi-reports": { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/mcp/server.js"] },
+    } };
+    const packaged = build.packagedMcpJson(manifest);
+    assert.deepStrictEqual(Object.keys(packaged.mcpServers), [id]);
+    assert.strictEqual(packaged.$schema, manifest.$schema);
+    assert.ok(!JSON.stringify(packaged).includes("server.js"), "a local server reached the package");
+    assert.throws(() => build.packagedMcpJson({ mcpServers: { "zebra-bi-reports": { command: "node" } } }), /exactly one HTTPS server/);
   });
 
   check("the plugin's own files are unchanged by the build", () => {

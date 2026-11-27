@@ -418,6 +418,9 @@ assumption, stated where the reader will see it, is the analyst's answer.
 
 ## Want a `.pbip` that opens anywhere? Embed the fact table as a `DATATABLE`
 
+A new model from flat files, with every table embedded as a `DATATABLE`, is created with `write_project`.
+Writing the model by hand is for reading, repairing or extending an existing model.
+
 The counterpart to the section above. **A Power Query partition is the right answer for live data and
 the wrong answer for a report you hand to somebody**, because it drags four problems with it. Embedding
 the rows as a **calculated table** removes all four at once.
@@ -612,7 +615,7 @@ window you give them, so they carry the fault even when the page is framed corre
 | `DATEADD(…, -1, YEAR)` | 88,133 | = hand-built 1–10 Mar 2020 ✅ |
 | `PARALLELPERIOD(…, -12, MONTH)` | 325,747 | = **whole** March 2020 ⚠️ |
 
-**Use `DATEADD`, or the day-aligned `PY date` pattern in this section; never `PARALLELPERIOD` for
+**Use `DATEADD`, or the day-aligned `Next year date` pattern in this section; never `PARALLELPERIOD` for
 a like-for-like PY.**
 
 
@@ -624,21 +627,20 @@ arithmetically correct, invisible in PBIR, `validate` clean, and **every consist
 months sum to the total, groups sum to the total, everything reconciles, because every visual reads
 the same wrong window.
 
-**Use a day-aligned PY date instead.** Add to the calendar's `ADDCOLUMNS`:
+**Use a day-aligned next-year date instead.** Add to the calendar's `ADDCOLUMNS`:
 
 ```dax
-"PY date", IF ( MONTH([Date]) = 2 && DAY([Date]) = 29, BLANK(),
-                DATE ( YEAR([Date]) - 1, MONTH([Date]), DAY([Date]) ) )
+"Next year date", IF ( MONTH([Date]) = 2 && DAY([Date]) = 29,
+                       DATE ( YEAR([Date]) + 1, 2, 28 ),
+                       DATE ( YEAR([Date]) + 1, MONTH([Date]), DAY([Date]) ) )
 ```
 ```dax
 Sales PY =
-VAR PYDates = VALUES ( 'Calendar'[PY date] )
-RETURN CALCULATE ( [Sales AC], REMOVEFILTERS ( 'Calendar' ), TREATAS ( PYDates, 'Calendar'[Date] ) )
+VAR SelectedDates = VALUES ( 'Calendar'[Date] )
+RETURN CALCULATE ( [Sales AC], REMOVEFILTERS ( 'Calendar' ), TREATAS ( SelectedDates, 'Calendar'[Next year date] ) )
 ```
 
-29 Feb maps to `BLANK()` rather than rolling into 1 Mar, so a leap day has no counterpart. That keeps
-the measure **additive** — monthly PY values sum to the PY total exactly. A `DATESBETWEEN` over a
-contiguous shifted range does not: it sweeps 29 Feb into the total but not into any month.
+29 February counts in 28 February of the next year, so a prior-year leap day is never lost, and each prior date counts in exactly one month: the measure is **additive**, and monthly PY values sum to the PY total exactly. A `DATESBETWEEN` over a contiguous shifted range is not additive: it sweeps 29 February into the total but not into any month. With month-end data, a pattern that maps the selected dates back instead loses the whole of February in the year after a leap year.
 
 ### ☠️ A PY measure returns BLANK when the visual groups by a calendar ATTRIBUTE column
 
@@ -658,7 +660,7 @@ CALCULATE ( [Revenue Won], SAMEPERIODLASTYEAR ( 'Opportunity Calendar'[Date] ),
 ```
 
 It reads as missing data rather than as a broken measure, which is why it survives review. The
-day-aligned `PY date` pattern already carries `REMOVEFILTERS('Calendar')` and is immune.
+day-aligned `Next year date` pattern already carries `REMOVEFILTERS('Calendar')` and is immune.
 
 
 ## The calendar table

@@ -71,8 +71,12 @@ function project(mutate = () => {}) {
     pbip: { $schema: SCHEMA, version: "1.0" },
     // definition.pbism: a project Desktop opens carries 4.2 beside a TMDL definition/ folder.
     pbism: { $schema: PBISM_SCHEMA, version: "4.2", settings: {} },
-    pbir: { version: "1.0", datasetReference: { byPath: { path: "../Demo.SemanticModel" } } },
-    reportJson: { $schema: "https://x", themeCollection: { baseTheme: { name: "CY24SU10" } } },
+    // definition.pbir as a project that opens has it: the PBIR $schema and version 4.0.
+    pbir: { $schema: "https://developer.microsoft.com/json-schemas/fabric/item/report/definitionProperties/2.0.0/schema.json",
+            version: "4.0", datasetReference: { byPath: { path: "../Demo.SemanticModel" } } },
+    // A report that opens registers every Zebra BI visual type its pages use.
+    reportJson: { $schema: "https://x", themeCollection: { baseTheme: { name: "CY24SU10" } },
+                  publicCustomVisuals: Object.values(GUID) },
     versionJson: { $schema: "https://x/versionMetadata/1.0.0/schema.json", version: "2.0.0" },
     pagesJson: { pageOrder: ["P1"], activePageName: "P1" },
     page: { name: "P1", visualInteractions: [] },
@@ -752,6 +756,386 @@ try {
 } catch (e) {
   results.push(["FAIL", "a correctly marked tooltip page is silent", String(e.message).slice(0, 80)]);
 }
+
+// --- registration, textbox paragraphs and chart orientation (22 Nov 2026) -------------------------------
+// Fixtures are invented. Each rule has a firing case and the otherwise identical case that stays silent.
+
+// A Zebra BI visual type used on a page must be registered in report.json.
+rule("zebra-visual-type-not-registered", "a Tables+ visual whose GUID is not in publicCustomVisuals", (s) => {
+  s.reportJson.publicCustomVisuals = ["ZebraBITablesPlus7E7C97F00CD14F299A17F402F1D219B5"];
+  s.visuals.V1.visual.visualType = GUID.tablesPlus;
+});
+
+check("a visual registered by GUID, by an embedded resource package or by the organization's store is NOT flagged", () => {
+  const id = "zebraBiCards2C860CFAA9944091B75F0DBD117F20FA";
+  const listed = project((s) => { s.reportJson.publicCustomVisuals = [id.toUpperCase()]; s.visuals.V1.visual.visualType = id; });
+  assert.ok(!codes(listed).has("zebra-visual-type-not-registered"), "fired on a GUID listed in another case");
+  const embedded = project((s) => {
+    s.reportJson.publicCustomVisuals = [];
+    s.reportJson.resourcePackages = [{ name: "RegisteredResources", type: "RegisteredResources",
+      items: [{ name: `${id}.pbiviz.json`, path: `${id}.pbiviz.json`, type: "CustomVisual" }] }];
+    s.visuals.V1.visual.visualType = id;
+  });
+  assert.ok(!codes(embedded).has("zebra-visual-type-not-registered"), "fired on a visual embedded in the report");
+  const store = project((s) => {
+    s.reportJson.publicCustomVisuals = [];
+    s.reportJson.resourcePackages = [{ name: `${id}_OrgStore`, type: "OrganizationalStoreCustomVisual", items: [] }];
+    s.visuals.V1.visual.visualType = `${id}_OrgStore`;
+  });
+  assert.ok(!codes(store).has("zebra-visual-type-not-registered"), "fired on an organizational-store visual");
+});
+
+check("native visuals and an unreadable report.json are NOT flagged; one finding names every unregistered type", () => {
+  assert.ok(!codes(project((s) => { s.reportJson.publicCustomVisuals = []; s.visuals.V1.visual.visualType = "tableEx"; }))
+    .has("zebra-visual-type-not-registered"), "fired on a native visual");
+  const bad = project();
+  fs.writeFileSync(path.join(bad, "Demo.Report", "definition", "report.json"), "{ not json");
+  assert.ok(!codes(bad).has("zebra-visual-type-not-registered"), "judged an unreadable report.json");
+  const two = project((s) => {
+    s.reportJson.publicCustomVisuals = [];
+    s.visuals.V2 = { name: "V2", position: { x: 0, y: 0, width: 600, height: 400 },
+      visual: { visualType: GUID.tables, objects: {}, query: { queryState: {} } } };
+  });
+  const hits = srv.validateReport({ projectPath: two }).findings.filter((f) => f.code === "zebra-visual-type-not-registered");
+  assert.strictEqual(hits.length, 1, `one finding for the registration list, got ${hits.length}`);
+  assert.ok(hits[0].detail.includes(`'${GUID.tables}' (2 visuals)`), hits[0].detail);
+  // two different unregistered types still make one finding, and it names both
+  const mixed = project((s) => {
+    s.reportJson.publicCustomVisuals = [];
+    s.visuals.V2 = { name: "V2", position: { x: 0, y: 0, width: 600, height: 400 },
+      visual: { visualType: GUID.charts, objects: {}, query: { queryState: {} } } };
+  });
+  const both = srv.validateReport({ projectPath: mixed }).findings.filter((f) => f.code === "zebra-visual-type-not-registered");
+  assert.strictEqual(both.length, 1);
+  assert.ok(both[0].detail.includes(GUID.tables) && both[0].detail.includes(GUID.charts), both[0].detail);
+});
+
+// A textbox's paragraphs live in objects.general; under visualContainerObjects.general Desktop refuses them.
+const PARAGRAPHS = [{ paragraphs: [{ textRuns: [{ value: "Revenue by month" }] }] }];
+rule("textbox-paragraphs-in-container-objects", "a textbox with paragraphs under visualContainerObjects.general", (s) => {
+  s.visuals.T1 = { name: "T1", position: { x: 0, y: 0, width: 400, height: 80 },
+    visual: { visualType: "textbox",
+      visualContainerObjects: { general: [{ properties: { paragraphs: PARAGRAPHS } }] } } };
+});
+
+check("a textbox with paragraphs in objects.general (and title and background in the container) is NOT flagged", () => {
+  const root = project((s) => {
+    s.visuals.T1 = { name: "T1", position: { x: 0, y: 0, width: 400, height: 80 },
+      visual: { visualType: "textbox",
+        objects: { general: [{ properties: { paragraphs: PARAGRAPHS } }] },
+        visualContainerObjects: { general: [{ properties: { keepLayerOrder: { expr: { Literal: { Value: "true" } } } } }],
+          background: [{ properties: { show: { expr: { Literal: { Value: "false" } } } } }] } } };
+    // a non-textbox may carry any container property; the rule reads textboxes only
+    s.visuals.V1.visual.visualContainerObjects = { general: [{ properties: { paragraphs: PARAGRAPHS } }] };
+  });
+  assert.ok(!codes(root).has("textbox-paragraphs-in-container-objects"), "fired on the shape Desktop writes");
+});
+
+check("the paragraph rule and the font-floor rule read the same place: a textbox with the paragraphs in the container is also sized from them", () => {
+  const root = project((s) => {
+    s.visuals.T1 = { name: "T1", position: { x: 0, y: 0, width: 400, height: 40 },
+      visual: { visualType: "textbox", visualContainerObjects: { general: [{ properties: {
+        paragraphs: [{ textRuns: [{ textStyle: { fontSize: "22pt" } }] }] } }] } } };
+  });
+  const c = codes(root);
+  assert.ok(c.has("textbox-paragraphs-in-container-objects") && c.has("textbox-too-short-for-font"),
+    "the two rules disagree on where a textbox's paragraphs are");
+});
+
+// Charts and Charts+ on their side with a time Category.
+const writeModel = (root, tmdl) => fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), tmdl);
+const CAL_MODEL = [
+  "table Calendar", "\tdataCategory: Time", "", "\tcolumn Date", "\t\tdataType: dateTime", "\t\tisKey", "",
+  "\tcolumn Month", "\t\tdataType: string", "",
+  "table Accounts", "", "\tcolumn Account", "\t\tdataType: string", "",
+  "table Orders", "", "\tcolumn 'Ship date'", "\t\tdataType: dateTime", "", "\tcolumn Region", "\t\tdataType: string", "",
+  "table Financials", "\tmeasure 'Value AC' = 1", "\t\tformatString: #,0", "\tmeasure 'Value PL' = 1", "\t\tformatString: #,0", "",
+].join("\n");
+const TRUE_ = { expr: { Literal: { Value: "true" } } };
+const col = (entity, prop) => ({ Column: { Expression: { SourceRef: { Entity: entity } }, Property: prop } });
+const chartOn = (guid, field, vertical = TRUE_) => (s) => {
+  s.visuals.C1 = { name: "C1", position: { x: 0, y: 0, width: 600, height: 400 },
+    visual: { visualType: guid, query: { queryState: { Category: { projections: [{ field, queryRef: "x" }] } } },
+      objects: { chartSettings: [{ properties: { showVerticalCharts: vertical } }] } } };
+};
+const verticalCodes = (mutate, model = CAL_MODEL) => {
+  const root = project(mutate); writeModel(root, model); return codes(root);
+};
+const V = "charts-vertical-orientation-on-time";
+
+check("showVerticalCharts: true on a date-table level or a dateTime column is caught, on Charts and Charts+", () => {
+  for (const g of [GUID.charts, GUID.chartsPlus]) {
+    assert.ok(verticalCodes(chartOn(g, col("Calendar", "Month"))).has(V), `missed a date-table level on ${g}`);
+    assert.ok(verticalCodes(chartOn(g, col("Calendar", "Date"))).has(V), `missed the date column on ${g}`);
+    assert.ok(verticalCodes(chartOn(g, col("Orders", "Ship date"))).has(V), `missed a dateTime column outside the date table on ${g}`);
+  }
+  const level = { HierarchyLevel: { Level: "Month", Expression: { Hierarchy: { Hierarchy: "Date Hierarchy",
+    Expression: { PropertyVariationSource: { Name: "Variation", Property: "Date", Expression: { SourceRef: { Entity: "Orders" } } } } } } } };
+  assert.ok(verticalCodes(chartOn(GUID.chartsPlus, level)).has(V), "missed a level of the Date Hierarchy");
+});
+
+check("showVerticalCharts on an account category, or off, or on a time category with another visual, is NOT flagged", () => {
+  for (const g of [GUID.charts, GUID.chartsPlus]) {
+    assert.ok(!verticalCodes(chartOn(g, col("Accounts", "Account"))).has(V), `fired on an account axis on ${g}`);
+    assert.ok(!verticalCodes(chartOn(g, col("Orders", "Region"))).has(V), `fired on a region axis on ${g}`);
+    assert.ok(!verticalCodes(chartOn(g, col("Calendar", "Month"), { expr: { Literal: { Value: "false" } } })).has(V),
+      `fired with showVerticalCharts false on ${g}`);
+  }
+  assert.ok(!verticalCodes(chartOn(GUID.tables, col("Calendar", "Month"))).has(V), "fired on a Tables visual");
+  assert.ok(!verticalCodes(chartOn(GUID.charts, col("Nowhere", "Month"))).has(V), "judged a table the model does not declare");
+});
+
+check("showVerticalCharts: true with a time category is not judged when the project has no model", () => {
+  const root = project(chartOn(GUID.charts, col("Calendar", "Month")));
+  fs.rmSync(path.join(root, "Demo.SemanticModel"), { recursive: true, force: true });
+  assert.ok(!codes(root).has(V), "judged a report with no model");
+});
+
+// definition.pbir beside a PBIR report folder: version 1.0 with no $schema opened an empty Page 1 (22 Nov 2026).
+rule("pbir-version-and-schema-do-not-match-pbir-folder", "definition.pbir at version 1.0 with no $schema", (s) => {
+  s.pbir = { version: "1.0", datasetReference: { byPath: { path: "../Demo.SemanticModel" } } };
+});
+
+check("a pbir with version 4.0 and a $schema, or 4.0 with no $schema, or a $schema at any version, is NOT flagged", () => {
+  const id = "pbir-version-and-schema-do-not-match-pbir-folder";
+  const ref = { byPath: { path: "../Demo.SemanticModel" } };
+  assert.ok(!codes(project()).has(id), "fired on the form that opens");
+  assert.ok(!codes(project((s) => { s.pbir = { version: "4.0", datasetReference: ref }; })).has(id), "fired on 4.0 with no $schema");
+  assert.ok(!codes(project((s) => { s.pbir = { $schema: s.pbir.$schema, version: "1.0", datasetReference: ref }; })).has(id),
+    "fired on a pbir that carries a $schema");
+  assert.ok(!codes(project((s) => { s.pbir = { datasetReference: ref }; })).has(id), "fired on a pbir with no version");
+  const noFolder = project((s) => { s.pbir = { version: "1.0", datasetReference: ref }; });
+  fs.rmSync(path.join(noFolder, "Demo.Report", "definition", "report.json"));
+  assert.ok(!codes(noFolder).has(id), "judged a report folder that is not in the PBIR format");
+});
+
+// chartSettings.calculations on Tables / Tables+ is one comparison pair per variance slot.
+const CALC = "tables-calculations-repeat-a-comparison";
+const proj = (n) => Array.from({ length: n }, (_, i) => ({ field: {}, queryRef: "m" + i }));
+const tableWith = (guid, roles, calcs) => (s) => {
+  const queryState = {};
+  for (const [role, n] of Object.entries(roles)) queryState[role] = { projections: proj(n) };
+  s.visuals.V1.visual = { visualType: guid, query: { queryState },
+    objects: calcs === undefined ? {} : { chartSettings: [{ properties: { calculations: W(JSON.stringify(calcs)) } }] } };
+};
+const calcCodes = (guid, roles, calcs) => codes(project(tableWith(guid, roles, calcs)));
+const ACPYPL = { Values: 1, PreviousYear: 1, Plan: 1 };
+
+check("a four-key calculations value on a three-scenario table draws the plan variance twice and is caught", () => {
+  const four = ["actual-plan", "actual-plan-percent", "actual-previousYear", "actual-previousYear-percent"];
+  for (const g of [GUID.tables, GUID.tablesPlus]) {
+    const root = project(tableWith(g, ACPYPL, four));
+    const hit = srv.validateReport({ projectPath: root }).findings.find((f) => f.code === CALC);
+    assert.ok(hit, "missed the four-key value on " + g);
+    assert.strictEqual(hit.severity, "wrong-numbers");
+    assert.ok(/actual-plan, actual-plan/.test(hit.detail) && /actual-previousYear is not drawn/.test(hit.detail), hit.detail);
+  }
+  assert.ok(calcCodes(GUID.tablesPlus, ACPYPL, ["actual-previousYear", "actual-previousYear-percent", "actual-plan", "actual-plan-percent"]).has(CALC),
+    "missed the mirror value");
+  assert.ok(calcCodes(GUID.tables, { Values: 1, Forecast: 1, Plan: 1 }, ["actual-plan"]).has(CALC),
+    "missed one entry that repeats the pair another slot shows by default");
+});
+
+check("pairs only, the key absent, a harmless percent tail past the drawn slots and other shapes are NOT flagged", () => {
+  const silent = (what, guid, roles, calcs) => assert.ok(!calcCodes(guid, roles, calcs).has(CALC), "fired on " + what);
+  silent("distinct pairs", GUID.tablesPlus, ACPYPL, ["actual-previousYear", "actual-plan"]);
+  silent("PL first", GUID.tablesPlus, ACPYPL, ["actual-plan", "actual-previousYear"]);
+  silent("the key absent", GUID.tablesPlus, ACPYPL, undefined);
+  silent("an empty list", GUID.tablesPlus, ACPYPL, []);
+  silent("a null placeholder", GUID.tablesPlus, ACPYPL, [null, "actual-plan"]);
+  // two scenarios: one variance slot is drawn, so a percent tail in slot 2 is never read
+  silent("a two-scenario table with a percent tail", GUID.tablesPlus, { Values: 1, PreviousYear: 1 }, ["actual-previousYear", "actual-previousYear-percent"]);
+  silent("AC/FC/PL with the forecast pair first", GUID.tables, { Values: 1, Forecast: 1, Plan: 1 }, ["forecast-plan", "actual-plan"]);
+  // a Plan role with two projections adds plan2; the vendor shape [null, plan-actual, plan2-actual]
+  silent("a table with two plan projections", GUID.tables, { Values: 1, Plan: 2 }, [null, "plan-actual", "plan2-actual"]);
+  // an entry naming a scenario that is not bound ends the loop; later entries are not read
+  silent("an entry that names an unbound scenario", GUID.tablesPlus, ACPYPL, ["actual-forecast", "actual-plan", "actual-plan"]);
+  // not a table, not an array, no Values
+  assert.ok(!calcCodes(GUID.charts, ACPYPL, ["actual-plan", "actual-plan-percent"]).has(CALC), "fired on a Charts visual");
+  assert.ok(!codes(project(tableWith(GUID.tablesPlus, ACPYPL, "x"))).has(CALC), "judged a calculations value that is a string");
+  silent("no Values bound", GUID.tablesPlus, { PreviousYear: 1, Plan: 1 }, ["actual-plan", "actual-plan-percent"]);
+});
+
+// A table with computed rows (addedFormulas) must not be sorted by a value column.
+const SORTED = "computed-rows-sorted-by-value";
+const ADDED = [{ identity: "Gross profit", expression: "[Revenue] + [Cost of sales]", hierarchyIdentity: "Fin.Account",
+  position: "Cost of sales", bold: true }];
+// A Tables or Tables+ visual with a Category, computed rows and the given sort keys.
+const sortedTable = (guid, sort, extra = {}, added = ADDED) => (s) => {
+  const sortProps = {};
+  for (const [k, v] of Object.entries(sort)) sortProps[k] = typeof v === "number" ? N(v) : W(v);
+  s.visuals.V1.visual = { visualType: guid,
+    query: { queryState: { Category: { projections: [{ field: { Column: { Property: "Account" } },
+      queryRef: "Fin.Account", nativeQueryRef: "Account", displayName: "P&L line" }] },
+      Values: { projections: [{ field: {}, queryRef: "Fin.AC" }] } } },
+    objects: { categoriesMetadata: [{ properties: { addedFormulas: W(JSON.stringify(added)) } }],
+      ...(Object.keys(sort).length ? { sortSettings: [{ properties: sortProps }] } : {}), ...extra } };
+};
+const sortedCodes = (guid, sort, extra, added) => codes(project(sortedTable(guid, sort, extra, added)));
+
+check("computed rows sorted by a value column are caught, on Tables and Tables+, in every form of that sort", () => {
+  for (const g of [GUID.tables, GUID.tablesPlus]) {
+    assert.ok(sortedCodes(g, { columnName: "actual", categorySort: 1 }).has(SORTED), "missed descending by actual on " + g);
+    assert.ok(sortedCodes(g, { columnName: "actual", categorySort: 2, chartSort: 2 }).has(SORTED), "missed ascending by actual on " + g);
+    assert.ok(sortedCodes(g, { categorySort: 1 }).has(SORTED), "missed a descending sort with no columnName (the first Values column)");
+    // the shape of the agent-built page that drew the subtotals among the lines
+    assert.ok(sortedCodes(g, { columnName: "actual", categorySort: 0 }).has(SORTED), "missed categorySort 0 on a value column with no chartSort");
+    assert.ok(sortedCodes(g, { columnName: "plan-actual", categorySort: 1 }).has(SORTED), "missed a variance column");
+    assert.ok(sortedCodes(g, { columnName: "Amount AC", categorySort: 1 }).has(SORTED), "missed a measure's display name");
+  }
+  const hit = srv.validateReport({ projectPath: project(sortedTable(GUID.tablesPlus, { columnName: "actual", categorySort: 0 })) })
+    .findings.find((f) => f.code === SORTED);
+  assert.strictEqual(hit.severity, "looks-fine");
+});
+
+check("the statement-order sorts, the hidden order column and everything that is not a value sort are NOT flagged", () => {
+  const silentSort = (what, sort, extra, added, guid = GUID.tablesPlus) =>
+    assert.ok(!sortedCodes(guid, sort, extra, added).has(SORTED), "fired on " + what);
+  for (const g of [GUID.tables, GUID.tablesPlus]) {
+    silentSort("categorySort 0 and chartSort 0 on 'actual' (28 shipped statement tables)", { columnName: "actual", categorySort: 0, chartSort: 0 }, undefined, ADDED, g);
+    silentSort("categorySort 0 and chartSort 0 with no columnName", { categorySort: 0, chartSort: 0 }, undefined, ADDED, g);
+  }
+  silentSort("columnName 'category'", { columnName: "category", categorySort: 0 });
+  silentSort("columnName 'category' descending", { columnName: "category", categorySort: 1 });
+  silentSort("columnName naming the category column", { columnName: "Account", categorySort: 2 });
+  silentSort("columnName naming the category's display name", { columnName: "p&l line", categorySort: 2 });
+  silentSort("a columnName with no categorySort (the shipped Financial statements shape)", { columnName: "actual" });
+  silentSort("no sortSettings at all", {});
+  // the remedy the message names: an order column, hidden, sorted on
+  const hidden = { chartSettings: [{ properties: { columnSettings: W(JSON.stringify({ "Row order": { order: 20, hidden: true } })) } }] };
+  silentSort("a hidden order column", { columnName: "Row order", categorySort: 2, chartSort: 2 }, hidden);
+  assert.ok(sortedCodes(GUID.tablesPlus, { columnName: "Row order", categorySort: 2, chartSort: 2 },
+    { chartSettings: [{ properties: { columnSettings: W(JSON.stringify({ "Row order": { order: 20, hidden: false } })) } }] }).has(SORTED),
+    "an order column left visible is still a sort by a value column");
+  silentSort("a table with no computed rows sorted by actual", { columnName: "actual", categorySort: 1 }, undefined, []);
+  silentSort("a table with no addedFormulas value", { columnName: "actual", categorySort: 1 }, undefined, null);
+  // not a table
+  assert.ok(!sortedCodes(GUID.charts, { columnName: "actual", categorySort: 1 }).has(SORTED), "fired on a Charts visual");
+});
+
+// --- review fixes: a checker reports, never throws; one slot simulation; fences and block comments -----
+
+// Every rule over a project whose arrays hold null members, a visualType that is not a string, and the
+// shapes the nine rules of 22 Nov read. A rule that throws loses every finding on the project.
+const nullify = (x) => {
+  if (Array.isArray(x)) return [null, ...x.map(nullify), null];
+  if (x && typeof x === "object") return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, nullify(v)]));
+  return x;
+};
+const nullifyJsonFiles = (dir) => {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const f = path.join(dir, e.name);
+    if (e.isDirectory()) nullifyJsonFiles(f);
+    else if (/\.(json|pbir|pbip)$/.test(e.name)) {
+      const raw = fs.readFileSync(f, "utf8").replace(/^﻿/, "");
+      let j; try { j = JSON.parse(raw); } catch { continue; }
+      fs.writeFileSync(f, JSON.stringify(nullify(j)));
+    }
+  }
+};
+const dateField = { Column: { Expression: { SourceRef: { Entity: "Calendar" } }, Property: "Date" } };
+const richProject = (s) => {
+  s.reportJson.resourcePackages = [{ name: "R", type: "RegisteredResources", items: [{ name: "a", path: "a", type: "CustomVisual" }] }];
+  s.pbip.artifacts = [{ report: { path: "Demo.Report" } }];
+  const roles = (n) => ({ projections: Array.from({ length: n }, (_, i) => ({ field: dateField, queryRef: "m" + i })) });
+  s.visuals.V1 = { name: "V1", position: { x: 0, y: 0, width: 600, height: 400 },
+    visual: { visualType: GUID.tablesPlus,
+      query: { queryState: { Category: roles(2), Values: roles(1), PreviousYear: roles(1), Plan: roles(1), Forecast: roles(1) },
+        sortDefinition: { sort: [{ field: dateField, direction: "Ascending" }] } },
+      objects: { chartSettings: [{ properties: { calculations: W(JSON.stringify(["actual-plan", "actual-plan-percent"])),
+        showVerticalCharts: { expr: { Literal: { Value: "true" } } } } }],
+        sortSettings: [{ properties: {} }] },
+      visualContainerObjects: { general: [{ properties: {} }] } } };
+  s.visuals.C1 = { name: "C1", position: { x: 0, y: 0, width: 600, height: 400 },
+    visual: { visualType: GUID.chartsPlus, query: { queryState: { Category: roles(2) } },
+      objects: { chartSettings: [{ properties: { showVerticalCharts: { expr: { Literal: { Value: "true" } } } } }] } } };
+  s.visuals.T1 = { name: "T1", position: { x: 0, y: 0, width: 400, height: 40 },
+    visual: { visualType: "textbox",
+      objects: { general: [{ properties: { paragraphs: [{ textRuns: [{ value: "x" }] }] } }] },
+      visualContainerObjects: { general: [{ properties: { paragraphs: [{ textRuns: [{ value: "x" }] }] } }] } } };
+  s.visuals.N1 = { name: "N1", position: { x: 0, y: 0, width: 100, height: 100 }, visual: { visualType: 42, objects: {} } };
+};
+
+check("no rule throws on a project whose arrays hold null members", () => {
+  const root = project(richProject);
+  fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), [
+    "table Calendar", "\tdataCategory: Time", "", "\tcolumn Date", "\t\tdataType: dateTime", "\t\tisKey", ""].join("\n"));
+  nullifyJsonFiles(root);
+  try { srv.validateReport({ projectPath: root }); }
+  catch (e) { assert.fail("validate_report threw: " + e.stack.split("\n").slice(0, 3).join(" | ")); }
+  const p = srv.resolveProject(root);
+  const thrown = [];
+  for (const rule of srv.loadRules()) {
+    try { srv.checkers[rule.check](p); } catch (e) { thrown.push(`${rule.id}: ${e.message}`); }
+  }
+  assert.deepStrictEqual(thrown, [], thrown.join(" | "));
+});
+
+check("the vertical-orientation rule reports, and does not throw, on a null Category projection", () => {
+  const root = project((s) => {
+    s.visuals.C1 = { name: "C1", position: { x: 0, y: 0, width: 600, height: 400 },
+      visual: { visualType: GUID.charts, query: { queryState: { Category: { projections: [null, { field: dateField, queryRef: "x" }] } } },
+        objects: { chartSettings: [{ properties: { showVerticalCharts: { expr: { Literal: { Value: "true" } } } } }] } } };
+  });
+  fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), [
+    "table Calendar", "\tdataCategory: Time", "", "\tcolumn Date", "\t\tdataType: dateTime", "\t\tisKey", ""].join("\n"));
+  const out = srv.validateReport({ projectPath: root });
+  assert.ok(out.ok, out.error);
+});
+
+check("a drill hierarchy is judged on its first level: Account then Month is a ranking, Month then Account is not", () => {
+  const model = "table Accounts\n\n\tcolumn Account\n\t\tdataType: string\n\ntable Calendar\n\tdataCategory: Time\n\n\tcolumn Month\n\t\tdataType: string\n";
+  const acct = { Column: { Expression: { SourceRef: { Entity: "Accounts" } }, Property: "Account" } };
+  const month = { Column: { Expression: { SourceRef: { Entity: "Calendar" } }, Property: "Month" } };
+  const run = (fields) => {
+    const root = project((s) => {
+      s.visuals.C1 = { name: "C1", position: { x: 0, y: 0, width: 600, height: 400 },
+        visual: { visualType: GUID.charts, query: { queryState: { Category: { projections: fields.map((field, i) => ({ field, queryRef: "f" + i })) } } },
+          objects: { chartSettings: [{ properties: { showVerticalCharts: { expr: { Literal: { Value: "true" } } } } }] } } };
+    });
+    fs.writeFileSync(path.join(root, "Demo.SemanticModel", "definition", "model.tmdl"), model);
+    return codes(root);
+  };
+  assert.ok(!run([acct, month]).has("charts-vertical-orientation-on-time"), "fired on a ranking with a time drill");
+  assert.ok(run([month, acct]).has("charts-vertical-orientation-on-time"), "missed a time first level");
+});
+
+// One implementation of the visual's slot logic: the checker, the encoder and the writers agree.
+check("the calculations rule and tableComparisonSlots agree on 3,000 role and list combinations", () => {
+  const enc = require("./encoders.js");
+  const names = ["actual", "previousYear", "plan", "plan2", "plan3", "forecast", "forecast2", "forecast3", "plan4"];
+  let seed = 12345; const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const rule = srv.checkers["tables-calculations-must-name-distinct-drawn-pairs"];
+  let fired = 0;
+  for (let i = 0; i < 3000; i++) {
+    const roles = { Values: rnd(3), PreviousYear: rnd(2), Plan: rnd(5), Forecast: rnd(4) };
+    const list = Array.from({ length: rnd(5) }, () => {
+      const k = rnd(10); if (k === 0) return null;
+      const a = k < 7 ? "actual" : names[rnd(names.length)], b = names[rnd(names.length)];
+      return k === 1 || k === 8 ? `${a}-${b}-percent` : `${a}-${b}`;
+    });
+    const parsed = { visual: { visualType: GUID.tablesPlus, query: { queryState: Object.fromEntries(Object.entries(roles)
+      .filter(([, n]) => n > 0).map(([r, n]) => [r, { projections: Array.from({ length: n }, () => ({})) }])) },
+      objects: { chartSettings: [{ properties: { calculations: W(JSON.stringify(list)) } }] } } };
+    const hits = rule({ visuals: [{ visualType: GUID.tablesPlus, rel: "v.json", parsed }] });
+    const want = enc.tableComparisonSlots(roles, list).repeats.length > 0;
+    assert.strictEqual(hits.length > 0, want, `roles ${JSON.stringify(roles)} list ${JSON.stringify(list)}`);
+    if (want) fired++;
+  }
+  assert.ok(fired > 100, `only ${fired} cases exercised a repeat`);
+});
+
+check("a table with no Values is judged as the visual's role assignment does, and a role counts three measures at most", () => {
+  const enc = require("./encoders.js");
+  // no Values: Previous year becomes the value scenario, Plan its reference; ["previousYear-plan2"] then repeats nothing
+  const noValues = { PreviousYear: 1, Plan: 2 };
+  assert.deepStrictEqual(enc.tableReferences(noValues), { value: "previousYear", references: ["plan", "plan2"] });
+  assert.ok(calcCodes(GUID.tablesPlus, noValues, ["previousYear-plan2"]).has(CALC), "the checker skipped a table with no Values");
+  // a fourth Plan measure is not a fourth reference: the visual has no name for it
+  assert.deepStrictEqual(enc.tableReferences({ Values: 1, Plan: 4 }).references, ["plan", "plan2", "plan3"]);
+  assert.ok(!calcCodes(GUID.tablesPlus, { Values: 1, Plan: 4 }, ["actual-plan", "actual-plan2", "actual-plan3"]).has(CALC),
+    "judged a reference the visual cannot name");
+});
 
 // --- the silence bar -----------------------------------------------------------------------
 // The acceptance test the held catalogue paid for: a rule that fires on a good report is worse than

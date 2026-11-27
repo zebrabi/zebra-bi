@@ -56,9 +56,10 @@ plain English from then on. [Claude Code setup instructions](https://claude.com/
 [`INSTALL.md`](INSTALL.md) covers GitHub Copilot CLI and other agents.
 
 **Recommended: Node.js.** A free download from **https://nodejs.org**. It runs the checker, which
-reads your report files for faults Power BI does not warn you about. If your IT team does not allow
-Node, skip it: the agent still builds the report and checks the rendered page, and you lose only
-the checker.
+reads your report files for faults Power BI does not warn you about, and the tools that write
+report files, create a project from flat files and add measures. If your IT team does not allow
+Node, skip it: the agent still builds the report by writing the files itself and checks the
+rendered page, and you lose the checker and those tools.
 
 ## Installing
 
@@ -128,12 +129,12 @@ before it builds instead of deciding for you.
 | **`/zebra-bi:setup-doctor`** | Checks this machine can do the job: Power BI Desktop, your project, the visuals, your licence, your model, and what it can verify. Ten checks, each with a fix. |
 | **`/zebra-bi:report-authoring`** | The authoring itself. Planning a page, binding data, variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates. |
 | **`/zebra-bi:report-publishing`** | The Zebra-specific parts of putting a finished report in a workspace. Microsoft's own skill does the upload; this covers the choice of visuals you have to make before you publish, and the refresh without which the report arrives empty. |
-| **The checker** | Reads your project and reports faults before you open it: 67 of them, each one a real problem we have hit and fixed. Recommended; needs Node.js, see below. |
+| **The checker** | Reads your project and reports faults before you open it: 77 of them, each one a real problem we have hit and fixed. Recommended; needs Node.js, see below. |
 
 ### About the checker
 
 The checker needs **Node.js**, a free download from **https://nodejs.org**. If you have it, you
-get 67 checks that catch things Power BI itself does not mention: a comment that will blank a whole
+get 77 checks that catch things Power BI itself does not mention: a comment that will blank a whole
 visual, colours that will be silently ignored, a computed row that will quietly inflate your grand
 total, a sort that will make a table render empty.
 

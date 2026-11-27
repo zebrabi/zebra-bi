@@ -106,6 +106,12 @@ const EXPECTED = {
   // "Missing required artifact 'model.bim'", and the same project corrected to 4.2 opens.
   "pbism-version-too-old-for-tmdl": "definition.pbism says `1.0` beside a TMDL definition/ folder, "
     + "so Desktop looks for model.bim and refuses the project",
+  // Pinned as a defect, judged rather than accepted. The same hand-built prototype carries a
+  // report.json with no publicCustomVisuals and no resource package, while its pages use the Zebra BI
+  // Tables, Charts and Cards types: the visuals are unresolved placeholders. The rule is silent on
+  // all 20 shipped templates (17 register through resourcePackages, 3 through both mechanisms).
+  "zebra-visual-type-not-registered": "report.json registers none of the three Zebra BI visual types "
+    + "the pages use, so Desktop has no visual to resolve them to",
 };
 
 // Neither a missing manifest nor an override that points nowhere is a reason to report success

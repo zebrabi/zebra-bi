@@ -88,6 +88,46 @@ check("no visuals is stated in notChecked, not left to the counts", () => {
     "a report with no visuals must say so in notChecked");
 });
 
+// `ok` has only ever meant "the check ran". A caller that branched on it read a report full of
+// findings as a pass, so the result also says outright whether the project is clean and how many
+// findings each severity has. `ok` itself is unchanged.
+const cleanProject = () => {
+  const root = makeProject();
+  fs.writeFileSync(path.join(root, "Demo.pbip"), JSON.stringify({
+    $schema: "https://developer.microsoft.com/json-schemas/fabric/pbip/pbipProperties/1.0.0/schema.json" }));
+  fs.writeFileSync(path.join(root, "Demo.Report", "definition", "version.json"), JSON.stringify({
+    $schema: "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/versionMetadata/1.0.0/schema.json",
+    version: "2.0.0" }));
+  return root;
+};
+
+check("validate_report returns clean true and zero counts for a project with no findings, beside ok true", () => {
+  const out = srv.validateReport({ projectPath: cleanProject() });
+  assert.strictEqual(out.findings.length, 0, out.findings.map((f) => f.code).join(", "));
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.clean, true);
+  assert.deepStrictEqual(out.counts, { "wont-open": 0, blank: 0, "wrong-numbers": 0, "looks-fine": 0, total: 0 });
+});
+
+check("validate_report returns ok true, clean false and per-severity counts when there are findings", () => {
+  const out = srv.validateReport({ projectPath: makeProject({ theme: false }) });
+  assert.strictEqual(out.ok, true, "ok must keep meaning that the check ran");
+  assert.strictEqual(out.clean, false);
+  const by = {};
+  for (const f of out.findings) by[f.severity] = (by[f.severity] || 0) + 1;
+  for (const sev of ["wont-open", "blank", "wrong-numbers", "looks-fine"]) {
+    assert.strictEqual(out.counts[sev], by[sev] || 0, `count for ${sev}`);
+  }
+  assert.strictEqual(out.counts.total, out.findings.length);
+  assert.ok(out.counts.blank >= 1 && out.counts["wont-open"] >= 1, JSON.stringify(out.counts));
+});
+
+check("a check that did not run is never clean", () => {
+  const out = srv.validateReport({ projectPath: makeProject({ empty: true }) });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.clean, false);
+});
+
 check("a BOM does not also produce a bogus parse error", () => {
   const out = srv.validateReport({ projectPath: makeProject({ bom: true }) });
   assert.strictEqual(out.findings.filter((f) => f.code === "unparseable-json").length, 0,
@@ -198,6 +238,12 @@ function rpc(messages) {
     assert.ok(r.result.tools[0].inputSchema.required.includes("projectPath"));
   });
 
+  check("the validate_report description says ok means the check ran and points at clean and counts", () => {
+    const d = replies.find((x) => x.id === 2).result.tools[0].description;
+    assert.ok(/`ok` means the check ran/.test(d), d);
+    assert.ok(/`clean`/.test(d) && /`counts`/.test(d), d);
+  });
+
   check("tools/list advertises the encoders too", () => {
     const names = replies.find((x) => x.id === 2).result.tools.map((t) => t.name);
     assert.ok(names.length >= 8, `only ${names.length} tools advertised`);
@@ -300,6 +346,46 @@ function rpc(messages) {
     const one = JSON.parse(lic.find((x) => x.id === 3).result.content[0].text);
     assert.deepStrictEqual(JSON.parse(one.content).visual.objects.licenseSettings, kept);
   });
+
+  // write_project over the wire: listed with explicit labels, writes into a new folder, and a
+  // second call into the same folder comes back as a refusal rather than a crash.
+  const wpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zbi-srv-wp-"));
+  fs.writeFileSync(path.join(wpRoot, "sales.csv"),
+    "Date,Region,Scenario,Amount\n2025-01-01,N,Actual,10\n2025-01-01,N,Budget,12\n2025-02-01,S,Actual,20\n2025-02-01,S,Budget,18\n");
+  const wpArgs = { name: "Demo", outPath: path.join(wpRoot, "out"), source: { path: path.join(wpRoot, "sales.csv") } };
+  const wp = await rpc([
+    { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "write_project", arguments: wpArgs } },
+    { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "write_project", arguments: wpArgs } },
+  ]);
+
+  check("tools/list advertises write_project, labelled as writing and not destructive", () => {
+    const t = wp.find((x) => x.id === 1).result.tools.find((x) => x.name === "write_project");
+    assert.ok(t, "write_project not advertised");
+    assert.deepStrictEqual(t.inputSchema.required, ["name", "outPath", "source"]);
+    assert.strictEqual(t.annotations.readOnlyHint, false);
+    assert.strictEqual(t.annotations.destructiveHint, false);
+  });
+
+  check("tools/list advertises write_measures, labelled as editing an existing file", () => {
+    const t = wp.find((x) => x.id === 1).result.tools.find((x) => x.name === "write_measures");
+    assert.ok(t, "write_measures not advertised");
+    assert.deepStrictEqual(t.inputSchema.required, ["projectPath", "table", "measures"]);
+    assert.strictEqual(t.annotations.readOnlyHint, false);
+    assert.strictEqual(t.annotations.destructiveHint, true);
+  });
+
+  check("write_project writes a project over stdio and refuses a second write into it", () => {
+    const ok = wp.find((x) => x.id === 2).result;
+    assert.strictEqual(ok.isError, false, ok.content[0].text.slice(0, 200));
+    const payload = JSON.parse(ok.content[0].text);
+    assert.ok(payload.files.some((f) => f.path === "Demo.pbip"));
+    assert.ok(fs.existsSync(path.join(wpRoot, "out", "Demo.pbip")));
+    const again = wp.find((x) => x.id === 3).result;
+    assert.strictEqual(again.isError, true);
+    assert.ok(/not empty/.test(JSON.parse(again.content[0].text).error));
+  });
+  fs.rmSync(wpRoot, { recursive: true, force: true });
 
   for (const [s, n, d] of results) console.log(`  ${s}  ${n}${d ? "  <- " + d : ""}`);
   const failed = results.filter((r) => r[0] === "FAIL").length;

@@ -1,5 +1,7 @@
 # The five project files the writers don't write
 
+A new project from a folder of flat files (CSV, TSV, JSON) is created with `write_project`, which writes these files, the model and its tables. Writing these files by hand is for reading, repairing or extending an existing project.
+
 `write_report` and the other writers produce the `definition/pages` tree and `version.json`. They do not write these five files, and Power BI Desktop refuses to open a project, or opens it empty, when one of them is off. When there is no working project to copy, write each one exactly as shown, replacing `<Name>` with the project name. Do not add properties and do not change a version.
 
 ## `<Name>.pbip`
@@ -82,4 +84,6 @@ ref table <OtherTable>
 - Put a partition's `source =` on its own line and indent the whole expression on the lines after it, one level deeper than `source`. Starting the expression on the `source =` line fails with "TMDL Format Error: Parsing error type - InvalidLineType" at the first row.
 - Every value in a DATATABLE row is a constant (a number, text or an ISO date string), never a function call. `DATE(2025,1,1)` in a row makes the calculated table fail on load, and every visual on it is blank.
 - Carry a date as an ISO string constant (`"yyyy-mm-dd"`) in a `DATETIME` column, or build it outside the rows with `ADDCOLUMNS ( DATATABLE ( ... ), "Date", DATE ( [Year], [MonthNo], 1 ) )`.
+- Indent every line of a calculated table's expression with tabs. DATATABLE rows indented with spaces under a tab-indented `source =` fail with "Invalid indentation was detected!".
+- Every column a calculated table declares carries `sourceColumn: [Name]` beside `isNameInferred`; without it Desktop says "Column 'Year' in calculated table 'Financials' is missing the SourceColumn property".
 - Run `validate_report` after writing them: the checks for every fault named here live in the tool.

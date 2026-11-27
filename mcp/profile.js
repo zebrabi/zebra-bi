@@ -163,27 +163,69 @@ function logFactorial(n) {
   return _logFactCache[n];
 }
 
-function rankQuestions(tables, limit = 25) {
+function rankQuestions(tables, limit = 25, relationships = []) {
   const ranked = [];
   const derived = [];
+  const dimsOf = (t) => t.columns.filter((c) => !NUMERIC.has(c.dataType) && !c.looksLikeDate
+    && c.distinct > 1 && c.distinct <= 200);
+  // A column at either end of a relationship is a key, not an amount, however numeric it is.
+  const keys = new Set(relationships.flatMap((r) => [`${r.fromTable}|${r.fromColumn}`, `${r.toTable}|${r.toColumn}`].map((k) => k.toLowerCase())));
+  const numsOf = (t) => t.columns.filter((c) => NUMERIC.has(c.dataType) && c.min !== c.max
+    && !keys.has(`${t.name}|${c.name}`.toLowerCase()));
   for (const t of tables) {
     if (!t.dataOnDisk || !t.rows) continue;
-    const dims = t.columns.filter((c) => !NUMERIC.has(c.dataType) && !c.looksLikeDate
-      && c.distinct > 1 && c.distinct <= 200);
-    const nums = t.columns.filter((c) => NUMERIC.has(c.dataType) && c.min !== c.max);
+    const dims = dimsOf(t);
+    const nums = numsOf(t);
     for (const d of dims) {
       const di = t.columns.indexOf(d);
       for (const n of nums) {
+        scorePair(t, (r) => r[di], n, d.name, `${t.name}[${d.name}]`, ranked, derived);
+      }
+    }
+  }
+  // ACROSS A RELATIONSHIP. A star schema keeps its categories on the dimension tables and only keys
+  // on the fact, so the loop above finds nothing to cut the fact by. Each active many-to-one
+  // relationship from a fact with rows on disk to a dimension with rows on disk lends the
+  // dimension's categorical columns to the fact: every fact row takes the attribute of the
+  // dimension row its key points at, and the same measure is computed on the fact's own rows. One
+  // hop only. A model with no relationships gets exactly what the loop above gives.
+  const byName = new Map(tables.map((t) => [t.name.toLowerCase(), t]));
+  const norm = (v) => { const s = String(v === undefined ? "" : v).trim(); const x = Number(s); return s !== "" && Number.isFinite(x) ? String(x) : s; };
+  for (const rel of relationships) {
+    const f = byName.get(rel.fromTable.toLowerCase());
+    const d = byName.get(rel.toTable.toLowerCase());
+    if (!f || !d || f === d || !f.dataOnDisk || !d.dataOnDisk || !f.rows || !d.rows) continue;
+    const fi = f.columns.findIndex((c) => c.name.toLowerCase() === rel.fromColumn.toLowerCase());
+    const ki = d.columns.findIndex((c) => c.name.toLowerCase() === rel.toColumn.toLowerCase());
+    // Both keys must be columns of the embedded rows, not columns added outside them.
+    if (fi < 0 || ki < 0 || !f.rows.length || !d.rows.length || fi >= f.rows[0].length || ki >= d.rows[0].length) continue;
+    for (const a of dimsOf(d)) {
+      const ai = d.columns.indexOf(a);
+      if (ai === ki || ai >= d.rows[0].length) continue;
+      const attr = new Map(d.rows.map((r) => [norm(r[ki]), r[ai]]));
+      for (const n of numsOf(f)) {
+        scorePair(f, (r) => attr.get(norm(r[fi])), n, a.name, `${d.name}[${a.name}]`, ranked, derived);
+      }
+    }
+  }
+  ranked.sort((a, b) => b.effect - a.effect);
+  // `derived` is reported, never silently dropped: "this pair is a tautology" is itself useful,
+  // and a silent exclusion is indistinguishable from a pair the tool failed to consider.
+  return { ranked: ranked.slice(0, limit), rankedCount: ranked.length, excludedAsDerived: derived };
+}
+
+/** Scores one numeric column of table `t` grouped by `keyOf(row)`; pushes to `ranked` or `derived`. */
+function scorePair(t, keyOf, n, dName, dimRef, ranked, derived) {
         const ni = t.columns.indexOf(n);
         const groups = new Map();
         for (const r of t.rows) {
-          const k = r[di];
+          const k = keyOf(r);
           const v = Number(r[ni]);
           if (k === undefined || !Number.isFinite(v)) continue;
           const g = groups.get(k) || { sum: 0, n: 0 };
           g.sum += v; g.n++; groups.set(k, g);
         }
-        if (groups.size < 2) continue;
+        if (groups.size < 2) return;
         const means = [...groups.entries()].map(([k, g]) => ({ k, mean: g.sum / g.n, total: g.sum }));
         // Concentration is a share, so its denominator must not net toward zero. On a mixed-sign
         // measure -- and a VARIANCE is mixed-sign by definition -- the signed grand total does
@@ -197,14 +239,14 @@ function rankQuestions(tables, limit = 25) {
         const lo = means.reduce((a, b) => (a.mean < b.mean ? a : b));
         const hi = means.reduce((a, b) => (a.mean > b.mean ? a : b));
         const scale = n.max - n.min;
-        if (!Number.isFinite(scale) || scale === 0) continue;
+        if (!Number.isFinite(scale) || scale === 0) return;
         const effect = Math.abs(hi.mean - lo.mean) / Math.abs(scale);
 
         // Is the dimension DERIVED from this column? If every member owns a disjoint slice of the
         // column's values, the "finding" is the band definition read back.
         const spans = new Map();
         for (const r of t.rows) {
-          const k = r[di]; const v = Number(r[ni]);
+          const k = keyOf(r); const v = Number(r[ni]);
           if (k === undefined || !Number.isFinite(v)) continue;
           const s2 = spans.get(k) || { lo: Infinity, hi: -Infinity };
           s2.lo = Math.min(s2.lo, v); s2.hi = Math.max(s2.hi, v); spans.set(k, s2);
@@ -232,15 +274,15 @@ function rankQuestions(tables, limit = 25) {
           if (logP > Math.log(1e-6)) disjoint = false;   // plausibly chance: keep it as a finding
         }
         if (disjoint) {
-          derived.push(`${n.name} by ${d.name} — the band partitions this column, so the "finding" `
+          derived.push(`${n.name} by ${dName} — the band partitions this column, so the "finding" `
             + "is its own definition");
-          continue;
+          return;
         }
 
         const top = means.reduce((a, b) => (Math.abs(a.total) > Math.abs(b.total) ? a : b));
         ranked.push({
-          question: `${n.name} by ${d.name}`,
-          dimension: `${t.name}[${d.name}]`,
+          question: `${n.name} by ${dName}`,
+          dimension: dimRef,
           measureColumn: `${t.name}[${n.name}]`,
           members: groups.size,
           effect: Number(effect.toFixed(3)),
@@ -249,16 +291,30 @@ function rankQuestions(tables, limit = 25) {
           lowest: { member: lo.k, mean: Number(lo.mean.toFixed(2)) },
           highest: { member: hi.k, mean: Number(hi.mean.toFixed(2)) },
         });
-      }
-    }
-  }
-  ranked.sort((a, b) => b.effect - a.effect);
-  // `derived` is reported, never silently dropped: "this pair is a tautology" is itself useful,
-  // and a silent exclusion is indistinguishable from a pair the tool failed to consider.
-  return { ranked: ranked.slice(0, limit), rankedCount: ranked.length, excludedAsDerived: derived };
 }
 
-function profileProject(project) {
+/** Active relationships declared in the model, as {fromTable, fromColumn, toTable, toColumn}. */
+function relationshipsOf(model) {
+  const out = [];
+  const split = (ref) => {
+    const m = String(ref || "").trim().match(/^('(?:[^']|'')*'|[^.'\s][^.']*)\.('(?:[^']|'')*'|.+)$/);
+    return m ? { table: tmdl.TREE.unquoteName(m[1]), column: tmdl.TREE.unquoteName(m[2]) } : null;
+  };
+  for (const s of model.sources || []) {
+    if (!s.tree) continue;
+    for (const r of s.tree.root.children) {
+      if (r.type !== "relationship") continue;
+      const active = tmdl.TREE.propValue(r, "isActive");
+      if (active !== null && /^false$/i.test(active)) continue;
+      const from = split(tmdl.TREE.propValue(r, "fromColumn"));
+      const to = split(tmdl.TREE.propValue(r, "toColumn"));
+      if (from && to) out.push({ fromTable: from.table, fromColumn: from.column, toTable: to.table, toColumn: to.column });
+    }
+  }
+  return out;
+}
+
+function profileProject(project, opts = {}) {
   const model = project.model;
   if (!model || !model.present) {
     return { ok: false, error: "no semantic model was read, so there is nothing to profile" };
@@ -359,7 +415,7 @@ function profileProject(project) {
       + "STRUCTURE was read.");
   }
 
-  const signal = rankQuestions(tables);
+  const signal = rankQuestions(tables, opts.rankLimit || 25, relationshipsOf(model));
 
   return {
     ok: true,

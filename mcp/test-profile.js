@@ -296,6 +296,58 @@ check("with AC + PY present it DOES bind the comparison", () => {
   assert.ok(v.bindings.PreviousYear, "PreviousYear well left empty");
 });
 
+check("Tables+ pages carry a note about the automatic title; certified Tables pages do not", () => {
+  const plus = proposed({ fact: SIGNAL_FACT, measures: MEASURES });
+  assert.ok(plus.notes && plus.notes.some((n) => /automatic title/.test(n)), JSON.stringify(plus.notes));
+  assert.ok(plus.spec.pages[0].visuals[0].properties["titleSettings.text"], "the authored title went missing");
+  const certified = proposed({ fact: SIGNAL_FACT, measures: MEASURES }, { usePlus: false });
+  assert.ok(!certified.notes, "a certified Tables proposal carries the Tables+ note");
+});
+
+// Actual and plan as two numeric columns (the wide form), with one measure over each column.
+const WIDE_FACT = [
+  "table Costs", "\tcolumn CostCentre", "\t\tdataType: string", "\tcolumn Team", "\t\tdataType: string",
+  "\tcolumn Actual", "\t\tdataType: double", "\tcolumn Plan", "\t\tdataType: double",
+  "\tpartition Costs = calculated", "\t\tmode: import", "\t\tsource =", "\t\t\tDATATABLE(",
+  '\t\t\t\t"CostCentre", string,', '\t\t\t\t"Team", string,', '\t\t\t\t"Actual", double,', '\t\t\t\t"Plan", double,',
+  "\t\t\t\t{",
+  '\t\t\t\t\t{"Staff", "A", 620, 600},', '\t\t\t\t\t{"Travel", "A", 830, 510},',
+  '\t\t\t\t\t{"Marketing", "B", 450, 490},', '\t\t\t\t\t{"IT", "B", 500, 480},',
+  '\t\t\t\t\t{"Facilities", "A", 310, 320},', '\t\t\t\t\t{"Consulting", "B", 280, 240}',
+  "\t\t\t\t}", "\t\t\t)", "",
+].join("\n");
+const WIDE_MEASURES = "table '.Measures'\n\tmeasure 'Cost AC' = SUM(Costs[Actual])\n\tmeasure 'Cost PL' = SUM(Costs[Plan])\n";
+
+check("wide model: measures over an Actual column and a Plan column propose a variance page", () => {
+  const r = proposed({ fact: WIDE_FACT, measures: WIDE_MEASURES });
+  assert.strictEqual(r.ok, true, r.error);
+  assert.ok(r.comparisonBound, "the Actual and Plan measures were not bound as a comparison");
+  assert.strictEqual(r.comparisonBound.actual, ".Measures[Cost AC]");
+  assert.strictEqual(r.comparisonBound.plan, ".Measures[Cost PL]");
+  const v = r.spec.pages[0].visuals[0];
+  assert.ok(v.bindings.Plan && v.bindings.Values, "Plan or Values well left empty");
+  assert.ok(!(r.notes || []).some((n) => /WIDE SCENARIO/.test(n)), "the wide note fired although measures exist");
+});
+
+check("wide model: columns and no measures is refused, and the refusal names the wide scenarios", () => {
+  const r = proposed({ fact: WIDE_FACT });
+  assert.strictEqual(r.ok, false);
+  assert.ok(/WIDE SCENARIOS: Costs\[Actual\] is AC, Costs\[Plan\] is PL/.test(r.error), r.error);
+});
+
+check("wide model: a measure over the Actual column only says the Plan column is the missing comparison", () => {
+  const r = proposed({ fact: WIDE_FACT, measures: "table '.Measures'\n\tmeasure 'Cost AC' = SUM(Costs[Actual])\n" });
+  assert.strictEqual(r.ok, true, r.error);
+  assert.strictEqual(r.comparisonBound, null, "bound a comparison with no plan measure behind it");
+  assert.ok((r.notes || []).some((n) => /WIDE SCENARIOS.*Costs\[Plan\] is PL/.test(n)), JSON.stringify(r.notes));
+  assert.ok(r.youMustStillDecide.some((d) => /NO SCENARIO MEASURE PAIR/.test(d)), "the no-pair line was lost");
+});
+
+check("no wide-scenario note on a model without scenario columns", () => {
+  const r = proposed({ fact: SIGNAL_FACT, measures: "table '.Measures'\n\tmeasure Revenue = SUM(Sales[Amount])\n" });
+  assert.ok(!(r.notes || []).some((n) => /WIDE SCENARIOS/.test(n)), JSON.stringify(r.notes));
+});
+
 check("an unrankable project is REFUSED, not proposed from thin air", () => {
   const pq = "table Sales\n\tcolumn Region\n\t\tdataType: string\n"
            + "\tpartition Sales = m\n\t\tmode: import\n\t\tsource = let x = 1 in x\n";
@@ -391,6 +443,20 @@ check("a pair on a different metric is reported, not drawn", () => {
     "no notice that a pair exists elsewhere");
 });
 
+check("propose_pages never writes computed rows, so it cannot propose a value sort over them", () => {
+  const enc = require("./encoders.js");
+  const r = propose.proposePages(prof({ fact: SIGNAL_FACT, measures: MEASURES }), { maxPages: 4 });
+  assert.strictEqual(r.ok, true, r.error);
+  assert.ok(r.spec.pages.length > 0);
+  for (const page of r.spec.pages) for (const v of page.visuals) {
+    assert.ok(!v.addedFormulas && !JSON.stringify(v).includes("addedFormulas"), "a proposed visual carries computed rows");
+    // the writer agrees: the proposed spec draws no computed-row sort warning
+    const written = require("./writers.js").writeVisual(v);
+    assert.ok(!(written.warnings || []).some((x) => /computed row/.test(x)), "the writer warned about a proposed visual");
+    assert.strictEqual(enc.computedRowsSortedByValue({}, []), null);
+  }
+});
+
 check("Values binds a MEASURE that exists in the model, never a raw column", () => {
   const p = prof({ fact: SIGNAL_FACT, measures: MEASURES });
   const r = propose.proposePages(p, { maxPages: 4 });
@@ -418,6 +484,58 @@ check("a ranked column with NO measure over it is refused, not bound raw", () =>
     measures: "table '.Measures'\n\tmeasure Headcount = COUNTROWS(Sales)\n" }), {});
   assert.strictEqual(r.ok, false, "proposed a page it could not legally bind");
   assert.ok(/no measure aggregating it|takes a measure/i.test(r.error), r.error);
+});
+
+check("a measure over a single-quoted table reference still binds the ranked column", () => {
+  // 'Sales'[Amount] and Sales[Amount] name the same column. Matching only the bare form left every
+  // page unbindable on a model that quotes its table references.
+  for (const expr of ["SUM('Sales'[Amount])", "SUM ( 'sales'[Amount] )", "SUM(Sales[Amount])"]) {
+    const r = proposed({ fact: SIGNAL_FACT,
+      measures: `table '.Measures'\n\tmeasure 'Sales AC' = ${expr}\n` }, { maxPages: 1 });
+    assert.strictEqual(r.ok, true, `${expr}: ${r.error}`);
+    assert.strictEqual(r.subjectMeasure, ".Measures[Sales AC]", `${expr}: bound ${r.subjectMeasure}`);
+  }
+  // The control: a different column is still not matched.
+  const r = proposed({ fact: SIGNAL_FACT,
+    measures: "table '.Measures'\n\tmeasure 'Other' = SUM('Sales'[Region])\n" }, {});
+  assert.strictEqual(r.ok, false, "matched a measure over a different column");
+});
+
+/** A star: a fact holding only keys and an amount, a dimension holding the category, one relationship. */
+function star({ relationship = true } = {}) {
+  const fact = ["table Sales",
+    "\tcolumn RegionKey", "\t\tdataType: int64", "\t\tisNameInferred", "\t\tsourceColumn: [RegionKey]",
+    "\tcolumn Amount", "\t\tdataType: double", "\t\tisNameInferred", "\t\tsourceColumn: [Amount]",
+    "\tpartition Sales = calculated", "\t\tmode: import", "\t\tsource =", "\t\t\t\tDATATABLE (",
+    "\t\t\t\t\t\"RegionKey\", INTEGER, \"Amount\", DOUBLE,", "\t\t\t\t\t{",
+    "\t\t\t\t\t\t{1, 10}, {1, 12}, {2, 300}, {2, 320}, {3, 40}, {3, 45}", "\t\t\t\t\t}", "\t\t\t\t)", ""].join("\n");
+  const root = project({ fact, measures: "table '.Measures'\n\tmeasure 'Sales AC' = SUM('Sales'[Amount])\n" });
+  const md = path.join(root, "Demo.SemanticModel", "definition");
+  fs.writeFileSync(path.join(md, "tables", "Region.tmdl"), ["table Region",
+    "\tcolumn RegionKey", "\t\tdataType: int64", "\t\tisNameInferred", "\t\tsourceColumn: [RegionKey]",
+    "\tcolumn RegionName", "\t\tdataType: string", "\t\tisNameInferred", "\t\tsourceColumn: [RegionName]",
+    "\tpartition Region = calculated", "\t\tmode: import", "\t\tsource =", "\t\t\t\tDATATABLE (",
+    "\t\t\t\t\t\"RegionKey\", INTEGER, \"RegionName\", STRING,", "\t\t\t\t\t{",
+    "\t\t\t\t\t\t{1, \"North\"}, {2, \"South\"}, {3, \"West\"}", "\t\t\t\t\t}", "\t\t\t\t)", ""].join("\n"));
+  if (relationship) fs.writeFileSync(path.join(md, "relationships.tmdl"), "relationship Sales_Region\n\tfromColumn: Sales.RegionKey\n\ttoColumn: Region.RegionKey\n");
+  return srv.profileProjectTool({ projectPath: root });
+}
+
+check("a star schema ranks the fact's measure by a related dimension's column", () => {
+  const p = star();
+  const q = p.signal.ranked.find((x) => x.dimension === "Region[RegionName]" && x.measureColumn === "Sales[Amount]");
+  assert.ok(q, `not ranked: ${JSON.stringify(p.signal.ranked.map((x) => x.question))}`);
+  assert.strictEqual(q.members, 3);
+  assert.deepStrictEqual([q.lowest.member, q.highest.member], ["North", "South"]);
+  // Relationship keys are keys, not amounts.
+  assert.ok(!p.signal.ranked.some((x) => /RegionKey\]$/.test(x.measureColumn)), "a key column was ranked as a measure");
+  const r = propose.proposePages(p, {});
+  assert.strictEqual(r.ok, true, r.error);
+  assert.deepStrictEqual(r.spec.pages[0].visuals[0].bindings.Category[0], { entity: "Region", property: "RegionName", kind: "Column", active: true });
+});
+check("the same two tables with no relationship rank nothing across them", () => {
+  const p = star({ relationship: false });
+  assert.ok(!p.signal.ranked.some((x) => x.dimension === "Region[RegionName]" && x.measureColumn === "Sales[Amount]"));
 });
 
 check("every page carries the numbers that justified it", () => {

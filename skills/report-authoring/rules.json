@@ -426,6 +426,14 @@
       "held": true
     },
     {
+      "id": "tables-calculations-repeat-a-comparison",
+      "severity": "wrong-numbers",
+      "check": "tables-calculations-must-name-distinct-drawn-pairs",
+      "message": "`chartSettings.calculations` on a Tables or Tables+ visual is a list of comparison pairs only, one per\nvariance slot, in display order, such as `[\"actual-previousYear\",\"actual-plan\"]`. Each pair brings its\nabsolute and percent column; never list a `-percent` entry. The visual reads only the first two parts\nof each entry, so `actual-plan-percent` is the pair `actual-plan` again: two slots draw the same\nvariance and the other comparison is not drawn, with no error. Write one pair per bound comparison, or\nleave the key out.",
+      "source": "validator",
+      "held": true
+    },
+    {
       "id": "cards-size-written-into-data",
       "severity": "looks-fine",
       "check": "cards-sizing-not-settable-in-card-data",
@@ -534,6 +542,78 @@
       "severity": "blank",
       "check": "datatable-rows-must-be-constants",
       "message": "Every value in a DATATABLE row is a constant: a number, text or an ISO date string, never a function\ncall. `DATE(2025,1,1)` in a row makes the calculated table fail on load with \"The tuple at index '1'\nfrom the table definition of the DATATABLE function does not have a constant expression in the column\nat index '1'\", and every visual on it is blank. Carry a date as an ISO string constant\n(`\"yyyy-mm-dd\"`) in a `DATETIME` column, or build it outside the rows with `ADDCOLUMNS ( DATATABLE (\n... ), \"Date\", DATE ( [Year], [MonthNo], 1 ) )`.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "dax-unquoted-kpi-table",
+      "severity": "blank",
+      "check": "dax-kpi-table-must-be-quoted",
+      "message": "`KPI` is a reserved word in DAX, like `Calculations`. A table named `KPI` loads, but every reference to\nit without quotes, such as `SELECTEDVALUE ( KPI[Name] )`, fails with \"The syntax for 'KPI' is\nincorrect\", and every visual that uses the measure shows \"Something's wrong with one or more fields\".\nWrite the reference with single quotes, `'KPI'[Name]`, or give the table another name.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "zebra-visual-type-not-registered",
+      "severity": "blank",
+      "check": "zebra-visual-type-must-be-registered",
+      "message": "Every Zebra BI visual a page uses must be registered in `report.json`. List its exact `visualType` in\n`publicCustomVisuals` (a bare GUID such as `ZebraBITablesPlus3E6085701D7B426980C3859B16327993`), or\nregister it through `resourcePackages` when the visual is embedded in the report. A visual whose type is\nregistered nowhere has no visual to resolve to when the report opens. Copy the GUID from the\n`visualType` of the visual itself.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "textbox-paragraphs-in-container-objects",
+      "severity": "wont-open",
+      "check": "textbox-paragraphs-must-be-in-objects",
+      "message": "A textbox keeps its `paragraphs` in `visual.objects.general`, not in `visual.visualContainerObjects.general`.\nThe container section takes the title, background and border, and Desktop refuses a `paragraphs` property\nthere: \"An additional property 'paragraphs' was included\". Move the property to `objects.general`.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "charts-vertical-orientation-on-time",
+      "severity": "looks-fine",
+      "check": "charts-vertical-orientation-needs-a-non-time-category",
+      "message": "Time runs along the X axis of a Charts or Charts+ visual. When `Category` holds a date column or a level\nof a date table (year, quarter, month, day), leave `chartSettings.showVerticalCharts` off. `true` turns\nthe chart on its side and puts the periods down the page, against the IBCS rule that time is\nhorizontal. Use the vertical orientation for an account, product or region category.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "tmdl-calculated-source-space-indented",
+      "severity": "wont-open",
+      "check": "calculated-source-lines-must-be-tab-indented",
+      "message": "Indent every line of a calculated table's expression with tabs, as `source =` is: one level deeper than\n`source`, and the same style down to the last row. DATATABLE rows indented with spaces under a\ntab-indented `source =` are refused: \"Invalid indentation was detected! Document - './tables/<Table>'\",\nwith the first such row as the line.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "tmdl-calculated-table-column-without-sourcecolumn",
+      "severity": "wont-open",
+      "check": "calculated-table-column-must-declare-sourcecolumn",
+      "message": "Every column a calculated table declares carries `sourceColumn: [Name]`, the column name in square\nbrackets, beside `isNameInferred`. A column without it is refused: \"Column 'Year' in calculated table\n'Financials' is missing the SourceColumn property\". A calculated column, `column X = <expression>`,\ncarries its expression instead and takes no `sourceColumn`.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "tmdl-column-name-property-not-a-plain-name",
+      "severity": "wont-open",
+      "check": "tmdl-column-name-property-must-be-a-plain-name",
+      "message": "`sortByColumn`, a hierarchy level's `column` and `groupByColumn` take the name of a column of the same\ntable and nothing else: `sortByColumn: MonthNumber`, or `sortByColumn: 'Month Number'` when the name\nneeds quotes. A DAX reference such as `'Calendar'[Month Number]` or `Calendar[Month Number]` is refused\nby the model loader, \"TMDL Format Error: Parsing error type - InvalidName ... single-quote character in\nname must be escaped!\", and the whole model does not load.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "pbir-version-and-schema-do-not-match-pbir-folder",
+      "severity": "wont-open",
+      "check": "pbir-version-must-match-the-pbir-folder-format",
+      "message": "A `definition.pbir` beside a `definition/` folder of JSON files carries the PBIR `$schema` and\n`\"version\": \"4.0\"`: copy the file from the project-files reference and change only the `byPath` to the\nmodel folder. A file that says `\"version\": \"1.0\"` and has no `$schema` does not match that report\nformat, and Desktop opened an empty Page 1, with no dialog, in place of the authored pages.",
+      "source": "validator",
+      "held": true
+    },
+    {
+      "id": "computed-rows-sorted-by-value",
+      "severity": "looks-fine",
+      "check": "computed-rows-sorted-by-value",
+      "message": "A Tables or Tables+ visual that carries computed rows (`categoriesMetadata.addedFormulas`) keeps them\nin statement order: do not sort it by a value column. Write `sortSettings.categorySort` and\n`sortSettings.chartSort` as `0`, with `sortSettings.columnName` left out or set to `category`, or bind\nan order column, hide it in `chartSettings.columnSettings` and sort on it. A sort by a value column\norders the rows by size, so the gross profit, operating profit and margin rows land among the lines\nthey total and the statement is unreadable, although every number is right.",
       "source": "validator",
       "held": true
     }

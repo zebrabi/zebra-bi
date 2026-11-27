@@ -12,6 +12,165 @@ This file starts at the first public release. Versions before it exist in the gi
 never published — the repository was private, with no tags and no releases — so listing them as
 though they shipped would misrepresent what anyone could have installed.
 
+## Unreleased
+
+- `write_visual`, `write_page` and `write_report` no longer warn "not a Zebra visual type" for page
+  furniture: `textbox`, `slicer`, `actionButton`, `shape`, `image` and `pageNavigator`. Any other
+  visual type that is not a Zebra BI visual still gets the warning.
+- `write_visual`, `write_page` and `write_report` warn when a Tables+ visual is given
+  `titleSettings.text`, and `propose_pages` carries the same note in its output. Tables+ has been
+  seen to draw its own automatic title instead of the authored text, while Charts+ draws it. Nothing
+  is rewritten: the text is written as asked. `titleSettings.show: false` hides the automatic title,
+  and a text box above the visual carries a title that draws.
+- `write_visual`, `write_page` and `write_report` warn when a Tables or Tables+ visual has a
+  `Category` and no `sortSettings`. A table with none has been seen to sort its rows by the first
+  `Values` column, descending, which separates subtotals from their components. Nothing is added to
+  the file.
+- `profile_source` reads a comparison held as separate numeric columns (`Actual` and `Plan`,
+  `Sales AC` and `Sales PL`, `Revenue` and `Revenue Budget`) and reports it in a new `wideScenarios`
+  field: which column plays actual, plan, previous year or forecast, and which columns pair by a
+  shared measure name. The brief and the gaps no longer say there is no comparison for such a file.
+  A column name must be a scenario word at its start or end, so `Planet` and `Actuality` match
+  nothing, and a lone `Actual` is not a comparison. A file with a scenario column reads as before.
+  `propose_pages` already proposes an AC against PL page from a model with a measure over each of
+  those columns; when the measures are missing it now names the wide scenario columns in its notes
+  and in its refusal.
+- Six new checks. Five are for a fault found in a project Power BI Desktop refused or drew empty, and one,
+  `charts-vertical-orientation-on-time`, is a layout check on a chart that draws. `dax-unquoted-kpi-table` (a table named `KPI` referenced without quotes, which blanks the visuals that
+  use the measure), `zebra-visual-type-not-registered` (a Zebra BI visual type that `report.json` does
+  not register, by `publicCustomVisuals`, an embedded resource package or the organization's store),
+  `textbox-paragraphs-in-container-objects` (a textbox whose `paragraphs` sit under
+  `visualContainerObjects.general`), `charts-vertical-orientation-on-time` (`showVerticalCharts: true` on a
+  Charts or Charts+ visual whose `Category` is a date column or a date-table level),
+  `tmdl-calculated-source-space-indented` (DATATABLE rows indented with spaces under a tab-indented
+  `source =`) and `tmdl-calculated-table-column-without-sourcecolumn` (a calculated-table column with no
+  `sourceColumn`). Each stays silent on the 20 shipped templates and on the further working projects it was
+  measured on.
+- Three more checks: `tmdl-column-name-property-not-a-plain-name` (`sortByColumn`, a hierarchy level's
+  `column` or `groupByColumn` written as a DAX reference such as `'Calendar'[Month Number]`, which the
+  model loader refuses), `pbir-version-and-schema-do-not-match-pbir-folder` (a `definition.pbir` with
+  `"version": "1.0"` and no `$schema` beside a report folder in the PBIR format, which opened an empty
+  Page 1) and `tables-calculations-repeat-a-comparison` (a Tables or Tables+ `chartSettings.calculations`
+  whose entries put the same comparison in two variance slots, such as a list with `-percent` entries,
+  so one comparison is drawn twice and the other not at all).
+- The authoring reference now says that `chartSettings.calculations` is a list of comparison pairs only,
+  one per variance slot, in display order, and that each pair brings its absolute and percent column. It no
+  longer reads as if percent entries belong in the list.
+- `validate_report` returns `clean` (true only when there are no findings) and `counts` (findings per
+  severity, and the total) beside `ok`. `ok` is unchanged and means the check ran; the tool description
+  now says so.
+- `INSTALL.md` section 1b gives the one command that registers the checker as `zebra-bi-reports`
+  in GitHub Copilot CLI, with the path inside the installed plugin, and states what was verified.
+  Copilot CLI reads a plugin's servers from `mcp.json` only, which lists the hosted server alone, so
+  the install commands do not register the checker.
+- The Microsoft 365 package build writes a `mcp.json` with the hosted server only, and a test checks it.
+- `encode_table_calculations` takes comparison pairs only, one per variance slot, in the order the slots
+  draw: `<value>-<reference>` from `actual`, `previousYear`, `plan`, `plan2`, `plan3`, `forecast`,
+  `forecast2` and `forecast3`, for example `["actual-previousYear","actual-plan"]` for a table with
+  Actual, Previous year and Plan. Each pair brings its absolute and its percent column. Tables and
+  Tables+ read the list by position and read `actual-plan-percent` as `actual-plan`, so a list with
+  `-percent` entries, such as `["actual-plan","actual-plan-percent","actual-previousYear",
+  "actual-previousYear-percent"]`, drew the first comparison twice and left out the second. A
+  `-percent` entry and a repeated pair are now refused. A pair's `-percent` column is a legal
+  `columnSettings` key whenever the pair is listed, so it no longer needs listing itself. With `roles`,
+  or with the bindings of the same `write_visual` spec, a list that would draw one comparison in two
+  slots is refused: `["actual-plan"]` on a table with Previous year and Plan bound leaves the second
+  slot on its default, the plan comparison, and drops the previous-year one. An entry for a scenario
+  that is not bound is refused only when it leaves a drawn slot repeating; otherwise the list is
+  written with a warning, because the visual stops reading at that entry and draws the rest. A
+  two-scenario table whose list ends in a `-percent` entry draws correctly; the encoder refuses that
+  list and names the fix, while `properties` and `rawObjects` write it with a warning.
+- `write_visual`, `write_page` and `write_report` check `chartSettings.calculations` on Tables and
+  Tables+ however it is given (`tableCalculations`, `properties` or `rawObjects`). A value whose drawn
+  slots repeat a comparison is refused, with the list to write instead. A value that draws correctly
+  but carries `-percent` or repeated entries is written as given, with a warning naming the pairs-only
+  form; it is not rewritten, because dropping entries moves later ones into earlier slots and can
+  change what a correct table draws.
+- New tool `write_project`: a complete Power BI project from a folder of flat files (CSV, TSV, pipe
+  or semicolon text, JSON arrays). It writes the `.pbip`, `definition.pbir`, `report.json` (with
+  `publicCustomVisuals` taken from the visuals on the pages), the pages, `definition.pbism`,
+  `database.tmdl`, `model.tmdl`, `relationships.tmdl` and one TMDL file per table. Each table is a
+  calculated `DATATABLE` of constants, with dates carried as year, month and day and built outside
+  the rows; a marked `Calendar` runs from 1 January of the first year to the last date in the data,
+  with fiscal year and period when the year does not start in January; AC, PL, FC and PY measures
+  are written on the fact table from templates, with every table reference quoted. `pages` takes a
+  `write_report` spec, `"propose"` (`profile_project` and `propose_pages` on the model just
+  written), or nothing for one empty page.
+- `write_project` writes only into a folder that does not exist or is empty, never overwrites or
+  deletes a file, and returns the files it wrote with their sizes, never the data. It refuses
+  mixed-type columns, decimal commas, dates it cannot read, duplicate keys on the one side of a
+  relationship, a path over 240 characters, and models above 300,000 cells or 2 MB of embedded
+  rows, each with the column or the way out named. Every other choice it makes is returned as a
+  one-line assumption, and it runs `validate_report` and `profile_project` over what it wrote.
+- `SECURITY.md`, `README.md` and the tool descriptions say which two tools write to disk,
+  `write_project` and `write_measures`, and what each may write.
+- `propose_pages` binds a measure whose DAX quotes its table (`SUM ( 'Sales'[Amount] )`); before,
+  such a measure left every ranked question unbindable.
+- The Microsoft 365 Copilot package names `write_project` as the way to create the project and
+  model, and its tests call it through `scripts/zbi.js`.
+- The authoring skill tells the agent to create a project from flat files with `write_project` and to write
+  no project file, model or `DATATABLE` by hand. The hand-written forms in `project-files.md`,
+  `model-layer.md` and `preflight.md` stay, for reading, repairing or extending an existing project.
+- New tool `write_measures`: add measures to an existing TMDL model. The caller gives the DAX; the
+  tool lays out the TMDL, requires a `formatString` (a date format for a measure that returns a
+  date), refuses a name already used in the table or by a measure anywhere in the model, checks
+  every table, column and measure reference outside strings and comments against the model and
+  names the nearest existing names, single-quotes bare table references, and refuses a write that
+  would add a validator finding. It changes one table file, keeps every other byte of it, and
+  returns the exact text added and removed.
+- `write_project` from a folder loads a file as a table only when it reads as data (a fact, a date
+  or amount column, or a join to another file); the rest are listed under `skipped` with the reason,
+  a file named in `tables` always loads, and the assumptions name every file loaded.
+- Pages that `write_project` proposes open on one reporting window: a slicer on `Calendar[YearMonth]`
+  preset to the year to date ending with the last month that has actuals, with plan and previous
+  year checked against it and any gap stated. The proposal uses columns of related dimension tables
+  on a star schema, and sorts a statement by its order column (`sortByColumn`) when the source has
+  one.
+- `profile_project` ranks a fact table's measures by the columns of dimension tables related to it,
+  and no longer ranks a relationship's key columns as amounts. A model with no relationships ranks
+  as before.
+- Previous year counts 29 February. The `write_project` PY measure keeps the prior dates whose
+  next-year date is selected (a `Next year date` Calendar column, 29 February going to 28 February),
+  so a February after a leap year no longer loses its leap day, or the whole month with month-end
+  data, and the months of previous year add up to its year.
+- `write_project` refuses, before writing, page or visual names that differ only in case and names
+  Windows reserves (`CON`, `NUL`); if a write still fails partway it returns `ok: false` with every
+  file already written and says the folder is incomplete, and deletes nothing. It refuses an exact
+  duplicate on a table's own key that another file relates to, never makes a fact the one side,
+  groups scenario values as Power BI compares them (without case), refuses a day past the end of its
+  month, two source files with the same name, and JSON integers beyond 2^53.
+- `write_measures` keeps a table property after a replaced measure and the replaced measure's
+  `lineageTag` and annotations; leaves a DAX keyword that shares a table's name as written; reads a
+  measure as returning a date only when the date is its result; resolves `[Name]` to a measure, a
+  column of a table in scope or a column the expression introduces; quotes non-ASCII table names; and
+  writes through a temporary file, refusing if the file changed since it was read.
+- A Tables or Tables+ visual with computed rows (`addedFormulas`) that is sorted by a value column draws
+  the computed rows among the lines by size, so the gross profit and margin rows land between cost of
+  sales and revenue. `write_visual`, `write_page` and `write_report` now warn in one sentence, with the
+  fix, when the written visual has computed rows and sorts by a value column: `categorySort` 1 or 2,
+  or `categorySort` 0 with a value `columnName` and no `chartSort`. The fix is `categorySort` and
+  `chartSort` 0 with `columnName` left out or `category`, or an order column that is hidden in
+  `columnSettings`. The file is written as asked. `propose_pages` never writes computed rows.
+- New check `computed-rows-sorted-by-value` (severity `looks-fine`: the numbers are right) for an
+  existing project with that combination. It stays silent on the 20 shipped templates and on every
+  further project it was measured on. The `categorySort` 0 branch rests on one Power BI Desktop
+  render and cannot be tested against the templates; it is kept narrow for that reason.
+- New script `mcp/cli.js`: `node <plugin folder>/mcp/cli.js list` names the Zebra BI tools and
+  `node <plugin folder>/mcp/cli.js <tool> @args.json` calls one with its arguments from a JSON file,
+  in the same process, with no server and nothing to install beyond Node.js. It prints exactly the
+  tool's JSON result and exits 1 when the tool reports an error, 2 when the call is not made (an
+  unknown tool, an arguments file that is missing or not a JSON object). The authoring skill tells
+  the agent to use it when the tools are not in its tool list, which is the case on GitHub Copilot CLI,
+  Codex and other hosts that load the skills without registering the local server. `INSTALL.md` makes
+  `copilot mcp add` optional and says what the script gives without it. `server.js` exports
+  `callTool` and `listTools`, which the stdio server uses too. The Microsoft 365 package does not
+  bundle `cli.js`; it has `scripts/zbi.js`.
+- The previous-year pattern in `references/model-layer.md` maps each calendar date to its next-year
+  date (29 February to 28 February) and keeps the prior dates whose next-year date is selected. The
+  pattern it replaces mapped the selected dates one year back, so no selected date reached a prior-year
+  29 February: with month-end data that is the whole of February in the year after a leap year, and
+  the year was short by that month. The measure is still additive.
+
 ## 0.3.2 — 2026-11-04
 
 - The hand-over now leads with the one step a changed model needs before it is opened again:
@@ -87,7 +246,7 @@ thing you can do is tell us when it does not.
 | **`setup-doctor`** | Ten checks on the machine, each with a fix. Two are about your model — scenario measures and a marked date table — and they are the ones that decide whether the report comes out right |
 | **`report-authoring`** | Planning, data binding, IBCS variance semantics, formatting, small multiples, comments, and page layouts proven against real Zebra BI templates |
 | **`report-publishing`** | The Zebra-specific parts of publishing. Microsoft's own skill does the upload; this covers the visual-track choice and the refresh without which the report arrives empty |
-| **The checker** | 67 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
+| **The checker** | 77 rules over an unopened `.pbip`. Optional — needs Node.js, no dependencies to install |
 | **18 MCP tools** | Profiling, page proposal, the encoders for the property blobs that cannot be written by hand, and the report writers |
 
 Ten on-demand reference layers sit behind the authoring skill and load only when they are needed:

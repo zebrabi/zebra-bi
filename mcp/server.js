@@ -23,7 +23,11 @@
  *
  * Zero dependencies. The MCP stdio transport is newline-delimited JSON-RPC 2.0, which is small
  * enough that adding an SDK would mean shipping node_modules inside a plugin to save very
- * little. It also never touches the network, and never writes to the customer's project.
+ * little. It also never touches the network. Every tool returns its content for the agent host to
+ * save, except two. write_project creates a new project in a folder that does not exist or is
+ * empty, never overwrites or deletes a file, and returns the list of files it wrote. write_measures
+ * inserts measures into one existing table file, or replaces a measure of the same name when asked,
+ * keeps every other byte of that file, writes no other file, and returns the text it added.
  */
 
 const fs = require("fs");
@@ -59,6 +63,8 @@ const wr = require("./writers.js");
 const prof = require("./profile.js");
 const propose = require("./propose.js");
 const profSource = require("./profile-source.js");
+const project = require("./project.js");
+const measures = require("./measures.js");
 
 // --- reading the project ------------------------------------------------------------------
 
@@ -338,6 +344,7 @@ function validateReport(args) {
   if (rules === null) {
     return {
       ok: false,
+      clean: false,
       error:
         "The rule catalogue is missing or unreadable, so nothing was checked. This is a broken " +
         "install rather than a clean report. Reinstall the plugin.",
@@ -345,7 +352,7 @@ function validateReport(args) {
   }
 
   const project = resolveProject(projectPath);
-  if (project.fatal) return { ok: false, error: project.fatal };
+  if (project.fatal) return { ok: false, clean: false, error: project.fatal };
 
   const findings = [...project.problems];
   const ran = [];
@@ -373,8 +380,15 @@ function validateReport(args) {
   const severityOrder = { "wont-open": 0, blank: 1, "wrong-numbers": 2, "looks-fine": 3 };
   findings.sort((a, b) => (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9));
 
+  // `ok` says the check RAN; it has never said the project is clean. `clean` and `counts` do: a
+  // caller that branches on `ok` alone reads a report with findings as a pass.
+  const counts = { "wont-open": 0, blank: 0, "wrong-numbers": 0, "looks-fine": 0 };
+  for (const f of findings) counts[f.severity] = (counts[f.severity] ?? 0) + 1;
+
   return {
     ok: true,
+    clean: findings.length === 0,
+    counts: { ...counts, total: findings.length },
     findings,
     checked: project.checked,
     rulesRun: ran.length,
@@ -411,7 +425,8 @@ const ENCODERS = {
           type: "object",
           properties: {
             key: { type: "string", description: "A scenario role (actual, plan, previousYear, "
-              + "forecast), a comparison from encode_table_calculations, or a measure name." },
+              + "forecast), a comparison from encode_table_calculations or its percent column "
+              + "('actual-plan-percent'), or a measure name." },
             order: { type: "number" },
             inCellChart: { type: "string", enum: ["none", "bar"] },
             bold: { type: "boolean" },
@@ -435,10 +450,21 @@ const ENCODERS = {
   },
   encode_table_calculations: {
     fn: enc.encodeTableCalculations,
-    description: "Declare which variance columns a Zebra Table has. This governs which column "
-      + "keys are legal, so call it before encode_table_columns and pass its legalColumnKeys on.",
+    description: "Set which comparison each variance slot of a Zebra Table (Tables or Tables+) "
+      + "draws: chartSettings.calculations. It takes comparison PAIRS, one per slot, in the order "
+      + "the slots draw, e.g. ['actual-previousYear','actual-plan'] for Actual, Previous year and "
+      + "Plan. Each pair brings its absolute and its percent column, so never list a '-percent' "
+      + "key: the visual reads 'actual-plan-percent' as 'actual-plan' and draws it twice. Without "
+      + "this property the table draws its default comparisons from the bound roles. Pass roles to "
+      + "have the drawn slots checked. Returns legalColumnKeys for encode_table_columns, including "
+      + "each pair's '-percent' column.",
     schema: { type: "object", properties: {
-      comparisons: { type: "array", items: { type: "string", enum: enc.COMPARISONS } },
+      comparisons: { type: "array", items: { type: "string", enum: enc.COMPARISONS },
+        description: "'<value>-<reference>' from the scenario names actual, previousYear, plan, "
+          + "plan2, plan3, forecast, forecast2, forecast3. One per variance slot, no repeats." },
+      roles: { type: "object", description: "Optional. The bound roles as counts or binding "
+        + "arrays, e.g. {Values: 1, PreviousYear: 1, Plan: 1}. When given, a list that would draw "
+        + "one comparison in two slots, or names a scenario that is not bound, is refused." },
     }, required: ["comparisons"] },
   },
   encode_added_formulas: {
@@ -673,8 +699,9 @@ const VISUAL_SPEC_SCHEMA = {
       + "[Measure] tokens, which the visual resolves at render." },
     properties: { type: "object", description: PROPERTY_MAP_DESC },
     tableCalculations: { type: "object", description: "Routes to encode_table_calculations: which "
-      + "variance columns the Table has. Its legal column keys are handed to tableColumns "
-      + "automatically when both are in one spec.",
+      + "comparison each variance slot draws, as pairs in slot order (never a '-percent' key). The "
+      + "spec's bindings are passed as roles, and the legal column keys are handed to tableColumns "
+      + "automatically when both are in one spec. Omit it to draw the defaults of the bound roles.",
       properties: { comparisons: { type: "array", items: { type: "string" } } } },
     tableColumns: { type: "object", description: "Routes to encode_table_columns: per-column "
       + "order, formatting, in-cell charts and visibility. Needs mode ('table' or 'chart') and "
@@ -793,8 +820,156 @@ const WRITERS = {
   },
 };
 
+// --- the project writer -----------------------------------------------------------------------
+// One of the two tools that write to disk (write_measures is the other). It creates a new project in a folder that does not exist or is
+// empty, never overwrites or deletes a file, and returns the list of files it wrote rather than
+// their content. It validates what it wrote with the same validateReport and resolveProject as
+// validate_report, so the two cannot disagree.
+
+const COLUMN_TYPES = { type: "object", additionalProperties: { type: "string", enum: ["text", "integer", "number", "date"] } };
+
+const PROJECT_WRITER = {
+  write_project: {
+    fn: (a) => project.writeProject(a, { validateReport, resolveProject }),
+    description: "Create a complete Power BI project on disk from a folder of flat files: the .pbip, "
+      + "the .Report folder (definition.pbir, report.json with publicCustomVisuals taken from the "
+      + "visuals on the pages, version.json and the pages) and the .SemanticModel folder "
+      + "(definition.pbism, database.tmdl, model.tmdl, relationships.tmdl and one TMDL file per table). "
+      + "Use it instead of writing any of those files by hand. From a folder it loads a file as a "
+      + "table only when it reads as data (a fact, a date or amount column, or a join to another "
+      + "file); every other file is listed under skipped with the reason, and a file named in tables "
+      + "always loads. It reads the source the way "
+      + "profile_source does, embeds every table as a calculated DATATABLE of constants (dates built "
+      + "outside the rows), adds a marked Calendar from 1 January of the first year to the last date "
+      + "in the data, relates the tables, and writes AC / PL / FC / PY measures on the fact table from "
+      + "templates (no free-form DAX). It writes only into a folder that does not exist or is empty, "
+      + "never overwrites or deletes a file, and refuses rather than guesses: mixed-type columns, "
+      + "decimal commas, unreadable dates, duplicate keys on the one side of a relationship, a path "
+      + "too long for Windows, or more than 300,000 cells or 2 MB of embedded rows. The result lists "
+      + "the files written with their sizes, the model's tables, measures and relationships, every "
+      + "assumption made (one line each), and validate_report's findings on the written project; it "
+      + "never returns the data. The project has not been rendered: open it in Power BI Desktop, "
+      + "refresh and save before handing it over.",
+    schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Stem for <name>.pbip, <name>.Report and "
+          + "<name>.SemanticModel: 1 to 60 letters, digits, underscores or hyphens." },
+        outPath: { type: "string", description: "Absolute path of the folder to create the project "
+          + "in. It must not exist yet, or must be empty." },
+        source: { type: "object", description: "The flat files, as profile_source takes them.",
+          properties: { path: { type: "string", description: "Absolute path to a folder of CSV, TSV, "
+            + "pipe or semicolon text and JSON arrays (two levels deep), or to one file." } },
+          required: ["path"] },
+        tables: { type: "array", description: "Optional overrides per source file.", items: {
+          type: "object",
+          properties: {
+            source: { type: "string", description: "The file name, with or without its extension." },
+            name: { type: "string", description: "The table's name in the model." },
+            role: { type: "string", enum: ["fact", "dimension", "skip"], description: "Overrides the "
+              + "detected role. 'skip' leaves the file out. A date table is left out by default, "
+              + "because the model's Calendar replaces it; 'dimension' keeps it." },
+            types: { ...COLUMN_TYPES, description: "Column to type. 'text' keeps a column exactly as "
+              + "written (leading zeros, mixed values)." },
+            hidden: { type: "array", items: { type: "string" }, description: "Columns to hide." },
+            columns: { type: "array", items: { type: "string" }, description: "Keep-list: only these "
+              + "columns are loaded. The way under the size ceiling." },
+          },
+          required: ["source"] } },
+        date: { type: "object", description: "Optional. Defaults to the fact table's first date column "
+          + "and the fiscal year the source shows.", properties: {
+          column: { type: "string", description: "'Column' or 'Table[Column]' on the fact table." },
+          fiscalYearStartMonth: { type: "number", description: "1 to 12. Other than 1 adds Fiscal Year "
+            + "(named by the year it ends) and Fiscal Period to the Calendar." },
+        } },
+        scenarios: { type: "object", description: "How the scenarios are stored. Detected when one "
+          + "column names each row's scenario; otherwise required, and the refusal says what to pass.",
+          properties: {
+            form: { type: "string", enum: ["long", "wide", "none"] },
+            column: { type: "string", description: "long: the column whose value names the scenario." },
+            members: { type: "object", additionalProperties: { type: "string", enum: ["AC", "PL", "FC", "PY"] },
+              description: "long: each value of that column to its code, e.g. {\"Actual\": \"AC\", \"Budget\": \"PL\"}." },
+            columns: { type: "object", additionalProperties: { type: "string" },
+              description: "wide: each code to the column that holds it, e.g. {\"AC\": \"Actual\", \"PL\": \"Budget\"}." },
+            py: { type: "string", enum: ["timeIntelligence", "column", "none"], description: "Where "
+              + "previous year comes from: the calendar, one year back day by day (the default when "
+              + "the data spans 13 months or more), the source's own PY member or column, or nowhere." },
+          } },
+        metrics: { type: "array", description: "Optional. Defaults to the additive amount columns of "
+          + "the fact table. Each metric gets one measure per scenario, named '<name> AC', "
+          + "'<name> PL', '<name> FC', '<name> PY'.", items: { type: "object", properties: {
+          name: { type: "string" },
+          column: { type: "string", description: "long and none: the amount column." },
+          columns: { type: "object", additionalProperties: { type: "string" }, description: "wide: code to column, for this metric." },
+          agg: { type: "string", enum: ["sum", "average"], description: "Default sum." },
+          format: { type: "string", description: "Format string, e.g. '#,0' or '0.0%'." },
+          numerator: { type: "string", description: "Ratio: the metric divided ..." },
+          denominator: { type: "string", description: "... by this metric, per scenario, with DIVIDE." },
+        } } },
+        pages: { description: "A write_report spec ({pages: [...]}) whose bindings must resolve in the "
+          + "written model; or \"propose\", which runs profile_project and propose_pages on the model "
+          + "just written; or omitted, for one empty page so the project opens." },
+      },
+      required: ["name", "outPath", "source"],
+    },
+  },
+};
+
+// The measure writer edits one existing file: it inserts measure blocks into one table's TMDL file,
+// or replaces a measure of the same name when asked, and keeps every other byte of that file.
+const MEASURE_WRITER = {
+  write_measures: {
+    fn: (a) => measures.writeMeasures(a, { validateReport, resolveProject, loadRules, checkers }),
+    description: "Add measures to an existing project's TMDL model: you give the DAX, the tool writes "
+      + "the TMDL around it. Use it instead of editing a .tmdl file by hand, for any measure "
+      + "write_project does not template (year to date, a subtotal, a ratio of filtered sums). It "
+      + "lays each measure out with its body below the `=` line, requires a formatString (a date format "
+      + "when the measure returns a date, such as a last actual date for a title), refuses a "
+      + "name already used by a column or measure of the table or by a measure anywhere in the model, "
+      + "checks every Table[Column], 'Table'[Column] and [Name] reference outside strings and "
+      + "comments against the model ([Name] must be a measure, a column of the home table or of a "
+      + "table the expression names, or a column the expression introduces), naming the nearest "
+      + "existing names when one does not resolve; single-quotes every bare table reference and lists "
+      + "each one it quoted, except a DAX keyword such as YEAR or CURRENCY, which it leaves as written "
+      + "and lists; and runs every validator rule on the model before and after the edit, refusing a "
+      + "write that adds a finding (a VAR named after a DAX function, a swallowed formatString). It "
+      + "changes one file: the measures are inserted at the end of the table's block, or replace a "
+      + "measure of the same name when replace is true (its lineageTag and annotations are kept); "
+      + "every other byte of the file is kept, the file is written through a temporary file and "
+      + "refused if it changed since it was read, and the exact text added and removed is returned. "
+      + "Close Power BI Desktop first; afterwards refresh and save in Desktop.",
+    schema: {
+      type: "object",
+      properties: {
+        projectPath: { type: "string", description: "Absolute path of the folder holding the .pbip." },
+        table: { type: "string", description: "The table the measures live on, as the model names it." },
+        measures: { type: "array", description: "The measures to add.", items: { type: "object", properties: {
+          name: { type: "string" },
+          expression: { type: "string", description: "The DAX after `=`, one line or several, without TMDL fences." },
+          formatString: { type: "string", description: "Required, e.g. '#,0' or '0.0%'." },
+          description: { type: "string", description: "Written as a /// description above the measure." },
+          displayFolder: { type: "string" },
+        }, required: ["name", "expression", "formatString"] } },
+        replace: { type: "boolean", description: "Replace a measure of the same name on this table. Default false: a name in use is refused." },
+      },
+      required: ["projectPath", "table", "measures"],
+    },
+  },
+};
+
+/** Explicit labels: it writes files (not read-only), never overwrites or deletes (not destructive),
+ *  and a second call into the same folder is refused (not idempotent). */
+const WRITES_NEW_FILES = Object.freeze({
+  readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
+});
+/** write_measures edits an existing file, and with replace: true replaces a measure, so it is
+ *  labelled destructive; the host keeps asking. */
+const EDITS_ONE_FILE = Object.freeze({
+  readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false,
+});
+
 /** Everything reachable through tools/call that is not validate_report. */
-const CALLABLE = { ...ENCODERS, ...WRITERS };
+const CALLABLE = { ...ENCODERS, ...WRITERS, ...PROJECT_WRITER, ...MEASURE_WRITER };
 
 /**
  * Labels that let a host skip its per-call confirmation, given ONLY to the encoders: they turn
@@ -808,15 +983,21 @@ const CALLABLE = { ...ENCODERS, ...WRITERS };
 const NO_READS = Object.freeze({
   readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
 });
-const annotate = (t) => (Object.prototype.hasOwnProperty.call(ENCODERS, t.name)
-  ? { ...t, annotations: NO_READS } : t);
+const annotate = (t) => {
+  if (Object.prototype.hasOwnProperty.call(ENCODERS, t.name)) return { ...t, annotations: NO_READS };
+  if (Object.prototype.hasOwnProperty.call(PROJECT_WRITER, t.name)) return { ...t, annotations: WRITES_NEW_FILES };
+  if (Object.prototype.hasOwnProperty.call(MEASURE_WRITER, t.name)) return { ...t, annotations: EDITS_ONE_FILE };
+  return t;
+};
 
 const TOOLS = [
   {
     name: "validate_report",
     description:
       "Check an unopened Power BI project (.pbip) for faults that render blank, wrong or " +
-      "not at all. Returns what was checked, what was found, and what it could not see.",
+      "not at all. Returns what was checked, what was found, and what it could not see. " +
+      "`ok` means the check ran, not that the project is fine: read `clean` (true only when " +
+      "there are no findings) and `counts` (findings per severity, and the total).",
     inputSchema: {
       type: "object",
       properties: {
@@ -914,6 +1095,54 @@ function respondError(id, code, message) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
 }
 
+/** Every tool, as tools/list answers it. */
+function listTools() {
+  return [...TOOLS, ...Object.entries(CALLABLE).map(([name, e]) => ({
+    name, description: e.description, inputSchema: e.schema,
+  }))].map(annotate);
+}
+
+/**
+ * Run one tool: `{ text, isError }`, where `text` is the JSON the tool returned, or null when there
+ * is no such tool. The stdio server and the script front end (cli.js) both answer through this.
+ */
+function callTool(name, args) {
+  const a = args || {};
+  const reply = (out, isError) => ({ text: JSON.stringify(out, null, 2), isError });
+  if (Object.prototype.hasOwnProperty.call(CALLABLE, name)) {
+    try {
+      // A tool that answers with ok: false (write_project when a write fails partway, with the
+      // list of files already on disk) is an error to the host, with its full answer attached.
+      const result = CALLABLE[name].fn(a);
+      return reply(result, Boolean(result && result.ok === false));
+    } catch (err) {
+      // A refused encode is a useful answer, not a crash: the message names the field and
+      // says what it prevents, so the caller can fix the call rather than guess.
+      return reply({ ok: false, error: String(err && err.message) }, true);
+    }
+  }
+  if (name === "propose_pages") {
+    const pr = resolveProject(a.projectPath);
+    const out = (!pr || pr.fatal)
+      ? { ok: false, error: (pr && pr.fatal) || "the project could not be read" }
+      : propose.proposePages(prof.profileProject(pr), a);
+    return reply(out, out.ok === false);
+  }
+  if (name === "profile_project") {
+    const out = profileProjectTool(a);
+    return reply(out, out.ok === false);
+  }
+  if (name === "profile_source") {
+    const out = profSource.profileSource(a);
+    return reply(out, out.ok === false);
+  }
+  if (name === "validate_report") {
+    const out = validateReport(a);
+    return reply(out, !out.ok);
+  }
+  return null;
+}
+
 function handle(msg) {
   const { id, method, params } = msg;
   // A notification has no id and takes no reply. Answering one is a protocol error.
@@ -927,59 +1156,12 @@ function handle(msg) {
         serverInfo: SERVER,
       });
     case "tools/list":
-      return respond(id, { tools: [...TOOLS, ...Object.entries(CALLABLE).map(([name, e]) => ({
-        name, description: e.description, inputSchema: e.schema,
-      }))].map(annotate) });
+      return respond(id, { tools: listTools() });
     case "tools/call": {
       const name = params && params.name;
-      if (CALLABLE[name]) {
-        try {
-          const result = CALLABLE[name].fn(params.arguments || {});
-          return respond(id, {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }], isError: false,
-          });
-        } catch (err) {
-          // A refused encode is a useful answer, not a crash: the message names the field and
-          // says what it prevents, so the caller can fix the call rather than guess.
-          return respond(id, {
-            content: [{ type: "text", text: JSON.stringify(
-              { ok: false, error: String(err && err.message) }, null, 2) }], isError: true,
-          });
-        }
-      }
-      if (name === "propose_pages") {
-        const a = params.arguments || {};
-        const pr = resolveProject(a.projectPath);
-        const out = (!pr || pr.fatal)
-          ? { ok: false, error: (pr && pr.fatal) || "the project could not be read" }
-          : propose.proposePages(prof.profileProject(pr), a);
-        return respond(id, {
-          content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
-          isError: out.ok === false,
-        });
-      }
-      if (name === "profile_project") {
-        const out = profileProjectTool(params.arguments || {});
-        return respond(id, {
-          content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
-          isError: out.ok === false,
-        });
-      }
-      if (name === "profile_source") {
-        const out = profSource.profileSource(params.arguments || {});
-        return respond(id, {
-          content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
-          isError: out.ok === false,
-        });
-      }
-      if (name !== "validate_report") {
-        return respondError(id, -32601, `Unknown tool: ${name}`);
-      }
-      const out = validateReport(params.arguments || {});
-      return respond(id, {
-        content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
-        isError: !out.ok,
-      });
+      const out = callTool(name, params && params.arguments);
+      if (!out) return respondError(id, -32601, `Unknown tool: ${name}`);
+      return respond(id, { content: [{ type: "text", text: out.text }], isError: out.isError });
     }
     case "ping":
       return respond(id, {});
@@ -1012,6 +1194,6 @@ process.stdin.on("data", (chunk) => {
 
 if (require.main === module) listen();
 
-module.exports = { validateReport, resolveProject, checkers, loadRules, listen,
-                   ENCODERS, WRITERS, CALLABLE, TOOLS, profileProjectTool,
+module.exports = { validateReport, resolveProject, checkers, loadRules, listen, callTool, listTools,
+                   ENCODERS, WRITERS, PROJECT_WRITER, MEASURE_WRITER, CALLABLE, TOOLS, profileProjectTool,
                    profileSourceTool: profSource.profileSource };
