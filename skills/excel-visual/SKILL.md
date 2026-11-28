@@ -13,7 +13,7 @@ The visual is a Zebra BI Charts or Tables for Office visual. The Zebra BI add-in
 
 ## What the user selects
 
-A header row, one category column first (months, quarters, products, regions), then one to four scenario columns named AC, PY, PL or FC. Actual, Previous year, Plan, Budget and Forecast are recognised too. One row per category, already aggregated. The category column is written as the text the cells show, so a year or a date stays as the reader sees it.
+A header row, one category column first (months, quarters, products, regions), then one to four scenario columns named AC, PY, PL or FC. Actual, Previous year, Plan, Budget and Forecast are recognised too. One row per category, already aggregated. The category column is written as the text the cells show, so a year or a date stays as the reader sees it. Each scenario column keeps the percent, thousands separator and decimal places of its cells; currency symbols and other custom codes are not carried, so name the unit in the title.
 
 The script gives each column its role from its header. Only when no header reads as actuals does the first other numeric column stand in for them. Any further columns are left out, and the run says which. A scenario column with a text cell in it, or two columns for one scenario, stops the script with a message that names the columns; fix the selection and run again. Empty columns are skipped.
 

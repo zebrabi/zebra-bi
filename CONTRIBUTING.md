@@ -92,6 +92,6 @@ The host answers `ui/initialize` (with `hostContext.toolInfo.tool.inputSchema`, 
 
 ### Known limits
 
-- `excel-visual` was seen running as a script from a test add-in in Excel on the web on 26 Nov 2026: the chart path drew from a time selection. Its table path, category-axis charts and a single measure pass the offline checks only. It has not been run from the skill runtimes of Copilot in Excel or Claude in Excel. `Workbook.insertWorksheetsFromBase64` dropped the add-in on Excel on the web on the same date, so the script opens a new workbook; Excel desktop is untried.
+- `excel-visual` was seen running as a script from a test add-in in Excel on the web on 26 Nov 2026: the chart path drew from a time selection. Its table path, category-axis charts and a single measure pass the offline checks only. It has not been run from the skill runtimes of Copilot in Excel or Claude in Excel. `Workbook.insertWorksheetsFromBase64` dropped the add-in on Excel on the web on the same date, so the script opens a new workbook; Excel desktop is untried. The number format a column takes from its cells (percent, thousands separator, decimal places) ran against the stub Excel only.
 - The scripts sign in apart from the connector, so a build needs `story.py sign-in` once, and again when the token expires without a refresh token. Until then a build stops with `Zebra BI needs sign-in (<endpoint>)` unless every chart and the renderer are already cached.
 - Claude chat cannot save manifests; the skill shows them as JSON to keep in a Project.

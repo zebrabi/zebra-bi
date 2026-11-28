@@ -235,6 +235,59 @@ class Script(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual([self.sheet(out)[r][1] for r in ("A4", "A5")], ["R&D", "IT"])
 
+    def format_of(self, out, ref):
+        """(Excel format code of the cell, Power BI format of the first value column in the matrix data or None)."""
+        ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+        with zipfile.ZipFile(out) as z:
+            styles = ET.fromstring(z.read("xl/styles.xml"))
+            sheet = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
+        custom = {n.get("numFmtId"): n.get("formatCode") for n in styles.iter(ns + "numFmt")}
+        builtin = {"3": "#,##0"}
+        xfs = list(styles.find(ns + "cellXfs"))
+        self.assertEqual(int(styles.find(ns + "cellXfs").get("count")), len(xfs))
+        cell = next(c for c in sheet.iter(ns + "c") if c.get("r") == ref)
+        fid = xfs[int(cell.get("s"))].get("numFmtId")
+        return custom.get(fid, builtin.get(fid))
+
+    def matrix_format(self, out):
+        data = json.loads(json.loads(addin(out)[1]["zebrabi:matrix-data"]))
+        return data["matrix"]["valueSources"][0]["format"]
+
+    def grid(self, rows, code):
+        return [["General"] * len(rows[0])] + [["General"] + [code] * (len(r) - 1) for r in rows[1:]]
+
+    def test_percentages_keep_their_percent_format_in_the_cells_and_the_table(self):
+        rows = [["Product", "AC", "PY"], ["Bikes", 0.35, 0.32], ["Helmets", 0.41, 0.4], ["Locks", 0.28, 0.3]]
+        for visual_kind in ("table", "chart"):
+            info, out = self.run_script(rows, visual=visual_kind, numberFormat=self.grid(rows, "0.0%"))
+            self.assertEqual(info["error"], None)
+            self.assertEqual(self.format_of(out, "B4"), "0.0%")
+            self.assertEqual(self.format_of(out, "C6"), "0.0%")
+            self.assertEqual(C.check(out)[0], [])
+        info, out = self.run_script(rows, visual="table", numberFormat=self.grid(rows, "0.0%"))
+        self.assertEqual(self.matrix_format(out), "0.0%")
+
+    def test_decimals_in_general_cells_are_not_rounded_to_whole_numbers(self):
+        rows = [["Month", "AC", "PY"], ["Jan", 1.24, 1.1], ["Feb", 1.11, 1.05], ["Mar", 1.3, 1.2]]
+        info, out = self.run_script(rows, visual="table")
+        self.assertEqual(info["error"], None)
+        self.assertEqual(self.format_of(out, "B4"), "#,##0.00")
+        self.assertEqual(self.format_of(out, "C4"), "#,##0.00")
+        self.assertEqual(self.matrix_format(out), "#,0.00")
+
+    def test_a_column_keeps_its_own_decimals_and_separator(self):
+        rows = [["Product", "AC", "PY"], ["Pens", 1200.5, 1100], ["Pads", 900.25, 950]]
+        numbers = [["General", "General", "General"], ["General", "#,##0.0", "0"], ["General", "#,##0.0", "0"]]
+        info, out = self.run_script(rows, numberFormat=numbers)
+        self.assertEqual(info["error"], None)
+        self.assertEqual(self.format_of(out, "B4"), "#,##0.0")
+        self.assertEqual(self.format_of(out, "C4"), "0")
+
+    def test_whole_numbers_keep_the_thousands_format_the_file_route_writes(self):
+        info, out = self.run_script(COSTS, visual="table")
+        self.assertEqual(self.format_of(out, "B4"), "#,##0")
+        self.assertEqual(self.matrix_format(out), "#,0")
+
 
 if __name__ == "__main__":
     unittest.main()

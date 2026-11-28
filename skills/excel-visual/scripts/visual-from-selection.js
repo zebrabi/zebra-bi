@@ -72,6 +72,25 @@ function cellXml(ref, v, style) {
   return `<c r="${ref}" s="${style ?? 0}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
 }
 
+// ---------- number format of a scenario column ----------
+/** Decimal places that show a value exactly, up to four. */
+function decimalsOf(v) {
+  for (let d = 0; d < 4; d++) { const x = v * 10 ** d; if (Math.abs(x - Math.round(x)) < 1e-7 * Math.max(1, Math.abs(x))) return d; }
+  return 4;
+}
+
+/** The Excel code and the Power BI format string for a column, from the number format of its cells: percent, thousands
+ *  separator and decimal places are kept. A General cell shows what the value needs, so its decimals come from the values. */
+function formatOf(code, nums) {
+  const first = String(code || "General").split(";")[0].replace(/\[[^\]]*\]|"[^"]*"|\\.|_.|\*./g, "");
+  const placeholders = first.match(/[0#]/);
+  const percent = first.includes("%");
+  const thousands = placeholders ? first.includes(",") : true;
+  const dec = placeholders ? ((first.match(/\.([0#]+)/) || ["", ""])[1].length) : Math.max(0, ...nums.map(decimalsOf));
+  const tail = (dec ? "." + "0".repeat(dec) : "") + (percent ? "%" : "");
+  return { excel: (thousands ? "#,##0" : "0") + tail, pbi: (thousands ? "#,0" : "0") + tail };
+}
+
 // ---------- chart or table ----------
 const MONTH = "(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\\.?";
 const TIME_PATTERNS = [
@@ -108,7 +127,7 @@ function xcolObject(name, i) {
 }
 
 function valueObject(col, index, isMatrix) {
-  const fmt = "#,0", name = col.displayName;
+  const fmt = col.format || "#,0", name = col.displayName;
   return { roles: { [col.role]: true }, type: NUM_TYPE(), format: fmt, displayName: name, queryName: `${name}.${name}`,
     expr: { _kind: 3, source: { _kind: 0, entity: name, variable: "s", kind: 0 }, ref: name, kind: 3 },
     rolesIndex: { [col.role]: [isMatrix ? 0 : index] }, objects: { general: { formatString: fmt } }, index, isMeasure: true };
@@ -171,11 +190,15 @@ function buildParts(header, rows, opts) {
   const out = [[header[0], ...cols.map((x) => header[x.c])], ...rows.map((r) => [r[0], ...cols.map((x) => r[x.c])])];
   const ncols = out[0].length, last = top + out.length - 1;
   const title = opts.title || `${cols.map((x) => header[x.c]).join(" vs ")} by ${header[0]}`;
+  // Each scenario column keeps the number format of its cells. "#,##0" is style 3; any other format gets a style of its own.
+  const formats = cols.map((x) => formatOf(opts.formats && opts.formats[x.c], rows.map((r) => r[x.c]).filter((v) => typeof v === "number")));
+  const custom = [...new Set(formats.map((f) => f.excel).filter((f) => f !== "#,##0"))];
+  const styleOfCol = [undefined, ...formats.map((f) => (f.excel === "#,##0" ? 3 : 4 + custom.indexOf(f.excel)))];
 
   let sd = `<row r="1">${cellXml("A1", title, 1)}</row>`;
   out.forEach((row, i) => {
     const r = top + i;
-    sd += `<row r="${r}">` + row.map((v, c) => cellXml(colLetter(c + 1) + r, v, i === 0 ? 2 : undefined)).join("") + "</row>";
+    sd += `<row r="${r}">` + row.map((v, c) => cellXml(colLetter(c + 1) + r, v, i === 0 ? 2 : styleOfCol[c])).join("") + "</row>";
   });
   const widths = out[0].map((_, i) => `<col min="${i + 1}" max="${i + 1}" width="14" customWidth="1"/>`).join("");
   const sheet = `${XMLH}<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0" showGridLines="0" tabSelected="1"/></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>${widths}</cols><sheetData>${sd}</sheetData><drawing r:id="rIdDrawing"/></worksheet>`;
@@ -193,9 +216,9 @@ function buildParts(header, rows, opts) {
     we = `${XMLH}<we:webextension xmlns:we="http://schemas.microsoft.com/office/webextensions/webextension/2010/11" id="${newId()}"><we:reference id="wa200004688" version="1.0.4.0" store="en-US" storeType="OMEX"/><we:alternateReferences><we:reference id="WA200004688" version="1.0.4.0" store="" storeType="OMEX"/></we:alternateReferences><we:properties>${prop("ZBILicenseSettings", "")}${prop("ChartChooserStore", JSON.stringify(chooser))}${prop("ChartSettings", JSON.stringify(settings))}${prop("SourceData", JSON.stringify(source))}${prop("zebrabi:table-data", "")}</we:properties><we:bindings><we:binding id="chartsRangeChangeEvent" type="matrix" appref="${appref}"/></we:bindings><we:snapshot/></we:webextension>`;
   } else {
     const num = (v) => (typeof v === "number" && isFinite(v) ? v : null);
-    const vcols = cols.map((x) => {
+    const vcols = cols.map((x, k) => {
       const data = rows.map((r) => ({ value: num(r[x.c]) }));
-      return { name: ROLE_KEY[x.role], displayName: String(header[x.c]), role: x.role, data,
+      return { name: ROLE_KEY[x.role], displayName: String(header[x.c]), role: x.role, data, format: formats[k].pbi,
         total: data.reduce((s, d) => s + (d.value || 0), 0) };
     });
     const settings = tableSettings(title, vcols, opts.costs);
@@ -212,7 +235,9 @@ function buildParts(header, rows, opts) {
   const R = (id, type, target) => `<Relationship Id="${id}" Type="${type}" Target="${target}"/>`;
   const rels = (inner) => `${XMLH}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${inner}</Relationships>`;
   const OD = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-  const styles = `${XMLH}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="10"/><color rgb="FF242424"/><name val="Segoe UI"/><family val="2"/></font><font><sz val="13"/><color rgb="FF242424"/><name val="Segoe UI Semibold"/><family val="2"/></font><font><b/><sz val="10"/><color rgb="FF242424"/><name val="Segoe UI"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FF242424"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const numFmts = custom.length ? `<numFmts count="${custom.length}">${custom.map((f, k) => `<numFmt numFmtId="${164 + k}" formatCode="${esc(f)}"/>`).join("")}</numFmts>` : "";
+  const customXfs = custom.map((_, k) => `<xf numFmtId="${164 + k}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`).join("");
+  const styles = `${XMLH}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${numFmts}<fonts count="3"><font><sz val="10"/><color rgb="FF242424"/><name val="Segoe UI"/><family val="2"/></font><font><sz val="13"/><color rgb="FF242424"/><name val="Segoe UI Semibold"/><family val="2"/></font><font><b/><sz val="10"/><color rgb="FF242424"/><name val="Segoe UI"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FF242424"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${4 + custom.length}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>${customXfs}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 
   return {
     meta: { kind, title, roles: cols.map((x) => `${header[x.c]}=${x.role}`), leftOut: plan.leftOut, range: source.range },
@@ -258,7 +283,7 @@ const toBase64 = (bytes) => { let s = ""; for (let i = 0; i < bytes.length; i +=
 // ---------- run in Excel ----------
 await Excel.run(async (context) => {
   const range = context.workbook.getSelectedRange();
-  range.load("values,text,address");
+  range.load("values,text,address,numberFormat");
   await context.sync();
   // The category column and the header are taken as the text the cells show (a year, a date or a code stays what the
   // reader sees); the scenario columns are taken as numbers.
@@ -266,7 +291,9 @@ await Excel.run(async (context) => {
   const values = kept.map((i) => range.values[i].map((v, c) => (c === 0 || i === kept[0] ? String(range.text[i][c]) : v)));
   if (values.length < 2 || values[0].length < 2) throw new Error("Select the data with its header row first (category column plus AC/PY/PL/FC columns).");
   const [header, ...rows] = values;
-  const { meta, parts } = buildParts(header, rows, { title: TITLE, costs: COSTS, visual: VISUAL });
+  // The number format of each column: that of its first number.
+  const formats = header.map((_, c) => { const r = rows.findIndex((row) => typeof row[c] === "number"); return r < 0 || !range.numberFormat ? null : range.numberFormat[kept[r + 1]][c]; });
+  const { meta, parts } = buildParts(header, rows, { title: TITLE, costs: COSTS, visual: VISUAL, formats });
   await Excel.createWorkbook(toBase64(zip(parts)));
   await context.sync();
   const left = meta.leftOut.length ? `; left out: ${meta.leftOut.join(", ")}` : "";
