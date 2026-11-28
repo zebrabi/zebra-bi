@@ -18,7 +18,7 @@
 - **Number labels.** The add-ins take no number format from the stored data or the cells. Their labels follow `displayUnits` and `decimalPlaces`, one value for every label, 1 by default. The file stores `displayUnits: "P"` when the result's `default_display_as_percentage` is true (values sent as fractions, 0.352 for 35.2%), and `decimalPlaces` when the values need other than one place, read from the values because the result states none. Nothing is stored where the defaults already fit.
 - **Cell format.** In the workbook, the data cells of a percent measure take a percent format and those of a decimal measure its decimal places; whole numbers keep `#,##0`.
 - **Index shift.** Value columns are indexed from 0 in both hosts (as in the Zebra AI app's export).
-- **Grand total.** Unnamed, because PowerPoint treats a node named "Total" as a ragged category.
+- **Grand total.** Unnamed, because PowerPoint treats a node named "Total" as a ragged category. The Tables add-in sums the rows for its total row, in PowerPoint and in Excel, and does not show the result's `grand_total`. So when the result's total is not the sum of the rows (a ratio, an average), the table has no total row.
 - **The chooser store matters.** With it empty, the add-in opens its "pick a chart" screen instead of the saved visual.
 - **Where the mapping lives.** `scripts/zoffice/visual.py`, which follows the Zebra AI app's export function by function.
 

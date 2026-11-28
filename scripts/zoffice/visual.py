@@ -327,13 +327,39 @@ def table_matrix(v, grand_total=True):
             "valueSources": sources}
 
 
+def total_is_the_sum(v):
+    """True when every column's total in the result is the sum of its rows, give or take the rows' rounding. The Tables
+    add-in sums the rows for its total row, in Excel and in PowerPoint; the result's total of a measure that does not
+    add up (a ratio, an average) differs from that sum."""
+    if not v.get("xcol"):
+        return True
+    gt = v.get("grand_total") or {}
+    for c in value_columns(v):
+        key = {"Val": "ac", "PY": "py", "PL": "pl", "FC": "fc"}.get(c["name"])
+        if key:
+            total = gt.get(key)
+        else:
+            am = gt.get("additional_measures") or []
+            idx = int(c["name"].replace("AdditionalMeasure", "")) - 1
+            total = am[idx] if idx < len(am) else None
+        leaves = [x for x in _flatten_values(c["data"]) if isinstance(x, (int, float)) and not isinstance(x, bool)]
+        if not isinstance(total, (int, float)) or isinstance(total, bool) or not leaves:
+            continue
+        places = _places(leaves)
+        rounding = 0.5 * len(leaves) * 10 ** -places if places is not None else 0
+        if abs(total - sum(leaves)) > max(rounding, 1e-9 * max(1.0, abs(total))):
+            return False
+    return True
+
+
 def table_settings(v, host):
     """Partial ZBITablesSettings: the keys the Zebra AI app's translateToOldTablesSettingsStructure sets that matter here,
     plus, in Excel, the measure roles xlsx_builder._edit_webextension_data_tables adds."""
-    s = {"titleText": title(v), "showTitle": True, "showRowGrandTotal": True}
+    # The add-in sums the rows for the total row, so a total that is not their sum is left out.
+    s = {"titleText": title(v), "showTitle": True, "showRowGrandTotal": total_is_the_sum(v)}
     if v.get("is_inverted"):
         s["invert"] = True
-    s.update(label_settings(v, value_columns(v), totals=bool(v.get("xcol"))))
+    s.update(label_settings(v, value_columns(v), totals=bool(v.get("xcol")) and s["showRowGrandTotal"]))
     if host == "xlsx":
         roles = [c["role"] for c in value_columns(v)]
         for i, r in enumerate(roles, start=1):

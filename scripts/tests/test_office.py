@@ -142,6 +142,19 @@ class Mapping(unittest.TestCase):
         self.assertNotIn("decimalPlaces", V.chart_settings(v))
         self.assertEqual(V.decimal_places(v, V.chart_value_columns(v)), None)
 
+    def test_a_total_that_is_not_the_sum_of_the_rows_is_left_out(self):
+        ratio = self.measure(REGION, [0.352, 0.297, 0.418], [0.338, 0.311, 0.395], percent=True, grand_total=(0.334, 0.326))
+        for host in ("xlsx", "pptx"):
+            self.assertFalse(V.table_settings(ratio, host)["showRowGrandTotal"], host)
+            self.assertFalse(V.table_data(ratio, host)["matrix"]["rows"]["root"]["children"][-1].get("isSubtotal"), host)
+
+    def test_a_total_that_is_the_sum_of_the_rows_stays(self):
+        for v in (REGION, SUBCAT, MONTH, self.measure(REGION, [124, 98], [118, 102])):
+            self.assertTrue(V.total_is_the_sum(v), v["title"])
+            self.assertTrue(V.table_settings(v, "pptx")["showRowGrandTotal"])
+        rounded = self.measure(REGION, [10.4, 20.4, 30.4], [5.0, 5.0, 5.0], grand_total=(61.3, 15.0))  # rows rounded to 0.1
+        self.assertTrue(V.table_settings(rounded, "xlsx")["showRowGrandTotal"])
+
     def test_double_encoding_round_trips(self):
         d = V.table_data(REGION, "pptx")
         self.assertEqual(json.loads(json.loads(X.double_encoded(d))), d)
