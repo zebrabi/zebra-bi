@@ -3,6 +3,24 @@
   "note": "A ceiling is a ratchet: it may be LOWERED at any time, and may never be raised without the reason being written into the diff. See perf/README.md. A null ceiling means the file is measured and printed but not gated -- it is loaded on demand, so it does not sit in the per-session floor.",
   "files": [
     {
+      "path": "skills/excel-visual/SKILL.md",
+      "ceiling": null,
+      "target": null,
+      "why": "Skill body of the in-Excel skill, loaded in full when the skill fires. Tracked, not gated: no ceiling has been argued for it yet."
+    },
+    {
+      "path": "skills/excel-visual/references/execution-guidance.md",
+      "ceiling": null,
+      "target": null,
+      "why": "On-demand reference of the in-Excel skill. Tracked, not gated: no ceiling has been argued for it yet."
+    },
+    {
+      "path": "skills/excel-visual/references/workbook-guardrails.md",
+      "ceiling": null,
+      "target": null,
+      "why": "On-demand reference of the in-Excel skill. Tracked, not gated: no ceiling has been argued for it yet."
+    },
+    {
       "path": "skills/report-authoring/SKILL.md",
       "ceiling": 16660,
       "target": 10700,

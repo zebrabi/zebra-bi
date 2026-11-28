@@ -18,6 +18,7 @@ What you can do with it:
 | The figures and labels of a chart that failed to draw | Zebra BI's error monitoring | Only when a chart fails |
 | A story page | claude.ai, as a private page that only you can open until you share it | Only when you ask for an artifact page |
 | A Power BI project | Nowhere. The checker reads it on your machine and has no network access | Never |
+| The range you select in Excel for `excel-visual` | Nowhere. The script reads it inside Excel and opens a new workbook | Never |
 | Usage tracking | The plugin has none | Never |
 
 The table covers what the plugin adds. Your assistant itself reads the data you give it, as it does with any file you share with it, under its provider's terms. Labels are your data's own names, so a chart by customer sends customer names. Leave out anything that should not leave your machine; each skill reminds you before its first chart. The full list, with what is saved on your machine and how sign-in works, is under [What this plugin sends and runs](#what-this-plugin-sends-and-runs).
@@ -37,6 +38,7 @@ The plugin bundles the Zebra BI MCP connector with the skills that put it to wor
 | `story-pdf` | Turns a saved story into one A4 PDF: the key message and KPIs, each supporting message with its chart, page numbers. Chart labels and values stay text. Claude Code only. |
 | `story-artifact` | Publishes a saved story as one shareable Claude artifact page: the key message and KPIs, each supporting message with its Zebra BI chart. Charts are pictures of the Zebra BI charts, or live charts with hover on request. A plain artifact page, since the Dashboard artifact type cannot carry Zebra BI charts. Claude Code only. |
 | `story-office` | Writes a saved story as a PowerPoint deck and an Excel workbook. Each chart is a live Zebra BI for Office visual where the Charts or Tables add-in is installed, and a picture of the chart for everyone else. Claude Code only. |
+| `excel-visual` | Turns the data selected in Excel into a Zebra BI chart or table, in a new workbook that the Zebra BI Charts or Tables for Office add-in draws. It runs inside Excel as an Office.js script and sends nothing. |
 | `story-brand` | Sets the look and voice of story files: colours, fonts, logo, credit line, your PowerPoint template and its layouts, and the tone of the writing. The charts keep their IBCS colours whatever the brand. |
 
 The Power BI skills, for a coding agent on Windows with Power BI Desktop:
@@ -58,6 +60,8 @@ In Claude Code the skills run as `/zebra-bi:<skill>`, for example:
 /zebra-bi:setup-doctor                          # is this machine ready to author Power BI reports?
 /zebra-bi:report-authoring                      # write a Zebra BI report into a Power BI project
 ```
+
+`excel-visual` only does its job inside Excel, in an agent that can run Office.js: select a range there and ask for a Zebra BI chart or table of it. Elsewhere it hands over to `chart-from-data`.
 
 ## Install
 
@@ -83,6 +87,7 @@ The MCP URL is `https://mcp.zebrabi.com/mcp`.
 - **The MCP.** The skills call `render_visual` once per chart, or `render_dashboard` once for several charts. Each call sends every chart's arguments: the category, group and period labels, the aggregated values per scenario, any additional measures and totals, and the titles. The labels are your data's own values, so a chart by customer or employee sends those names; leave out anything that should not leave your machine. Each skill says so in one line before its first chart. The source file is never sent. A chart that fails to render is reported to Zebra's error monitoring together with the arguments that were sent.
 - **`story-pdf`, `story-artifact` and `story-office`.** Their Python scripts send the same chart arguments to the same MCP over HTTPS and print `Sending <n> chart(s) to <endpoint>` first. A chart whose arguments did not change is reused from `.zebra/stories/<story>/visuals/`. Once a day they download the chart renderer (the `ui://` page `render_visual` names in `tools/list`) and cache it in `$CLAUDE_PLUGIN_DATA`, or in `~/.cache/zebra-bi` when that is not set. A renderer or chart fetched from another MCP address is never reused. The plugin sends no telemetry.
 - **The artifact page.** `story-artifact` publishes the page and a picture of each chart to claude.ai as a private artifact, which its owner shares from the page's Share menu. It holds the story's aggregated numbers, not the source data. With `--live` it also carries the Zebra BI renderer, which draws the charts in each reader's browser.
+- **`excel-visual`.** An Office.js script that runs inside Excel. It reads the selected range, builds a workbook in memory and opens it as a new workbook after Excel's confirmation. It makes no network call, signs in nowhere and starts nothing; the new workbook holds the selected figures and the Zebra BI add-in visual bound to them, so it goes only where that data may go.
 - **A local browser.** `story-pdf`, `story-artifact`, `story-office` and the `story-brand` preview start Chrome, Edge or Chromium headless, with a throwaway profile and its background traffic (updates, sync, metrics, safe-browsing lists) turned off. The scripts drive it over a private pipe that no other program can reach; on Windows over a remote-debugging port bound to 127.0.0.1. The browser closes when the file is done.
 - **A web font, if a brand sets one.** With `fonts.web_css` set, the headless browser loads that stylesheet while it builds the PDF, and an artifact page loads it in every reader's browser, so the font host (for an artifact, always Google Fonts) sees each reader's address. The default brand sets none.
 - **What is written.** Files under `.zebra/` in your working folder (sources, stories, brand, and the PDF, PowerPoint and Excel files) and the renderer cache. A source read from SharePoint or a Power BI model keeps a full copy of the sheet or query result in `.zebra/sources/`. Saved sources stay out of git: `data-source` writes `.zebra/sources/.gitignore` with the first source, so the manifests and data copies are not committed. The rest of `.zebra/` (stories, brand and the files built from them) is not ignored, so add `.zebra/` to your `.gitignore` when the working folder is a repository and the story figures are confidential.
@@ -112,7 +117,7 @@ The MCP URL is `https://mcp.zebrabi.com/mcp`.
 
 `skills/report-authoring/` is generated from a private source and is never edited here.
 
-`node microsoft-365/build.js` builds the Microsoft 365 Copilot app package: the Zebra BI connector, the chart, data story and Power BI skills, and the checker as scripts inside report-authoring. The Copilot-specific text lives in `microsoft-365/overlay/` and is applied at build time, so the skills here stay the only copy. [`microsoft-365/README.md`](microsoft-365/README.md) covers what the build changes and why.
+`node microsoft-365/build.js` builds the Microsoft 365 Copilot app package: the Zebra BI connector, the chart, data story, in-Excel and Power BI skills, and the checker as scripts inside report-authoring. The Copilot-specific text lives in `microsoft-365/overlay/` and is applied at build time, so the skills here stay the only copy. [`microsoft-365/README.md`](microsoft-365/README.md) covers what the build changes and why.
 
 `CONTRIBUTING.md` covers the internals and how to run the checks; `AGENTS.md` is the contributor contract for the Power BI part.
 
