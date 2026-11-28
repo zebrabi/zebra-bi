@@ -15,6 +15,7 @@
 - **`visual_type`.** `render_visual` returns `visual_type` `Chart` or `Table` in `structuredContent.visual`. That picks the add-in.
 - **Data encoding.** The data property is JSON stored as a JSON string, so it is encoded twice.
 - **Partial settings.** The add-ins merge saved keys over their own defaults, so the settings are partial: title, chart type, measure roles, and for Excel Tables the `measureRoles` and `showCrossTables: false`.
+- **Number labels.** The add-ins take no number format from the stored data or the cells. Their labels follow `displayUnits` and `decimalPlaces`, one value for every label, 1 by default. The file stores `displayUnits: "P"` when the result's `default_display_as_percentage` is true (values sent as fractions, 0.352 for 35.2%), and `decimalPlaces` when the values need other than one place, read from the values because the result states none. Nothing is stored where the defaults already fit.
 - **Index shift.** Value columns are indexed from 0 in both hosts (as in the Zebra AI app's export).
 - **Grand total.** Unnamed, because PowerPoint treats a node named "Total" as a ragged category.
 - **The chooser store matters.** With it empty, the add-in opens its "pick a chart" screen instead of the saved visual.
@@ -42,4 +43,6 @@
 - **Groups.** Charts and tables with `group_columns` are not verified in PowerPoint and Excel.
 - **Long tables.** A long two-level table can scroll a little inside its frame on a 16:9 slide.
 - **Font.** Segoe UI is used for text, matching the charts. Keynote and Numbers on a Mac without it substitute a font and say so.
+- **Labels around 1,000.** From 1,000 on the add-ins abbreviate a label (1.1K) with the same decimal places as every other label, so when a visual's labels, a table's total included, reach 1,000, the default of one place stays and labels below 1,000 show one too (812.0).
+- **Percent.** A measure is labelled in percent only when the result says so (`default_display_as_percentage`); fractions without it are labelled as numbers.
 - **Overlay.** The combo overlay of a chart (`render_visual`'s overlay series) is not carried. The Zebra AI app's export drops it too.

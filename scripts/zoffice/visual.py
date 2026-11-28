@@ -85,6 +85,81 @@ def _total(v, col):
     return am[idx] if idx < len(am) else 0
 
 
+# ---------- data labels (both add-ins) ----------
+# The add-ins take no number format from the data they are given (the "#,0" below is never read for labels): in
+# Excel they read the bound cells again. Their labels follow two stored settings: displayUnits ("P" labels in percent,
+# with variances in pp) and decimalPlaces (one value for every value and variance label, 1 when not set). From 1,000
+# on, labels are abbreviated (1.1K) with those same decimal places.
+_ADDIN_DECIMALS = 1
+_ABBREVIATED = 1000
+_MAX_DECIMALS = 3
+
+
+def is_percent(v):
+    """True when the result says every displayed measure is a percentage, sent as a fraction (0.352 for 35.2%)."""
+    return bool(v.get("default_display_as_percentage"))
+
+
+def _node_values(nodes):
+    """Every value of a ycol, parents (subtotals) included, in a fixed order."""
+    out = []
+    for n in nodes or []:
+        out.append(n.get("value"))
+        out += _node_values(n.get("children"))
+    return out
+
+
+def _places(values):
+    """The fewest decimal places, up to _MAX_DECIMALS, that show every value exactly; None when more are needed."""
+    most = 0
+    for x in values:
+        for d in range(_MAX_DECIMALS + 1):
+            if abs(x * 10 ** d - round(x * 10 ** d)) < 1e-7 * max(1.0, abs(x * 10 ** d)):
+                break
+        else:
+            return None
+        most = max(most, d)
+    return most
+
+
+def decimal_places(v, cols):
+    """The decimal places the measure needs, read from its values (the result states none): of the percent for a
+    percent measure. None when the values need more than _MAX_DECIMALS (a computed ratio or average)."""
+    nums = [x for c in cols for x in _node_values(c["data"]) if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    return _places([x * 100 for x in nums] if is_percent(v) else nums)
+
+
+def _labels(v, cols, totals):
+    """The numbers the visual labels: every value, the actuals' variance to each comparison, and the totals."""
+    num = lambda x: x if isinstance(x, (int, float)) and not isinstance(x, bool) else 0
+    lines = [[num(x) for x in _node_values(c["data"])] for c in cols]
+    if totals:
+        for line, c in zip(lines, cols):
+            line.append(num(_total(v, c)))
+    ac = next((i for i, c in enumerate(cols) if c["name"] == "Val"), None)
+    out = [x for line in lines for x in line]
+    if ac is not None:
+        for i, c in enumerate(cols):
+            if c["name"] in ("PY", "PL", "FC"):
+                out += [a - b for a, b in zip(lines[ac], lines[i])]
+    return out
+
+
+def label_settings(v, cols, totals=False):
+    """The add-ins' label settings for the measure, only where their defaults would show it wrongly."""
+    places = decimal_places(v, cols)
+    if is_percent(v):
+        s = {"displayUnits": "P"}
+        if places is not None and places != _ADDIN_DECIMALS:
+            s["decimalPlaces"] = places
+        return s
+    if places is None or places == _ADDIN_DECIMALS:
+        return {}
+    if any(abs(x) >= _ABBREVIATED for x in _labels(v, cols, totals)):
+        return {}  # fewer or more places would also change the abbreviated labels (1.1K)
+    return {"decimalPlaces": places}
+
+
 # ---------- Charts add-in ----------
 
 def chart_settings(v):
@@ -100,6 +175,7 @@ def chart_settings(v):
         s["differenceHighlight"] = False
     if v.get("is_inverted"):
         s["invert"] = True
+    s.update(label_settings(v, cols))
     return s
 
 
@@ -248,6 +324,7 @@ def table_settings(v, host):
     s = {"titleText": title(v), "showTitle": True, "showRowGrandTotal": True}
     if v.get("is_inverted"):
         s["invert"] = True
+    s.update(label_settings(v, value_columns(v), totals=bool(v.get("xcol"))))
     if host == "xlsx":
         roles = [c["role"] for c in value_columns(v)]
         for i, r in enumerate(roles, start=1):
