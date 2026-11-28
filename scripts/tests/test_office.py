@@ -4,6 +4,7 @@ Fixtures are three render_visual results (structuredContent.visual) from the Sup
 a Chart with one category level, a Table with one level and a Table with two levels.
 """
 import contextlib, datetime as dt, hashlib, io, json, os, re, shutil, sys, tempfile, unittest, zipfile
+import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -170,6 +171,46 @@ class Files(unittest.TestCase):
         with zipfile.ZipFile(out) as z:
             slides = [n for n in z.namelist() if n.startswith("ppt/slides/slide")]
         self.assertEqual(len(slides), 1 + len(STORY["sections"]) + 1)  # title, sections, next
+
+    def cell_formats(self, out):
+        """{sheet number: set of the format codes of its number cells}, and the numFmts of styles.xml."""
+        ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+        with zipfile.ZipFile(out) as z:
+            styles = ET.fromstring(z.read("xl/styles.xml"))
+            custom = {n.get("numFmtId"): n.get("formatCode") for n in styles.iter(ns + "numFmt")}
+            xfs = list(styles.find(ns + "cellXfs"))
+            self.assertEqual(int(styles.find(ns + "cellXfs").get("count")), len(xfs))
+            found = {}
+            for i in range(2, 2 + len(VISUALS)):
+                sheet = ET.fromstring(z.read("xl/worksheets/sheet%d.xml" % i))
+                found[i] = {custom.get(xfs[int(c.get("s"))].get("numFmtId"), xfs[int(c.get("s"))].get("numFmtId"))
+                            for c in sheet.iter(ns + "c") if c.get("t") is None and c.find(ns + "v") is not None}
+        return found, custom
+
+    def test_a_whole_number_story_keeps_its_cell_format_and_styles(self):
+        out = self.build(XL, "xlsx")
+        found, custom = self.cell_formats(out)
+        self.assertEqual(custom, {})
+        self.assertTrue(all(codes == {"3"} for codes in found.values()), found)  # 3 is the built-in #,##0
+        with zipfile.ZipFile(out) as z:
+            self.assertEqual(z.read("xl/styles.xml").decode(), XL.styles(B.load(start=self.tmp)))
+
+    def test_percent_and_decimal_measures_keep_their_format_in_the_cells(self):
+        pct, dec = json.loads(json.dumps(MONTH)), json.loads(json.dumps(REGION))
+        pct["default_display_as_percentage"] = True
+        for i, n in enumerate(pct["ycol_ac"]):
+            n["value"] = 0.35 + i / 1000
+        for i, n in enumerate(dec["ycol_ac"] + dec["ycol_py"]):
+            n["value"] = 1.25 + i / 100
+        out = os.path.join(self.tmp, "formats.xlsx")
+        XL.build(STORY, {"sales-by-month": pct, "sales-by-region": dec, "sales-by-subcategory": SUBCAT}, self.snaps, out,
+                 "Source: test.", B.load(start=self.tmp))
+        self.assertEqual(C.check(out)[0], [])
+        found, custom = self.cell_formats(out)
+        self.assertEqual(found[2], {"0.0%"})
+        self.assertEqual(found[3], {"#,##0.00"})
+        self.assertEqual(found[4], {"3"})
+        self.assertEqual(sorted(custom.values()), ["#,##0.00", "0.0%"])
 
     def test_xlsx_passes_check(self):
         out = self.build(XL, "xlsx")

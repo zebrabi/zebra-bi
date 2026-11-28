@@ -160,6 +160,15 @@ def label_settings(v, cols, totals=False):
     return {"decimalPlaces": places}
 
 
+def cell_format(v):
+    """The Excel number format of the measure's cells in the workbook: percent, and the decimal places the values need
+    (all of _MAX_DECIMALS when they need more)."""
+    places = decimal_places(v, value_columns(v) if is_table(v) else chart_value_columns(v))
+    places = _MAX_DECIMALS if places is None else places
+    tail = "." + "0" * places if places else ""
+    return "0%s%%" % tail if is_percent(v) else "#,##0" + tail
+
+
 # ---------- Charts add-in ----------
 
 def chart_settings(v):

@@ -29,23 +29,29 @@ def _argb(c):
     return "FF" + (c or "#000000").lstrip("#").upper()
 
 
-def styles(brand):
-    """styles.xml from the brand: body and headline fonts, ink and muted colours, a hairline under headers."""
+def styles(brand, number_formats=()):
+    """styles.xml from the brand: body and headline fonts, ink and muted colours, a hairline under headers. Each of
+    number_formats (Excel format codes) gets a cell style of its own after the nine named ones."""
     c, f = brand["colors"], brand["fonts"]
     body, head = X.t(f["body"]["family"]), X.t(f["headline"]["family"])
     ink, muted, rule = _argb(c["ink"]), _argb(c["muted"]), _argb(c.get("accent") or c["ink"])
+    num_fmts = ('<numFmts count="%d">%s</numFmts>\n' % (len(number_formats), "".join(
+        '<numFmt numFmtId="%d" formatCode=%s/>' % (164 + i, X.attr(code)) for i, code in enumerate(number_formats)))
+        if number_formats else "")
+    xfs = "".join('<xf numFmtId="%d" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>\n' % (164 + i)
+                  for i in range(len(number_formats)))
     font = '<font>%s<sz val="%d"/><color rgb="%s"/><name val="%s"/><family val="2"/></font>'
     fonts = [font % ("", 10, ink, body), font % ("", 20, ink, head), font % ("", 13, ink, head),
              font % ("", 10, muted, body), font % ("<b/>", 10, ink, body), font % ("<u/>", 10, "FF0F6CBD", body),
              font % ("<b/>", 9, muted, body)]
     return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="%s">
-<fonts count="%d">%s</fonts>
+%s<fonts count="%d">%s</fonts>
 <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
 <borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>
 <border><left/><right/><top/><bottom style="thin"><color rgb="%s"/></bottom><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="9">
+<cellXfs count="%d">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
@@ -55,9 +61,9 @@ def styles(brand):
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
 <xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="6" fillId="0" borderId="0" xfId="0" applyFont="1"/>
-</cellXfs>
+%s</cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
-</styleSheet>""" % (NS_MAIN, len(fonts), "".join(fonts), rule)
+</styleSheet>""" % (NS_MAIN, num_fmts, len(fonts), "".join(fonts), rule, 9 + len(number_formats), xfs)
 
 
 COL_PX, ROW_PX = 64, 20     # default column width and row height in pixels
@@ -159,6 +165,7 @@ def build(story, visuals, snapshots, out, footer, brand):
     pkg = X.Package()
     names = sheet_names(story)
     sheets = []  # (name, xml)
+    number_formats = []  # Excel format codes other than "#,##0", each with a cell style after the named ones
 
     # Story sheet: key message, subtitle, KPIs, one linked line per supporting message.
     kick = (str(story.get("kicker") or "").strip() or str(brand.get("kicker") or "").strip())[:60]  # story first, as story.kicker
@@ -190,10 +197,14 @@ def build(story, visuals, snapshots, out, footer, brand):
         v = visuals[vid]
         sec = next(s for s in story["sections"] if s.get("visual") == vid)
         data = V.flat_rows(v)
+        code = V.cell_format(v)
+        if code != "#,##0" and code not in number_formats:
+            number_formats.append(code)
+        number = NUMBER if code == "#,##0" else 9 + number_formats.index(code)
         ncols, nrows = len(data[0]), len(data)
         rows = {1: [(1, sec.get("heading", ""), HEADING)], 2: [(1, plain(sec.get("body", "")), MUTED)]}
         for i, row in enumerate(data):
-            rows[DATA_TOP + i] = [(c + 1, val, HEADER if i == 0 else (NUMBER if isinstance(val, (int, float)) and not isinstance(val, bool) else NORMAL))
+            rows[DATA_TOP + i] = [(c + 1, val, HEADER if i == 0 else (number if isinstance(val, (int, float)) and not isinstance(val, bool) else NORMAL))
                                   for c, val in enumerate(row)]
         sheet_index = len(sheets)  # 0-based position of this sheet in the workbook
         appref = "{00000000-0001-0000-%02d00-000000000000}" % sheet_index
@@ -239,7 +250,7 @@ def build(story, visuals, snapshots, out, footer, brand):
             '<workbook xmlns="%s" xmlns:r="%s"><bookViews><workbookView activeTab="0"/></bookViews><sheets>%s</sheets></workbook>'
             % (NS_MAIN, R[:-1], "".join(wb_sheets)), CT["workbook"])
     pkg.add("xl/_rels/workbook.xml.rels", X.rels(wb_rels))
-    pkg.add("xl/styles.xml", styles(brand), CT["styles"])
+    pkg.add("xl/styles.xml", styles(brand, number_formats), CT["styles"])
     pkg.add("_rels/.rels", X.rels([("rId1", R + "officeDocument", "xl/workbook.xml"),
                                    ("rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml"),
                                    ("rId3", R + "extended-properties", "docProps/app.xml")]))
