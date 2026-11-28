@@ -1,6 +1,6 @@
 ---
 name: excel-visual
-description: "Turn the data selected in Excel into a Zebra BI chart or table in IBCS notation: actuals against previous year, plan or forecast, with the variances marked in green and red. A time category (months, quarters, years) gets a chart; products, regions or departments get a table with a total row. Use when the user has a range selected in Excel and asks for a Zebra BI or IBCS chart or table, a variance chart or table, or to chart the selection against plan or last year: inside Excel, with a range selected, this is the skill for a Zebra BI visual in the workbook, not chart-from-data. The script opens the result in a new workbook and draws it with the Zebra BI Charts or Tables for Office add-in. Outside Excel, use chart-from-data."
+description: "Turn the data selected in Excel into a Zebra BI chart or table in IBCS notation: actuals against previous year, plan or forecast, with the variances marked in green and red. A time category (months, quarters, years) gets a chart; products, regions or departments get a table with a total row. Use when the user has a range selected in Excel and asks for a Zebra BI or IBCS chart or table, a variance chart or table, or to chart the selection against plan or last year: inside Excel, with a range selected, this is the skill that turns the selected range into a Zebra BI visual, opened in a new workbook, not chart-from-data. The script opens the result in a new workbook and draws it with the Zebra BI Charts or Tables for Office add-in. Outside Excel, use chart-from-data."
 compatibility: "Runs only inside Excel, in an agent that can run an Office.js script (Excel.run and Excel.createWorkbook). Makes no network call and needs no sign-in. Elsewhere it hands over to chart-from-data."
 license: Apache-2.0
 metadata:
@@ -25,6 +25,7 @@ Read the headers first. The user's workbook stays as it is: never ask for header
 - When the headers are years, the later year is the actuals and the earlier year the previous year, unless the user says otherwise.
 - When a header puts the measure first ("Revenue Actual", "Revenue Plan"), map it yourself.
 - When you cannot tell which column is which, ask the user one question, then set `ROLES`.
+- Name every scenario column the user wants shown: once `ROLES` names an AC, any unnamed numeric column without a recognised header is left out.
 
 `ROLES` maps a header text, exactly as it appears in the selection, to "AC", "PY", "PL" or "FC", for example `{"2025": "PY", "2026": "AC"}` or `{"Revenue Actual": "AC", "Revenue Plan": "PL"}`. Columns it does not name keep the header rules. The script stops with a message when a header in `ROLES` is not in the selection, a role is not one of the four, two columns get the same role, or a column that is not numeric gets a role.
 

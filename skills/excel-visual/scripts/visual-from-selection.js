@@ -43,13 +43,15 @@ function checkRoles(roles, header) {
   const map = new Map();
   if (roles === null || roles === undefined) return map;
   if (typeof roles !== "object" || Array.isArray(roles)) throw new Error('ROLES must be null or an object that maps a header text to "AC", "PY", "PL" or "FC".');
+  // A "__proto__" key in an object literal sets the prototype and is not a key, so the entry would vanish unchecked.
+  if (Object.getPrototypeOf(roles) !== Object.prototype) throw new Error('ROLES must be a plain object that maps a header text to "AC", "PY", "PL" or "FC". A "__proto__" key in an object literal replaces the prototype instead of adding a key, so a column whose header is "__proto__" cannot be named in ROLES. Leave that column out of the selection.');
   const heads = header.slice(1).map(String);
   const holder = new Map();
   for (const name of Object.keys(roles)) {
-    if (!hasOwn(ROLE_OF_CODE, roles[name])) throw new Error(`ROLES gives "${name}" the role ${JSON.stringify(roles[name])}, which is not one of "AC", "PY", "PL" or "FC".`);
-    if (name === String(header[0])) throw new Error(`ROLES names "${name}", which is the category column of the selection, not a scenario column.`);
-    if (!heads.includes(name)) throw new Error(`ROLES names "${name}", which is not a header in the selection. The headers are ${heads.map((h) => `"${h}"`).join(", ")}. Write the header text exactly as it appears.`);
-    if (holder.has(roles[name])) throw new Error(`ROLES gives two columns the role ${roles[name]} ("${holder.get(roles[name])}" and "${name}"). Each role goes to one column.`);
+    if (!hasOwn(ROLE_OF_CODE, roles[name])) throw new Error(`ROLES gives ${JSON.stringify(name)} the role ${JSON.stringify(roles[name])}, which is not one of "AC", "PY", "PL" or "FC".`);
+    if (name === String(header[0])) throw new Error(`ROLES names ${JSON.stringify(name)}, which is the category column of the selection, not a scenario column.`);
+    if (!heads.includes(name)) throw new Error(`ROLES names ${JSON.stringify(name)}, which is not a header in the selection. The headers are ${heads.map((h) => JSON.stringify(h)).join(", ")}. Write the header text exactly as it appears.`);
+    if (holder.has(roles[name])) throw new Error(`ROLES gives two columns the role ${roles[name]} (${JSON.stringify(holder.get(roles[name]))} and ${JSON.stringify(name)}). Each role goes to one column.`);
     holder.set(roles[name], name);
     map.set(name, ROLE_OF_CODE[roles[name]]);
   }
@@ -77,7 +79,7 @@ function planColumns(header, rows, roles) {
       throw new Error(`Column "${header[c]}" ${fromRoles ? `is given the role ${ROLE_CODE[role]} in ROLES` : `reads as ${ROLE_NAME[role]}`} but holds text or errors: the cell for "${rows[bad][0]}" shows "${shown}". If it is a number stored as text, convert it to a number in the sheet; otherwise fix the cell or leave the column out of the selection.`);
     }
     if (bad >= 0) { leftOut.push(String(header[c])); continue; }
-    found.push({ c, role });
+    found.push({ c, role, fromRoles });
   }
   if (!found.length) throw new Error("Select a header row, one category column and at least one numeric column.");
   if (found.length > 1 && !found.some((f) => f.role)) {
@@ -86,13 +88,21 @@ function planColumns(header, rows, roles) {
   const used = new Map();
   for (const f of found) {
     if (!f.role) continue;
-    if (used.has(f.role)) throw new Error(`Two columns read as ${ROLE_NAME[f.role]} ("${header[used.get(f.role)]}" and "${header[f.c]}"). Select one of them. If one is a variance column, leave it out: the visual works out the variances.`);
-    used.set(f.role, f.c);
+    if (used.has(f.role)) {
+      const other = used.get(f.role);
+      if (f.fromRoles && other.fromRoles) throw new Error(`ROLES names ${JSON.stringify(String(header[f.c]))}, but two selected columns have that header text, so ROLES cannot tell them apart. Select columns that have different headers, or leave one of them out.`);
+      if (f.fromRoles || other.fromRoles) {
+        const [byRoles, byHeader] = f.fromRoles ? [f, other] : [other, f];
+        throw new Error(`ROLES gives ${JSON.stringify(String(header[byRoles.c]))} the role ${ROLE_CODE[f.role]}, which the header ${JSON.stringify(String(header[byHeader.c]))} already has. Give one of them another role in ROLES, or leave one column out.`);
+      }
+      throw new Error(`Two columns read as ${ROLE_NAME[f.role]} ("${header[other.c]}" and "${header[f.c]}"). Select one of them. If one is a variance column, leave it out: the visual works out the variances.`);
+    }
+    used.set(f.role, f);
   }
   const cols = found.filter((f) => f.role);
   for (const f of found) {
     if (f.role) continue;
-    if (!used.has("Values")) { f.role = "Values"; used.set("Values", f.c); cols.push(f); } else leftOut.push(String(header[f.c]));
+    if (!used.has("Values")) { f.role = "Values"; used.set("Values", f); cols.push(f); } else leftOut.push(String(header[f.c]));
   }
   cols.sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role));
   return { cols, leftOut };

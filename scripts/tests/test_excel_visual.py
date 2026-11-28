@@ -434,7 +434,47 @@ class Script(unittest.TestCase):
         rows = [["Product", "2026", "AC"], ["Pens", 1200, 1100], ["Pads", 900, 950]]
         info, _ = self.run_script(rows, roles={"2026": "AC"})
         self.assertEqual(info["created"], 0)
-        self.assertIn('Two columns read as actuals ("2026" and "AC")', info["error"])
+        self.assertIn('ROLES gives "2026" the role AC, which the header "AC" already has', info["error"])
+        self.assertIn("Give one of them another role in ROLES, or leave one column out", info["error"])
+        rows = [["Product", "Actual", "2026"], ["Pens", 1200, 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows, roles={"2026": "AC"})
+        self.assertEqual(info["created"], 0)
+        self.assertIn('ROLES gives "2026" the role AC, which the header "Actual" already has', info["error"])
+        self.assertNotIn("Two columns read as", info["error"])
+
+    def test_two_columns_with_one_header_text_that_roles_names_cannot_be_told_apart(self):
+        rows = [["Product", "2026", "2026"], ["Pens", 1200, 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows, roles={"2026": "AC"})
+        self.assertEqual(info["created"], 0)
+        self.assertIn('ROLES names "2026", but two selected columns have that header text', info["error"])
+        self.assertIn("ROLES cannot tell them apart", info["error"])
+
+    def test_two_columns_that_read_alike_without_roles_keep_the_plain_message(self):
+        rows = [["Product", "Actual", "AC"], ["Pens", 1200, 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows)
+        self.assertIn('Two columns read as actuals ("Actual" and "AC")', info["error"])
+        self.assertNotIn("ROLES", info["error"])
+
+    def test_roles_print_headers_as_json_so_they_can_be_copied(self):
+        rows = [["Product", 'Say "AC" \\ now ', "2026"], ["Pens", 1200, 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows, roles={"Missing": "PY"})
+        self.assertIn('The headers are "Say \\"AC\\" \\\\ now ", "2026"', info["error"])
+
+    def test_a_header_with_a_quote_and_a_backslash_can_be_named_in_roles(self):
+        head = 'Revenue "AC" \\ 2026'
+        rows = [["Product", "2025", head], ["Pens", 1200, 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows, roles={"2025": "PY", head: "AC"})
+        self.assertEqual((info["created"], info["error"]), (1, None))
+        self.assertIn(head + "=Values", info["log"][0])
+        self.assertIn("2025=PreviousYear", info["log"][0])
+
+    def test_roles_with_a_replaced_prototype_stop(self):
+        # JSON.stringify writes {"__proto__": null} as a literal that sets the prototype, so the key never exists.
+        for bad in (None, {"AC": "PL"}):
+            info, _ = self.run_script(self.roles_rows(["2025", "2026"]), roles={"__proto__": bad, "2026": "AC"})
+            self.assertEqual(info["created"], 0, bad)
+            self.assertIn("ROLES must be a plain object", info["error"])
+            self.assertIn('"__proto__"', info["error"])
 
     def test_a_non_numeric_column_given_a_role_stops_and_names_the_cell(self):
         rows = [["Product", "2025", "2026"], ["Pens", "1,200", 1100], ["Pads", 900, 950]]
