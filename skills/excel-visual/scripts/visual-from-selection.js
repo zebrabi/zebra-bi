@@ -10,10 +10,12 @@
 // AppSource WA200004688 (ChartSettings + SourceData + a matrix binding); Tables = AppSource WA200004689
 // (ZBITablesSettings + SourceData + zebrabi:matrix-data + a matrix binding).
 //
-// Settings the agent sets before running (an IBCS title names the measure, unit and period):
+// Settings the agent sets before running (an IBCS title names the measure, unit and period; ROLES names the scenario
+// columns when the headers do not):
 const TITLE = null;        // chart title; default "<scenario headers> by <category header>"
 const COSTS = false;       // true when an increase is bad (costs, expenses): flips the variance colours
 const VISUAL = "auto";     // "chart" | "table" | "auto": auto draws a chart for a time category, a table otherwise
+const ROLES = null;        // null, or {"<header text exactly as in the selection>": "AC" | "PY" | "PL" | "FC"}: decides those columns' roles
 
 // ---------- scenario roles from the header ----------
 const ROLE_RULES = [
@@ -31,23 +33,55 @@ function roleOf(header) {
 
 const ROLE_NAME = { Values: "actuals", Forecast: "forecast", Plan: "plan", PreviousYear: "previous year" };
 
-/** Picks the scenario columns. Recognised headers take their role first; the first other numeric column becomes the
- *  actuals only when no header reads as actuals. Empty columns are ignored; other columns are returned as left out. */
-function planColumns(header, rows) {
+const ROLE_OF_CODE = { AC: "Values", PY: "PreviousYear", PL: "Plan", FC: "Forecast" };
+const ROLE_CODE = Object.fromEntries(Object.entries(ROLE_OF_CODE).map(([code, role]) => [role, code]));
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+/** Checks ROLES against the selection and returns it as a map from header text to role. Stops with a message that
+ *  names the problem, so the agent can correct the setting. */
+function checkRoles(roles, header) {
+  const map = new Map();
+  if (roles === null || roles === undefined) return map;
+  if (typeof roles !== "object" || Array.isArray(roles)) throw new Error('ROLES must be null or an object that maps a header text to "AC", "PY", "PL" or "FC".');
+  const heads = header.slice(1).map(String);
+  const holder = new Map();
+  for (const name of Object.keys(roles)) {
+    if (!hasOwn(ROLE_OF_CODE, roles[name])) throw new Error(`ROLES gives "${name}" the role ${JSON.stringify(roles[name])}, which is not one of "AC", "PY", "PL" or "FC".`);
+    if (name === String(header[0])) throw new Error(`ROLES names "${name}", which is the category column of the selection, not a scenario column.`);
+    if (!heads.includes(name)) throw new Error(`ROLES names "${name}", which is not a header in the selection. The headers are ${heads.map((h) => `"${h}"`).join(", ")}. Write the header text exactly as it appears.`);
+    if (holder.has(roles[name])) throw new Error(`ROLES gives two columns the role ${roles[name]} ("${holder.get(roles[name])}" and "${name}"). Each role goes to one column.`);
+    holder.set(roles[name], name);
+    map.set(name, ROLE_OF_CODE[roles[name]]);
+  }
+  return map;
+}
+
+/** Picks the scenario columns. Columns named in ROLES take that role; the others take theirs from the header. Of the
+ *  columns left without a role, the first numeric one becomes the actuals only when no column has them. Empty columns
+ *  are ignored; other columns are returned as left out. */
+function planColumns(header, rows, roles) {
+  const named = checkRoles(roles, header);
   const found = [];
   const leftOut = [];
   for (let c = 1; c < header.length; c++) {
     const cells = rows.map((r) => r[c]);
-    if (cells.every((v) => v === "" || v === null || v === undefined)) continue;
-    const role = roleOf(header[c]);
-    const numeric = cells.every((v) => v === "" || v === null || v === undefined || (typeof v === "number" && isFinite(v)));
-    if (role && !numeric) throw new Error(`Column "${header[c]}" reads as ${ROLE_NAME[role]} but holds text or errors. Fix those cells, or leave the column out of the selection.`);
-    if (!numeric) { leftOut.push(String(header[c])); continue; }
+    const fromRoles = named.has(String(header[c]));
+    if (cells.every((v) => v === "" || v === null || v === undefined)) {
+      if (fromRoles) throw new Error(`Column "${header[c]}" is given a role in ROLES but holds no numbers. Leave it out of ROLES.`);
+      continue;
+    }
+    const role = fromRoles ? named.get(String(header[c])) : roleOf(header[c]);
+    const bad = cells.findIndex((v) => !(v === "" || v === null || v === undefined || (typeof v === "number" && isFinite(v))));
+    if (role && bad >= 0) {
+      const shown = String(cells[bad]).length > 40 ? String(cells[bad]).slice(0, 40) + "..." : String(cells[bad]);
+      throw new Error(`Column "${header[c]}" ${fromRoles ? `is given the role ${ROLE_CODE[role]} in ROLES` : `reads as ${ROLE_NAME[role]}`} but holds text or errors: the cell for "${rows[bad][0]}" shows "${shown}". If it is a number stored as text, convert it to a number in the sheet; otherwise fix the cell or leave the column out of the selection.`);
+    }
+    if (bad >= 0) { leftOut.push(String(header[c])); continue; }
     found.push({ c, role });
   }
   if (!found.length) throw new Error("Select a header row, one category column and at least one numeric column.");
   if (found.length > 1 && !found.some((f) => f.role)) {
-    throw new Error(`No header reads as AC, PY, PL or FC, so the roles of ${found.length} numeric columns (${found.map((f) => `"${header[f.c]}"`).join(", ")}) are unclear. Ask which is the actual and which is the comparison, name those headers AC, PY, PL or FC in the selection, and run again.`);
+    throw new Error(`No header reads as AC, PY, PL or FC, so the roles of ${found.length} numeric columns (${found.map((f) => `"${header[f.c]}"`).join(", ")}) are unclear. Set ROLES to a JSON object that maps each header text to "AC", "PY", "PL" or "FC", asking the user which column is the actual and which is the comparison if you cannot tell from the headers, and run again. The user's headers stay as they are.`);
   }
   const used = new Map();
   for (const f of found) {
@@ -131,7 +165,7 @@ function isTimeCategory(head, rows) {
 }
 
 // ---------- Tables add-in data (as the Zebra BI workbook builder writes it for Excel) ----------
-const TABLE_ORDER = ["Values", "PreviousYear", "Plan", "Forecast"]; // tablesOptions.ts getValueColumns order
+const TABLE_ORDER = ["Values", "PreviousYear", "Plan", "Forecast"]; // the order in which the Tables add-in lays out its value columns
 const ROLE_KEY = { Values: "Val", PreviousYear: "PY", Plan: "PL", Forecast: "FC" };
 const TEXT_TYPE = () => ({ underlyingType: 1, category: null, primitiveType: 1, extendedType: 1, categoryString: null,
   text: true, numeric: false, integer: false, bool: false, dateTime: false, duration: false, binary: false, json: false, none: false });
@@ -201,7 +235,7 @@ const newId = () => "{" + "xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx".replace(/x/g, (
 
 function buildParts(header, rows, opts) {
   const kind = opts.visual === "chart" || opts.visual === "table" ? opts.visual : (isTimeCategory(header[0], rows) ? "chart" : "table");
-  const plan = planColumns(header, rows);
+  const plan = planColumns(header, rows, opts.roles);
   let cols = plan.cols;
   if (kind === "table") cols = [...cols].sort((a, b) => TABLE_ORDER.indexOf(a.role) - TABLE_ORDER.indexOf(b.role));
   const sheetName = kind === "chart" ? "Zebra BI chart" : "Zebra BI table";
@@ -318,7 +352,7 @@ await Excel.run(async (context) => {
   checkCategories(rows);
   // The number format of each column: that of its first number.
   const formats = header.map((_, c) => { const r = rows.findIndex((row) => typeof row[c] === "number"); return r < 0 || !range.numberFormat ? null : range.numberFormat[kept[r + 1]][c]; });
-  const { meta, parts } = buildParts(header, rows, { title: TITLE, costs: COSTS, visual: VISUAL, formats });
+  const { meta, parts } = buildParts(header, rows, { title: TITLE, costs: COSTS, visual: VISUAL, roles: ROLES, formats });
   await Excel.createWorkbook(toBase64(zip(parts)));
   await context.sync();
   const left = meta.leftOut.length ? `; left out: ${meta.leftOut.join(", ")}` : "";

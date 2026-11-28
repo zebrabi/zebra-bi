@@ -144,7 +144,7 @@ class Script(unittest.TestCase):
     def test_the_settings_lines_each_exist_exactly_once(self):
         with open(SCRIPT, encoding="utf-8") as f:
             text = f.read()
-        for name in ("TITLE", "COSTS", "VISUAL"):
+        for name in ("TITLE", "COSTS", "VISUAL", "ROLES"):
             self.assertEqual(len(re.findall(r"^const %s = " % name, text, re.M)), 1, name)
         broken = os.path.join(self.tmp, "broken.js")
         with open(broken, "w") as f:
@@ -203,6 +203,8 @@ class Script(unittest.TestCase):
         info, _ = self.run_script(rows)
         self.assertEqual(info["created"], 0)
         self.assertIn('Column "AC" reads as actuals but holds text or errors', info["error"])
+        self.assertIn('the cell for "Pens" shows "n/a"', info["error"])
+        self.assertIn("number stored as text", info["error"])
 
     def test_two_columns_for_one_role_stop_with_both_names(self):
         rows = [["Product", "Actual 2025", "Actual 2026", "PY"], ["Pens", 1, 2, 3], ["Pads", 4, 5, 6]]
@@ -314,7 +316,10 @@ class Script(unittest.TestCase):
             self.assertEqual(info["created"], 0, header)
             self.assertIn("No header reads as AC, PY, PL or FC", info["error"])
             self.assertIn('"%s", "%s"' % (header[1], header[2]), info["error"])
-            self.assertIn("name those headers AC, PY, PL or FC", info["error"])
+            self.assertIn("Set ROLES", info["error"])
+            self.assertIn("asking the user which column is the actual", info["error"])
+            self.assertNotIn("name those headers", info["error"])
+            self.assertNotIn("renamed", info["error"])
 
     def test_one_numeric_column_with_a_plain_header_still_stands_in_for_the_actuals(self):
         rows = [["Product", "Revenue"], ["Pens", 1200], ["Pads", 900]]
@@ -345,6 +350,114 @@ class Script(unittest.TestCase):
             info, out = self.run_script(rows, text=[[head, "AC", "PY"]] + [[label, "1", "1"] for label in labels])
             self.assertEqual(info["error"], None, labels)
             self.assertEqual(addin(out)[0], expected, labels)
+
+    def roles_rows(self, header):
+        return [["Product"] + header, ["Pens", 1200, 1100], ["Pads", 900, 950]]
+
+    def test_roles_name_years_with_the_later_year_as_the_actuals(self):
+        info, out = self.run_script(self.roles_rows(["2025", "2026"]), roles={"2025": "PY", "2026": "AC"})
+        self.assertEqual((info["created"], info["error"]), (1, None))
+        self.assertIn("2026=Values, 2025=PreviousYear", info["log"][0])
+        self.assertEqual([self.sheet(out)[r][1] for r in ("A3", "B3", "C3")], ["Product", "2026", "2025"])
+        errors, _, _ = C.check(out)
+        self.assertEqual(errors, [])
+
+    def test_roles_map_headers_that_put_the_measure_first(self):
+        rows = [["Month", "Revenue Plan", "Revenue Actual"], ["Jan", 100, 110], ["Feb", 120, 118]]
+        info, out = self.run_script(rows, roles={"Revenue Actual": "AC", "Revenue Plan": "PL"})
+        self.assertEqual((info["created"], info["error"]), (1, None))
+        self.assertIn("Revenue Actual=Values, Revenue Plan=Plan", info["log"][0])
+        self.assertEqual(addin(out)[0], "charts")
+        self.assertEqual(json.loads(addin(out)[1]["ChartSettings"])["measure2Role"], "Plan")
+
+    def test_roles_name_all_four_roles_in_a_table(self):
+        rows = [["Product", "a", "b", "c", "d"], ["Pens", 1, 2, 3, 4], ["Pads", 5, 6, 7, 8]]
+        info, out = self.run_script(rows, roles={"a": "FC", "b": "PL", "c": "PY", "d": "AC"})
+        self.assertEqual((info["created"], info["error"]), (1, None))
+        settings = json.loads(addin(out)[1]["ZBITablesSettings"])
+        self.assertEqual(settings["measureRoles"], ["Values", "PreviousYear", "Plan", "Forecast"])
+
+    def test_columns_that_roles_does_not_name_keep_the_header_rules(self):
+        rows = [["Product", "Units", "PY", "Sales"], ["Pens", 40, 1100, 1200], ["Pads", 25, 950, 900]]
+        info, out = self.run_script(rows, roles={"Units": "PL"})
+        self.assertEqual((info["created"], info["error"]), (1, None))
+        self.assertIn("Units=Plan", info["log"][0])
+        self.assertIn("Sales=Values", info["log"][0])
+        self.assertIn("PY=PreviousYear", info["log"][0])
+
+    def test_roles_decide_over_the_header(self):
+        rows = [["Product", "Plan", "AC"], ["Pens", 1200, 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows, roles={"Plan": "AC", "AC": "PL"})
+        self.assertEqual(info["error"], None)
+        self.assertIn("Plan=Values, AC=Plan", info["log"][0])
+
+    def test_roles_that_are_null_or_empty_change_nothing(self):
+        for roles in (None, {}):
+            info, _ = self.run_script(self.roles_rows(["AC", "PY"]), roles=roles)
+            self.assertEqual((info["created"], info["error"]), (1, None))
+        info, _ = self.run_script(self.roles_rows(["2025", "2026"]), roles={})
+        self.assertEqual(info["created"], 0)
+        self.assertIn("Set ROLES", info["error"])
+
+    def test_roles_naming_a_header_that_is_not_in_the_selection_stop(self):
+        info, _ = self.run_script(self.roles_rows(["2025", "2026"]), roles={"2025": "PY", "2027": "AC"})
+        self.assertEqual(info["created"], 0)
+        self.assertIn('ROLES names "2027", which is not a header in the selection', info["error"])
+        self.assertIn('"2025", "2026"', info["error"])
+        info, _ = self.run_script(self.roles_rows(["2025", "2026"]), roles={"2025 ": "PY"})  # exact text only
+        self.assertIn('ROLES names "2025 "', info["error"])
+
+    def test_roles_naming_the_category_column_stop(self):
+        info, _ = self.run_script(self.roles_rows(["2025", "2026"]), roles={"Product": "AC"})
+        self.assertEqual(info["created"], 0)
+        self.assertIn("which is the category column", info["error"])
+
+    def test_a_role_that_is_not_one_of_the_four_stops(self):
+        for bad in ("Actual", "ac", "VAR", 3, None):
+            info, _ = self.run_script(self.roles_rows(["2025", "2026"]), roles={"2025": bad, "2026": "AC"})
+            self.assertEqual(info["created"], 0, bad)
+            self.assertIn('ROLES gives "2025" the role', info["error"])
+            self.assertIn('not one of "AC", "PY", "PL" or "FC"', info["error"])
+
+    def test_roles_that_are_not_an_object_stop(self):
+        for bad in (["AC"], "AC", 5):
+            info, _ = self.run_script(self.roles_rows(["2025", "2026"]), roles=bad)
+            self.assertEqual(info["created"], 0, bad)
+            self.assertIn("ROLES must be null or an object", info["error"])
+
+    def test_two_columns_given_the_same_role_in_roles_stop(self):
+        info, _ = self.run_script(self.roles_rows(["2025", "2026"]), roles={"2025": "AC", "2026": "AC"})
+        self.assertEqual(info["created"], 0)
+        self.assertIn('ROLES gives two columns the role AC ("2025" and "2026")', info["error"])
+
+    def test_a_roles_role_that_a_header_already_holds_stops(self):
+        rows = [["Product", "2026", "AC"], ["Pens", 1200, 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows, roles={"2026": "AC"})
+        self.assertEqual(info["created"], 0)
+        self.assertIn('Two columns read as actuals ("2026" and "AC")', info["error"])
+
+    def test_a_non_numeric_column_given_a_role_stops_and_names_the_cell(self):
+        rows = [["Product", "2025", "2026"], ["Pens", "1,200", 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows, roles={"2025": "PY", "2026": "AC"})
+        self.assertEqual(info["created"], 0)
+        self.assertIn('Column "2025" is given the role PY in ROLES but holds text or errors', info["error"])
+        self.assertIn('the cell for "Pens" shows "1,200"', info["error"])
+        self.assertIn("number stored as text", info["error"])
+        rows = [["Product", "Note", "2026"], ["Pens", "high", 1100], ["Pads", "low", 950]]
+        info, _ = self.run_script(rows, roles={"Note": "PL"})
+        self.assertIn('Column "Note" is given the role PL in ROLES but holds text or errors', info["error"])
+
+    def test_an_empty_column_given_a_role_stops(self):
+        rows = [["Product", "2025", "2026"], ["Pens", "", 1100], ["Pads", "", 950]]
+        info, _ = self.run_script(rows, roles={"2025": "PY", "2026": "AC"})
+        self.assertEqual(info["created"], 0)
+        self.assertIn('Column "2025" is given a role in ROLES but holds no numbers', info["error"])
+
+    def test_a_long_text_cell_is_cut_in_the_message(self):
+        rows = [["Product", "AC", "PY"], ["Pens", "x" * 100, 1100], ["Pads", 900, 950]]
+        info, _ = self.run_script(rows)
+        self.assertIn('shows "' + "x" * 40 + '..."', info["error"])
+
 
     def test_whole_columns_stop_before_any_cell_is_read(self):
         info, _ = self.run_script(REVENUE, rowCount=1048576, columnCount=3)
