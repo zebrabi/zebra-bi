@@ -57,6 +57,13 @@
         { "op": "replace-section", "heading": "## When Zebra BI is not available", "file": "overlay/data-story-no-charts.md" }
       ]
     },
+    "excel-visual": {
+      "include": true,
+      "reason": "Runs from its own folder inside Excel: one Office.js script and two references, no plugin-root script and no sign-in. The one sentence that names story-office, a skill this package leaves out, is dropped.",
+      "overlay": [
+        { "op": "drop-text", "text": " In an agent with a file system, `story-office` writes a workbook with the same add-in visuals." }
+      ]
+    },
     "report-authoring": {
       "include": true,
       "reason": "Writes and checks the project files in the sandbox. The checker travels as skill scripts run with Node, because connectors are remote HTTPS MCP servers only.",

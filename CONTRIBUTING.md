@@ -1,6 +1,6 @@
 # Contributing
 
-The plugin root is the repository root. Skills live in `skills/<name>/SKILL.md`, with `name` equal to the folder and only spec frontmatter (`name`, `description`, `license`, `compatibility`). The skills must never contradict the `render_visual` and `render_dashboard` tool descriptions; where they would, the tool wins and the skill changes.
+The plugin root is the repository root. Skills live in `skills/<name>/SKILL.md`, with `name` equal to the folder and only spec frontmatter (`name`, `description`, `license`, `compatibility`, and `metadata` for the host tags of a skill that runs inside Excel). The skills must never contradict the `render_visual` and `render_dashboard` tool descriptions; where they would, the tool wins and the skill changes.
 
 ## Branches
 
@@ -24,10 +24,11 @@ for skill in skills/*/; do uvx --from skills-ref==0.1.1 agentskills validate "$s
 python3 -I -m unittest discover -s scripts/tests
 (cd mcp && for t in test-*.js; do node "$t"; done)
 (cd skills/report-authoring && sha256sum -c .bundle-sha256)
+node microsoft-365/test-build.js
 for g in .github/scripts/check-*.js; do node "$g"; done
 ```
 
-The Python line needs Chrome, Edge or Chromium for the two PDF build tests; without one they are skipped. The last three lines are the Power BI part and need Node 20 or 22, with nothing to install.
+The Python line needs Chrome, Edge or Chromium for the two PDF build tests; without one they are skipped. The Node lines need Node 20 or 22, with nothing to install; the `mcp/`, `.bundle-sha256` and `check-*.js` lines are the Power BI part. `microsoft-365/test-build.js` runs in no workflow, so run it on every change that adds or edits a skill and say so in the pull request: a skill missing from `microsoft-365/config.json`, or an included skill that names an excluded one, passes CI and fails only there.
 
 ## Power BI report authoring
 
@@ -52,6 +53,7 @@ The Power BI part moved here from `zebrabi/zebra-bi-agentic` at its 0.3.2. It is
 | `skills/story-pdf/` | Build `story.json` into one A4 PDF; `references/surfaces.md` |
 | `skills/story-artifact/` | Build `story.json` into one plain Claude artifact page with the Zebra BI charts as pictures, or live with `--live`; publish and record its URL |
 | `skills/story-office/` | Build `story.json` into a PowerPoint deck and an Excel workbook with live Zebra BI for Office visuals; `references/office-format.md` |
+| `skills/excel-visual/` | An Office.js script (`scripts/visual-from-selection.js`) that turns the selected range into a Zebra BI chart or table in a new workbook, run inside Excel; the first skill with a folder of its own scripts |
 | `skills/story-brand/` | Interview for a company brand (template, guideline, logo, answers), preview, save `.zebra/brand/`; `references/brand-format.md` |
 | `scripts/profile.py` | Standard-library CSV, TSV and XLSX profiler; prints the source manifest skeleton and picks a sheet by `--sheet-index` |
 | `scripts/story.py` | `renderer` (fetch and daily cache of the renderer `render_visual` names in `tools/list`); `sign-in` and `sign-out` (the MCP authorization flow: protected-resource and authorization-server metadata, client registration, authorization code with PKCE on a loopback redirect, the token in `auth.json` per endpoint); library for the builds: `render_visuals` (render over MCP HTTP, cache in `visuals/<id>.json`) and `assemble` (the branded page with renderer and results embedded). The MCP URL is the `zebra-bi` entry in `.mcp.json`; `ZEBRA_BI_MCP_URL` overrides it |
@@ -60,7 +62,7 @@ The Power BI part moved here from `zebrabi/zebra-bi-agentic` at its 0.3.2. It is
 | `scripts/office.py` | `build` (render, snapshot, write the `.pptx` and `.xlsx`, check) and `check` (structural checks on any file) |
 | `scripts/brand.py` | `show`, `check`, `inspect-template`, `logo`, `preview`; `load()` merges `.zebra/brand/brand.json` over the default for every output |
 | `scripts/zoffice/` | `visual.py` (render_visual result to add-in settings and data), `pptx.py`, `xlsx.py`, `ooxml.py` (package and webextension part), `template.py` (the deck base), `snapshot.py` and `cdp.py` (chart pictures in headless Chrome over the DevTools protocol, on a pipe on macOS and Linux and a loopback port on Windows), `check.py` |
-| `scripts/tests/` | Unit tests: the mapping and file checks on three sample visuals, company-template geometry, Excel dates and sheet choice in `profile.py`, `story.py`'s handling of server responses and its sign-in against a fake server, a hermetic PDF build with a stand-in renderer, and the artifact page in both modes |
+| `scripts/tests/` | Unit tests: the mapping and file checks on three sample visuals, company-template geometry, Excel dates and sheet choice in `profile.py`, `story.py`'s handling of server responses and its sign-in against a fake server, a hermetic PDF build with a stand-in renderer, the artifact page in both modes, and the in-Excel script against a stub Excel (`test_excel_visual.py`, `excel_stub.mjs`; it skips without node) |
 | `assets/story-template.html` | The branded A4 page and the MCP Apps host shim that draws each chart |
 | `assets/artifact-template.html` | The branded artifact page (a fragment the artifact host wraps), light by design |
 | `assets/brand/default/` | `brand.json` (the editorial default) and the static deck parts |
@@ -90,5 +92,6 @@ The host answers `ui/initialize` (with `hostContext.toolInfo.tool.inputSchema`, 
 
 ### Known limits
 
+- `excel-visual` was seen in Excel on the web on 28 Nov 2026, run from a sideloaded test add-in: the chart path and the table path with a total row drew, and Excel asked to confirm the new document every time. The stops for a total row, unclear roles and whole columns were seen, account codes gave a table and dotted dates a chart, and hidden or filtered-out rows came along into the new workbook. Percent and decimal columns were labelled as their cells show them, with percent variances in pp, and a table of percent columns drew without a total row. Whole numbers below 1,000 were labelled without a decimal place; once a label reaches 1,000 every label keeps one, because the add-ins take one decimal setting for all labels. `Workbook.insertWorksheetsFromBase64` dropped the add-in on Excel on the web on 26 Nov 2026, so the script opens a new workbook. Not seen: Excel desktop, Copilot in Excel, Claude in Excel.
 - The scripts sign in apart from the connector, so a build needs `story.py sign-in` once, and again when the token expires without a refresh token. Until then a build stops with `Zebra BI needs sign-in (<endpoint>)` unless every chart and the renderer are already cached.
 - Claude chat cannot save manifests; the skill shows them as JSON to keep in a Project.
