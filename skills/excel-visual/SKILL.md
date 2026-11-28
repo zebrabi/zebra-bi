@@ -34,7 +34,7 @@ Read the headers first. The user's workbook stays as it is: never ask for header
 Run `scripts/visual-from-selection.js`. It opens a new workbook with one sheet: the title, the selected data at A3, and the Zebra BI visual bound to that data. Before running, tell the user that a new workbook will open holding a copy of the selected figures, with the original workbook unchanged, and run only on their go-ahead or when they asked for this chart or table.
 
 - Time periods (months, quarters, years from 1900 to 2099, dates) get a chart, on a sheet named "Zebra BI chart".
-- Other categories (products, regions, departments, accounts) get a table with inline variance charts and a total row, on a sheet named "Zebra BI table".
+- Other categories (products, regions, departments, accounts) get a table with inline variance charts and a total row, on a sheet named "Zebra BI table". A table of percent columns gets no total row.
 
 The choice reads the labels as the cells show them. Month names are recognised in English only (Jan, January), so for periods in another language, or when the categories are numeric codes that could read as years, set `VISUAL` to the one the user wants.
 
@@ -44,12 +44,13 @@ Before running, set the settings at the top of the script when the request says 
 - `COSTS = true` for costs and expenses, so that an increase shows red.
 - `VISUAL`: "chart" or "table" when the user asks for one; "auto" (the default) picks as above.
 - `ROLES`: `null`, or the object that names the scenario columns, as above.
+- `SUMS = false` for a measure that does not add up across categories (a ratio, an average, a headcount at a date), so the table gets no total row; `true` keeps the total row for percent columns that do add up (shares of one whole). `null` (the default) leaves out the total row when a column is a percent.
 
-Change only the value on each of those four lines, and write it as a JSON literal: a JSON-escaped string for `TITLE` (or `null`), `true` or `false` for `COSTS`, one of "chart", "table" or "auto" for `VISUAL`, and `null` or a JSON object for `ROLES`. Touch nothing else in the script, and never paste header text or the user's words into it unescaped.
+Change only the value on each of those five lines, and write it as a JSON literal: a JSON-escaped string for `TITLE` (or `null`), `true` or `false` for `COSTS`, one of "chart", "table" or "auto" for `VISUAL`, `null` or a JSON object for `ROLES`, and `null`, `true` or `false` for `SUMS`. Touch nothing else in the script, and never paste header text or the user's words into it unescaped.
 
 ## Totals
 
-A table sums its rows for the total row. For a measure that does not sum across categories (a ratio, an average), set `VISUAL` to "chart", where the script writes no total, and do not select a total row with the data.
+A table sums its rows for the total row. For a measure that does not sum across categories (a ratio, an average), set `SUMS = false`, or `VISUAL` to "chart", where the script writes no total, and do not select a total row with the data. The run's result says when the total row was left out, and why.
 
 Hidden rows and rows a filter removes from view are still in the selection, so the new workbook holds them and a table sums them. Unhide them, or select only the visible data, before running.
 

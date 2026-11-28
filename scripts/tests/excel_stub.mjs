@@ -4,8 +4,8 @@
 //   node excel_stub.mjs <script.js> <scenario.json> <out.xlsx>
 //
 // scenario.json: {"values": rows of the selected range, "text": rows of the text the cells show (default: each value as
-// text), "numberFormat": rows of number format codes (default General), "rowCount" and "columnCount" (default: the size of values),"address": "Sheet1!A1:C9", "title": ..., "costs": ..., "visual": ..., "roles": ...}.
-// The four settings at the top of the script are set by exact replacement of their lines; a missing or repeated
+// text), "numberFormat": rows of number format codes (default General), "rowCount" and "columnCount" (default: the size of values),"address": "Sheet1!A1:C9", "title": ..., "costs": ..., "visual": ..., "roles": ..., "sums": ...}.
+// The five settings at the top of the script are set by exact replacement of their lines; a missing or repeated
 // line is an error. Prints JSON: {"created": number of createWorkbook calls, "error": message or null, "log": [...]}.
 import fs from "fs";
 
@@ -13,7 +13,7 @@ const [scriptPath, scenarioPath, outPath] = process.argv.slice(2);
 let source = fs.readFileSync(scriptPath, "utf8");
 const scenario = JSON.parse(fs.readFileSync(scenarioPath, "utf8"));
 
-const settings = { TITLE: scenario.title ?? null, COSTS: scenario.costs ?? false, VISUAL: scenario.visual ?? "auto", ROLES: scenario.roles ?? null };
+const settings = { TITLE: scenario.title ?? null, COSTS: scenario.costs ?? false, VISUAL: scenario.visual ?? "auto", ROLES: scenario.roles ?? null, SUMS: scenario.sums ?? null };
 for (const [name, value] of Object.entries(settings)) {
   const line = new RegExp("^const " + name + " = [^\\n]*$", "gm");
   const found = source.match(line) || [];

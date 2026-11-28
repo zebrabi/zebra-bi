@@ -144,7 +144,7 @@ class Script(unittest.TestCase):
     def test_the_settings_lines_each_exist_exactly_once(self):
         with open(SCRIPT, encoding="utf-8") as f:
             text = f.read()
-        for name in ("TITLE", "COSTS", "VISUAL", "ROLES"):
+        for name in ("TITLE", "COSTS", "VISUAL", "ROLES", "SUMS"):
             self.assertEqual(len(re.findall(r"^const %s = " % name, text, re.M)), 1, name)
         broken = os.path.join(self.tmp, "broken.js")
         with open(broken, "w") as f:
@@ -324,6 +324,40 @@ class Script(unittest.TestCase):
         info, out = self.run_script(rows, numberFormat=grid)
         self.assertNotIn("displayUnits", self.stored(out))
         self.assertIn("labels as plain numbers, not percent", info["log"][0])
+
+    def total_row(self, out):
+        """(showRowGrandTotal stored, whether the matrix data ends with the unnamed total)."""
+        props = addin(out)[1]
+        children = json.loads(json.loads(props["zebrabi:matrix-data"]))["matrix"]["rows"]["root"]["children"]
+        return json.loads(props["ZBITablesSettings"])["showRowGrandTotal"], bool(children[-1].get("isSubtotal"))
+
+    def test_a_percent_table_has_no_total_row_and_says_why(self):
+        rows = [["Region", "AC margin", "PY margin"], ["North", 0.352, 0.338], ["South", 0.297, 0.311], ["East", 0.418, 0.395]]
+        info, out = self.run_script(rows, numberFormat=self.grid(rows, "0.0%"))
+        self.assertEqual(info["error"], None)
+        self.assertEqual(self.total_row(out), (False, False))
+        self.assertIn("no total row: a percent column does not add up across categories", info["log"][0])
+        self.assertEqual(C.check(out)[0], [])
+
+    def test_sums_decides_over_the_format(self):
+        rows = [["Region", "AC margin", "PY margin"], ["North", 0.352, 0.338], ["South", 0.297, 0.311]]
+        info, out = self.run_script(rows, numberFormat=self.grid(rows, "0.0%"), sums=True)
+        self.assertEqual(self.total_row(out), (True, True))
+        self.assertNotIn("no total row", info["log"][0])
+        info, out = self.run_script(COSTS, sums=False)
+        self.assertEqual(self.total_row(out), (False, False))
+        self.assertIn("no total row: SUMS is false", info["log"][0])
+
+    def test_a_measure_that_sums_keeps_its_total_row(self):
+        info, out = self.run_script(COSTS)
+        self.assertEqual(self.total_row(out), (True, True))
+        self.assertNotIn("no total row", info["log"][0])
+
+    def test_sums_that_is_not_null_true_or_false_stops(self):
+        for bad in ("no", 0, 1, []):
+            info, _ = self.run_script(COSTS, sums=bad)
+            self.assertEqual(info["created"], 0, bad)
+            self.assertEqual(info["error"], "SUMS must be null, true or false.")
 
     def test_whole_numbers_keep_the_thousands_format_the_file_route_writes(self):
         info, out = self.run_script(COSTS, visual="table")

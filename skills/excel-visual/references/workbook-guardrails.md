@@ -4,7 +4,7 @@
 
 - Start from the labels already in the workbook.
 - One category column, then scenario columns. Column order does not matter: the script orders them AC, FC, PL, PY for a chart and AC, PY, PL, FC for a table.
-- A table adds its own total row, summed from the rows. Do not select a total row with the data (the script stops when a category reads as a total), and do not use a table for measures that do not sum across categories (ratios, averages): set `VISUAL` to "chart".
+- A table adds its own total row, summed from the rows. Do not select a total row with the data (the script stops when a category reads as a total), and for measures that do not sum across categories (ratios, averages) set `SUMS = false` so the table has no total row, or set `VISUAL` to "chart". A table of percent columns has no total row unless `SUMS = true`.
 - Hidden rows and rows removed by a filter are still read, copied into the new workbook and summed in a table's total. Unhide them or select only the visible data.
 - Values are numbers, already aggregated to one row per category.
 - Select the data and its header row, not whole columns or rows. The script stops above 100,000 cells.

@@ -16,6 +16,7 @@ const TITLE = null;        // chart title; default "<scenario headers> by <categ
 const COSTS = false;       // true when an increase is bad (costs, expenses): flips the variance colours
 const VISUAL = "auto";     // "chart" | "table" | "auto": auto draws a chart for a time category, a table otherwise
 const ROLES = null;        // null, or {"<header text exactly as in the selection>": "AC" | "PY" | "PL" | "FC"}: decides those columns' roles
+const SUMS = null;         // null, true or false: whether the measure adds up across categories, for a table's total row; null reads a percent column as one that does not
 
 // ---------- scenario roles from the header ----------
 const ROLE_RULES = [
@@ -232,8 +233,8 @@ function valueObject(col, index, isMatrix) {
 const tcell = (col, ix, value) => (col.name !== "Val" ? { value, valueSourceIndex: ix } : { value });
 const cellValues = (vcols, pick) => Object.fromEntries(vcols.map((c, ix) => [String(ix), tcell(c, ix, pick(c))]));
 
-function tableSettings(title, vcols, costs) {
-  const s = { titleText: title, showTitle: true, showRowGrandTotal: true };
+function tableSettings(title, vcols, costs, total) {
+  const s = { titleText: title, showTitle: true, showRowGrandTotal: total };
   if (costs) s.invert = true;
   const roles = vcols.map((c) => c.role);
   roles.forEach((r, i) => { s[`measure${i + 1}Role`] = r; });
@@ -290,7 +291,12 @@ function buildParts(header, rows, opts) {
   const formats = cols.map((x) => formatOf(opts.formats && opts.formats[x.c], rows.map((r) => r[x.c]).filter((v) => typeof v === "number")));
   const custom = [...new Set(formats.map((f) => f.excel).filter((f) => f !== "#,##0"))];
   const styleOfCol = [undefined, ...formats.map((f) => (f.excel === "#,##0" ? 3 : 4 + custom.indexOf(f.excel)))];
-  const labels = labelSettings(formats, labelValues(cols, rows, kind === "table"));
+  // A table sums its rows for the total row; a measure that does not add up across categories gets none.
+  if (opts.sums !== null && opts.sums !== undefined && typeof opts.sums !== "boolean") throw new Error("SUMS must be null, true or false.");
+  const noTotal = kind !== "table" || opts.sums === true ? "" : opts.sums === false ? "SUMS is false"
+    : formats.some((f) => f.percent) ? "a percent column does not add up across categories" : "";
+  const total = kind === "table" && !noTotal;
+  const labels = labelSettings(formats, labelValues(cols, rows, total));
 
   let sd = `<row r="1">${cellXml("A1", title, 1)}</row>`;
   out.forEach((row, i) => {
@@ -319,7 +325,7 @@ function buildParts(header, rows, opts) {
       return { name: ROLE_KEY[x.role], displayName: String(header[x.c]), role: x.role, data, format: formats[k].pbi,
         total: data.reduce((s, d) => s + (d.value || 0), 0) };
     });
-    const settings = Object.assign(tableSettings(title, vcols, opts.costs), labels.settings);
+    const settings = Object.assign(tableSettings(title, vcols, opts.costs, total), labels.settings);
     const data = tableData(String(header[0]), rows.map((r) => String(r[0])), vcols, settings);
     const chooser = { isVisible: false, selectedDimension: "comparison", selectedTable: "comparison-table-one", areComments: false };
     we = `${XMLH}<we:webextension xmlns:we="http://schemas.microsoft.com/office/webextensions/webextension/2010/11" id="${newId()}"><we:reference id="wa200004689" version="1.0.0.0" store="en-US" storeType="OMEX"/><we:alternateReferences><we:reference id="WA200004689" version="1.0.0.0" store="omex" storeType="OMEX"/></we:alternateReferences><we:properties>${prop("ZBILicenseSettings", "")}${prop("TableChooserStore", JSON.stringify(chooser))}${prop("ZBITablesSettings", JSON.stringify(settings))}${prop("SourceData", JSON.stringify(source))}${prop("zebrabi:matrix-data", JSON.stringify(JSON.stringify(data)))}</we:properties><we:bindings><we:binding id="tablesRangeChanged" type="matrix" appref="${appref}"/></we:bindings><we:snapshot/></we:webextension>`;
@@ -338,7 +344,7 @@ function buildParts(header, rows, opts) {
   const styles = `${XMLH}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${numFmts}<fonts count="3"><font><sz val="10"/><color rgb="FF242424"/><name val="Segoe UI"/><family val="2"/></font><font><sz val="13"/><color rgb="FF242424"/><name val="Segoe UI Semibold"/><family val="2"/></font><font><b/><sz val="10"/><color rgb="FF242424"/><name val="Segoe UI"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FF242424"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${4 + custom.length}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>${customXfs}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 
   return {
-    meta: { kind, title, roles: cols.map((x) => `${header[x.c]}=${x.role}`), leftOut: plan.leftOut, range: source.range, labels: labels.note },
+    meta: { kind, title, roles: cols.map((x) => `${header[x.c]}=${x.role}`), leftOut: plan.leftOut, range: source.range, labels: labels.note, noTotal },
     parts: [
       ["[Content_Types].xml", `${XMLH}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/><Override PartName="/xl/webextensions/webextension1.xml" ContentType="application/vnd.ms-office.webextension+xml"/></Types>`],
       ["_rels/.rels", rels(R("rId1", OD + "/officeDocument", "xl/workbook.xml"))],
@@ -397,11 +403,12 @@ await Excel.run(async (context) => {
   checkCategories(rows);
   // The number format of each column: that of its first number.
   const formats = header.map((_, c) => { const r = rows.findIndex((row) => typeof row[c] === "number"); return r < 0 || !range.numberFormat ? null : range.numberFormat[kept[r + 1]][c]; });
-  const { meta, parts } = buildParts(header, rows, { title: TITLE, costs: COSTS, visual: VISUAL, roles: ROLES, formats });
+  const { meta, parts } = buildParts(header, rows, { title: TITLE, costs: COSTS, visual: VISUAL, roles: ROLES, sums: SUMS, formats });
   await Excel.createWorkbook(toBase64(zip(parts)));
   await context.sync();
   const left = meta.leftOut.length ? `; left out: ${meta.leftOut.join(", ")}` : "";
   const labels = meta.labels ? `; ${meta.labels}` : "";
-  console.log(`Zebra BI ${meta.kind} workbook opened: "${meta.title}" from ${range.address}; scenarios ${meta.roles.join(", ")}${left}${labels}.`);
+  const total = meta.noTotal ? `; no total row: ${meta.noTotal}` : "";
+  console.log(`Zebra BI ${meta.kind} workbook opened: "${meta.title}" from ${range.address}; scenarios ${meta.roles.join(", ")}${left}${total}${labels}.`);
   return { opened: true, source: range.address, ...meta };
 });
