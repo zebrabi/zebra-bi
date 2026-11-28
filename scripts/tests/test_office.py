@@ -4,6 +4,7 @@ Fixtures are three render_visual results (structuredContent.visual) from the Sup
 a Chart with one category level, a Table with one level and a Table with two levels.
 """
 import contextlib, datetime as dt, hashlib, io, json, os, re, shutil, sys, tempfile, unittest, zipfile
+import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -85,6 +86,75 @@ class Mapping(unittest.TestCase):
         self.assertEqual(V.table_data(SUBCAT, "xlsx")["rowFields"], SUBCAT["xcol_name"])
         self.assertEqual(V.table_settings(SUBCAT, "xlsx")["measureRoles"], ["Values", "PreviousYear"])
 
+    def measure(self, base, ac, py, percent=False, grand_total=None):
+        """A copy of a fixture with other figures: made-up values, the percent flag the result carries, a total."""
+        v = json.loads(json.dumps(base))
+        n = len(ac)
+        v["xcol"] = [{"name": "C%d" % i} for i in range(n)]
+        v["ycol_ac"], v["ycol_py"] = [{"value": x} for x in ac], [{"value": x} for x in py]
+        v["default_display_as_percentage"] = percent
+        v["grand_total"] = dict(v["grand_total"], ac=(grand_total or (sum(ac), sum(py)))[0], py=(grand_total or (sum(ac), sum(py)))[1])
+        return v
+
+    def test_a_whole_number_story_writes_the_settings_it_wrote_before(self):
+        self.assertEqual(V.chart_settings(MONTH), {"titleText": MONTH["title"], "chartType": 3, "measure1Role": "Values",
+                                                   "measure2Role": "PreviousYear", "usedMeasuresCount": 2})
+        for v in (REGION, SUBCAT):
+            self.assertEqual(V.table_settings(v, "pptx"), {"titleText": v["title"], "showTitle": True, "showRowGrandTotal": True})
+            self.assertEqual(set(V.table_settings(v, "xlsx")), {"titleText", "showTitle", "showRowGrandTotal", "measure1Role",
+                                                               "measure2Role", "measureRoles", "usedMeasuresCount", "showCrossTables"})
+
+    def test_a_percent_measure_is_labelled_in_percent(self):
+        chart = self.measure(MONTH, [0.352, 0.338, 0.361], [0.338, 0.341, 0.347], percent=True)
+        table = self.measure(REGION, [0.352, 0.297, 0.418], [0.338, 0.311, 0.395], percent=True, grand_total=(0.334, 0.326))
+        for s in (V.chart_settings(chart), V.table_settings(table, "xlsx"), V.table_settings(table, "pptx")):
+            self.assertEqual(s["displayUnits"], "P")
+            self.assertNotIn("decimalPlaces", s)  # one place is the add-ins' default
+        whole = self.measure(MONTH, [0.35, 0.34], [0.33, 0.36], percent=True)
+        self.assertEqual(V.chart_settings(whole)["decimalPlaces"], 0)
+
+    def test_fractions_without_the_percent_flag_are_not_taken_for_percent(self):
+        v = self.measure(MONTH, [0.352, 0.338], [0.338, 0.341])
+        self.assertNotIn("displayUnits", V.chart_settings(v))
+        self.assertEqual(V.chart_settings(v)["decimalPlaces"], 3)
+
+    def test_a_decimal_measure_keeps_its_decimal_places(self):
+        chart = self.measure(MONTH, [1.24, 1.18, 1.31], [1.18, 1.21, 1.24])
+        table = self.measure(REGION, [1.24, 1.07, 1.36], [1.18, 1.12, 1.29], grand_total=(1.22, 1.20))
+        self.assertEqual(V.chart_settings(chart)["decimalPlaces"], 2)
+        self.assertEqual(V.table_settings(table, "xlsx")["decimalPlaces"], 2)
+        self.assertNotIn("displayUnits", V.chart_settings(chart))
+
+    def test_whole_numbers_below_a_thousand_get_no_decimal_place(self):
+        small = self.measure(REGION, [124, 98, 151], [118, 102, 139])
+        self.assertEqual(V.table_settings(small, "xlsx")["decimalPlaces"], 0)
+        self.assertEqual(V.chart_settings(self.measure(MONTH, [412, 436], [398, 420]))["decimalPlaces"], 0)
+
+    def test_labels_that_reach_a_thousand_keep_the_add_in_default(self):
+        # The rows stay below 1,000 but the table's total does not; 0 places would turn 1.1K into 1K.
+        rows = self.measure(REGION, [400, 350, 360], [380, 360, 340])
+        self.assertNotIn("decimalPlaces", V.table_settings(rows, "xlsx"))
+        self.assertEqual(V.chart_settings(self.measure(MONTH, [400, 350, 360], [380, 360, 340]))["decimalPlaces"], 0)
+        self.assertNotIn("decimalPlaces", V.chart_settings(self.measure(MONTH, [1200.25, 900.5], [1100.75, 950.25])))
+
+    def test_values_that_need_more_than_three_places_keep_the_add_in_default(self):
+        v = self.measure(MONTH, [1.23456, 1.1], [1.2, 1.15])
+        self.assertNotIn("decimalPlaces", V.chart_settings(v))
+        self.assertEqual(V.decimal_places(v, V.chart_value_columns(v)), None)
+
+    def test_a_total_that_is_not_the_sum_of_the_rows_is_left_out(self):
+        ratio = self.measure(REGION, [0.352, 0.297, 0.418], [0.338, 0.311, 0.395], percent=True, grand_total=(0.334, 0.326))
+        for host in ("xlsx", "pptx"):
+            self.assertFalse(V.table_settings(ratio, host)["showRowGrandTotal"], host)
+            self.assertFalse(V.table_data(ratio, host)["matrix"]["rows"]["root"]["children"][-1].get("isSubtotal"), host)
+
+    def test_a_total_that_is_the_sum_of_the_rows_stays(self):
+        for v in (REGION, SUBCAT, MONTH, self.measure(REGION, [124, 98], [118, 102])):
+            self.assertTrue(V.total_is_the_sum(v), v["title"])
+            self.assertTrue(V.table_settings(v, "pptx")["showRowGrandTotal"])
+        rounded = self.measure(REGION, [10.4, 20.4, 30.4], [5.0, 5.0, 5.0], grand_total=(61.3, 15.0))  # rows rounded to 0.1
+        self.assertTrue(V.table_settings(rounded, "xlsx")["showRowGrandTotal"])
+
     def test_double_encoding_round_trips(self):
         d = V.table_data(REGION, "pptx")
         self.assertEqual(json.loads(json.loads(X.double_encoded(d))), d)
@@ -114,6 +184,46 @@ class Files(unittest.TestCase):
         with zipfile.ZipFile(out) as z:
             slides = [n for n in z.namelist() if n.startswith("ppt/slides/slide")]
         self.assertEqual(len(slides), 1 + len(STORY["sections"]) + 1)  # title, sections, next
+
+    def cell_formats(self, out):
+        """{sheet number: set of the format codes of its number cells}, and the numFmts of styles.xml."""
+        ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+        with zipfile.ZipFile(out) as z:
+            styles = ET.fromstring(z.read("xl/styles.xml"))
+            custom = {n.get("numFmtId"): n.get("formatCode") for n in styles.iter(ns + "numFmt")}
+            xfs = list(styles.find(ns + "cellXfs"))
+            self.assertEqual(int(styles.find(ns + "cellXfs").get("count")), len(xfs))
+            found = {}
+            for i in range(2, 2 + len(VISUALS)):
+                sheet = ET.fromstring(z.read("xl/worksheets/sheet%d.xml" % i))
+                found[i] = {custom.get(xfs[int(c.get("s"))].get("numFmtId"), xfs[int(c.get("s"))].get("numFmtId"))
+                            for c in sheet.iter(ns + "c") if c.get("t") is None and c.find(ns + "v") is not None}
+        return found, custom
+
+    def test_a_whole_number_story_keeps_its_cell_format_and_styles(self):
+        out = self.build(XL, "xlsx")
+        found, custom = self.cell_formats(out)
+        self.assertEqual(custom, {})
+        self.assertTrue(all(codes == {"3"} for codes in found.values()), found)  # 3 is the built-in #,##0
+        with zipfile.ZipFile(out) as z:
+            self.assertEqual(z.read("xl/styles.xml").decode(), XL.styles(B.load(start=self.tmp)))
+
+    def test_percent_and_decimal_measures_keep_their_format_in_the_cells(self):
+        pct, dec = json.loads(json.dumps(MONTH)), json.loads(json.dumps(REGION))
+        pct["default_display_as_percentage"] = True
+        for i, n in enumerate(pct["ycol_ac"]):
+            n["value"] = 0.35 + i / 1000
+        for i, n in enumerate(dec["ycol_ac"] + dec["ycol_py"]):
+            n["value"] = 1.25 + i / 100
+        out = os.path.join(self.tmp, "formats.xlsx")
+        XL.build(STORY, {"sales-by-month": pct, "sales-by-region": dec, "sales-by-subcategory": SUBCAT}, self.snaps, out,
+                 "Source: test.", B.load(start=self.tmp))
+        self.assertEqual(C.check(out)[0], [])
+        found, custom = self.cell_formats(out)
+        self.assertEqual(found[2], {"0.0%"})
+        self.assertEqual(found[3], {"#,##0.00"})
+        self.assertEqual(found[4], {"3"})
+        self.assertEqual(sorted(custom.values()), ["#,##0.00", "0.0%"])
 
     def test_xlsx_passes_check(self):
         out = self.build(XL, "xlsx")

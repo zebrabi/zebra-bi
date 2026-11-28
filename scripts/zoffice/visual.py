@@ -85,6 +85,90 @@ def _total(v, col):
     return am[idx] if idx < len(am) else 0
 
 
+# ---------- data labels (both add-ins) ----------
+# The add-ins take no number format from the data they are given (the "#,0" below is never read for labels): in
+# Excel they read the bound cells again. Their labels follow two stored settings: displayUnits ("P" labels in percent,
+# with variances in pp) and decimalPlaces (one value for every value and variance label, 1 when not set). From 1,000
+# on, labels are abbreviated (1.1K) with those same decimal places.
+_ADDIN_DECIMALS = 1
+_ABBREVIATED = 1000
+_MAX_DECIMALS = 3
+
+
+def is_percent(v):
+    """True when the result says every displayed measure is a percentage, sent as a fraction (0.352 for 35.2%)."""
+    return bool(v.get("default_display_as_percentage"))
+
+
+def _node_values(nodes):
+    """Every value of a ycol, parents (subtotals) included, in a fixed order."""
+    out = []
+    for n in nodes or []:
+        out.append(n.get("value"))
+        out += _node_values(n.get("children"))
+    return out
+
+
+def _places(values):
+    """The fewest decimal places, up to _MAX_DECIMALS, that show every value exactly; None when more are needed."""
+    most = 0
+    for x in values:
+        for d in range(_MAX_DECIMALS + 1):
+            if abs(x * 10 ** d - round(x * 10 ** d)) < 1e-7 * max(1.0, abs(x * 10 ** d)):
+                break
+        else:
+            return None
+        most = max(most, d)
+    return most
+
+
+def decimal_places(v, cols):
+    """The decimal places the measure needs, read from its values (the result states none): of the percent for a
+    percent measure. None when the values need more than _MAX_DECIMALS (a computed ratio or average)."""
+    nums = [x for c in cols for x in _node_values(c["data"]) if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    return _places([x * 100 for x in nums] if is_percent(v) else nums)
+
+
+def _labels(v, cols, totals):
+    """The numbers the visual labels: every value, the actuals' variance to each comparison, and the totals."""
+    num = lambda x: x if isinstance(x, (int, float)) and not isinstance(x, bool) else 0
+    lines = [[num(x) for x in _node_values(c["data"])] for c in cols]
+    if totals:
+        for line, c in zip(lines, cols):
+            line.append(num(_total(v, c)))
+    ac = next((i for i, c in enumerate(cols) if c["name"] == "Val"), None)
+    out = [x for line in lines for x in line]
+    if ac is not None:
+        for i, c in enumerate(cols):
+            if c["name"] in ("PY", "PL", "FC"):
+                out += [a - b for a, b in zip(lines[ac], lines[i])]
+    return out
+
+
+def label_settings(v, cols, totals=False):
+    """The add-ins' label settings for the measure, only where their defaults would show it wrongly."""
+    places = decimal_places(v, cols)
+    if is_percent(v):
+        s = {"displayUnits": "P"}
+        if places is not None and places != _ADDIN_DECIMALS:
+            s["decimalPlaces"] = places
+        return s
+    if places is None or places == _ADDIN_DECIMALS:
+        return {}
+    if any(abs(x) >= _ABBREVIATED for x in _labels(v, cols, totals)):
+        return {}  # fewer or more places would also change the abbreviated labels (1.1K)
+    return {"decimalPlaces": places}
+
+
+def cell_format(v):
+    """The Excel number format of the measure's cells in the workbook: percent, and the decimal places the values need
+    (all of _MAX_DECIMALS when they need more)."""
+    places = decimal_places(v, value_columns(v) if is_table(v) else chart_value_columns(v))
+    places = _MAX_DECIMALS if places is None else places
+    tail = "." + "0" * places if places else ""
+    return "0%s%%" % tail if is_percent(v) else "#,##0" + tail
+
+
 # ---------- Charts add-in ----------
 
 def chart_settings(v):
@@ -100,6 +184,7 @@ def chart_settings(v):
         s["differenceHighlight"] = False
     if v.get("is_inverted"):
         s["invert"] = True
+    s.update(label_settings(v, cols))
     return s
 
 
@@ -242,12 +327,39 @@ def table_matrix(v, grand_total=True):
             "valueSources": sources}
 
 
+def total_is_the_sum(v):
+    """True when every column's total in the result is the sum of its rows, give or take the rows' rounding. The Tables
+    add-in sums the rows for its total row, in Excel and in PowerPoint; the result's total of a measure that does not
+    add up (a ratio, an average) differs from that sum."""
+    if not v.get("xcol"):
+        return True
+    gt = v.get("grand_total") or {}
+    for c in value_columns(v):
+        key = {"Val": "ac", "PY": "py", "PL": "pl", "FC": "fc"}.get(c["name"])
+        if key:
+            total = gt.get(key)
+        else:
+            am = gt.get("additional_measures") or []
+            idx = int(c["name"].replace("AdditionalMeasure", "")) - 1
+            total = am[idx] if idx < len(am) else None
+        leaves = [x for x in _flatten_values(c["data"]) if isinstance(x, (int, float)) and not isinstance(x, bool)]
+        if not isinstance(total, (int, float)) or isinstance(total, bool) or not leaves:
+            continue
+        places = _places(leaves)
+        rounding = 0.5 * len(leaves) * 10 ** -places if places is not None else 0
+        if abs(total - sum(leaves)) > max(rounding, 1e-9 * max(1.0, abs(total))):
+            return False
+    return True
+
+
 def table_settings(v, host):
     """Partial ZBITablesSettings: the keys the Zebra AI app's translateToOldTablesSettingsStructure sets that matter here,
     plus, in Excel, the measure roles xlsx_builder._edit_webextension_data_tables adds."""
-    s = {"titleText": title(v), "showTitle": True, "showRowGrandTotal": True}
+    # The add-in sums the rows for the total row, so a total that is not their sum is left out.
+    s = {"titleText": title(v), "showTitle": True, "showRowGrandTotal": total_is_the_sum(v)}
     if v.get("is_inverted"):
         s["invert"] = True
+    s.update(label_settings(v, value_columns(v), totals=bool(v.get("xcol")) and s["showRowGrandTotal"]))
     if host == "xlsx":
         roles = [c["role"] for c in value_columns(v)]
         for i, r in enumerate(roles, start=1):
