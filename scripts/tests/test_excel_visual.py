@@ -307,6 +307,34 @@ class Script(unittest.TestCase):
         info, _ = self.run_script(rows)
         self.assertEqual((info["created"], info["error"]), (1, None))
 
+    def test_several_numeric_columns_with_no_scenario_header_stop_instead_of_guessing(self):
+        for header in (["Product", "2025", "2026"], ["Product", "Revenue Actual", "Revenue PY"]):
+            rows = [header, ["Pens", 1200, 1100], ["Pads", 900, 950]]
+            info, _ = self.run_script(rows)
+            self.assertEqual(info["created"], 0, header)
+            self.assertIn("No header reads as AC, PY, PL or FC", info["error"])
+            self.assertIn('"%s", "%s"' % (header[1], header[2]), info["error"])
+            self.assertIn("name those headers AC, PY, PL or FC", info["error"])
+
+    def test_one_numeric_column_with_a_plain_header_still_stands_in_for_the_actuals(self):
+        rows = [["Product", "Revenue"], ["Pens", 1200], ["Pads", 900]]
+        info, out = self.run_script(rows)
+        self.assertEqual((info["created"], info["error"]), (1, None))
+        self.assertIn("Revenue=Values", info["log"][0])
+
+    def test_a_plain_column_still_stands_in_when_another_column_names_a_scenario(self):
+        rows = [["Product", "Sales", "PY"], ["Pens", 1200, 1100], ["Pads", 900, 950]]
+        info, out = self.run_script(rows)
+        self.assertEqual((info["created"], info["error"]), (1, None))
+        self.assertIn("Sales=Values", info["log"][0])
+
+    def test_a_variance_column_beside_the_actuals_stops_with_the_way_out(self):
+        rows = [["Month", "AC", "PY", "AC vs PY"], ["Jan", 120, 100, 20], ["Feb", 130, 110, 20]]
+        info, _ = self.run_script(rows)
+        self.assertEqual(info["created"], 0)
+        self.assertIn('Two columns read as actuals ("AC" and "AC vs PY"). Select one of them.', info["error"])
+        self.assertIn("If one is a variance column, leave it out: the visual works out the variances.", info["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

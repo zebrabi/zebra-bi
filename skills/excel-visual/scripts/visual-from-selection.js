@@ -46,10 +46,13 @@ function planColumns(header, rows) {
     found.push({ c, role });
   }
   if (!found.length) throw new Error("Select a header row, one category column and at least one numeric column.");
+  if (found.length > 1 && !found.some((f) => f.role)) {
+    throw new Error(`No header reads as AC, PY, PL or FC, so the roles of ${found.length} numeric columns (${found.map((f) => `"${header[f.c]}"`).join(", ")}) are unclear. Ask which is the actual and which is the comparison, name those headers AC, PY, PL or FC in the selection, and run again.`);
+  }
   const used = new Map();
   for (const f of found) {
     if (!f.role) continue;
-    if (used.has(f.role)) throw new Error(`Two columns read as ${ROLE_NAME[f.role]} ("${header[used.get(f.role)]}" and "${header[f.c]}"). Select one of them.`);
+    if (used.has(f.role)) throw new Error(`Two columns read as ${ROLE_NAME[f.role]} ("${header[used.get(f.role)]}" and "${header[f.c]}"). Select one of them. If one is a variance column, leave it out: the visual works out the variances.`);
     used.set(f.role, f.c);
   }
   const cols = found.filter((f) => f.role);
