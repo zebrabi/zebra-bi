@@ -3,8 +3,8 @@
 // Runs inside Excel, in an agent that can run Office.js (an async function body with Excel available): reads the
 // selected range (header row, one category column, up to four scenario columns), writes a workbook in memory that
 // holds the data and a Zebra BI Charts or Tables for Office visual bound to it, and opens that workbook with
-// Excel.createWorkbook, which Excel asks the user to confirm. No server call, no sign-in: the visual is drawn by the
-// Zebra BI add-in from the cells, wherever it is installed.
+// Excel.createWorkbook. No server call, no sign-in: the visual is drawn by the Zebra BI add-in from the cells,
+// wherever it is installed.
 //
 // The stored settings and data are the ones the Zebra BI workbook builder writes for the same add-ins: Charts =
 // AppSource WA200004688 (ChartSettings + SourceData + a matrix binding); Tables = AppSource WA200004689
