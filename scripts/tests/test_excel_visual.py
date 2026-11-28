@@ -346,6 +346,13 @@ class Script(unittest.TestCase):
             self.assertEqual(info["error"], None, labels)
             self.assertEqual(addin(out)[0], expected, labels)
 
+    def test_whole_columns_stop_before_any_cell_is_read(self):
+        info, _ = self.run_script(REVENUE, rowCount=1048576, columnCount=3)
+        self.assertEqual(info["created"], 0)
+        self.assertIn("Select just the data with its header row, not whole columns or rows", info["error"])
+        info, _ = self.run_script(REVENUE, rowCount=1000, columnCount=100)  # exactly the limit
+        self.assertEqual((info["created"], info["error"]), (1, None))
+
 
 if __name__ == "__main__":
     unittest.main()

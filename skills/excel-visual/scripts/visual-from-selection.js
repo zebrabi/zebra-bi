@@ -300,8 +300,13 @@ function zip(parts) {
 const toBase64 = (bytes) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
 
 // ---------- run in Excel ----------
+const MAX_CELLS = 100000;
 await Excel.run(async (context) => {
   const range = context.workbook.getSelectedRange();
+  // Whole columns or rows would load a million cells before the empty rows are dropped, so the size is checked first.
+  range.load("rowCount,columnCount");
+  await context.sync();
+  if (range.rowCount * range.columnCount > MAX_CELLS) throw new Error(`The selection has ${range.rowCount * range.columnCount} cells. Select just the data with its header row, not whole columns or rows (up to ${MAX_CELLS} cells).`);
   range.load("values,text,address,numberFormat");
   await context.sync();
   // The category column and the header are taken as the text the cells show (a year, a date or a code stays what the

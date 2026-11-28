@@ -4,7 +4,7 @@
 //   node excel_stub.mjs <script.js> <scenario.json> <out.xlsx>
 //
 // scenario.json: {"values": rows of the selected range, "text": rows of the text the cells show (default: each value as
-// text), "numberFormat": rows of number format codes (default General), "address": "Sheet1!A1:C9", "title": ..., "costs": ..., "visual": ...}.
+// text), "numberFormat": rows of number format codes (default General), "rowCount" and "columnCount" (default: the size of values),"address": "Sheet1!A1:C9", "title": ..., "costs": ..., "visual": ...}.
 // The three settings at the top of the script are set by exact replacement of their lines; a missing or repeated
 // line is an error. Prints JSON: {"created": number of createWorkbook calls, "error": message or null, "log": [...]}.
 import fs from "fs";
@@ -32,7 +32,8 @@ globalThis.Excel = {
   createWorkbook: async (base64) => { created += 1; bytes = Buffer.from(base64, "base64"); },
   run: async (fn) => fn({
     workbook: { getSelectedRange: () => ({ values: scenario.values, text: scenario.text || scenario.values.map((r) => r.map((v) => (v === null || v === undefined ? "" : String(v)))),
-      numberFormat: scenario.numberFormat || scenario.values.map((r) => r.map(() => "General")),
+      rowCount: scenario.rowCount ?? scenario.values.length, columnCount: scenario.columnCount ?? scenario.values[0].length,
+      numberFormat:scenario.numberFormat || scenario.values.map((r) => r.map(() => "General")),
       address: scenario.address || "Sheet1!A1", load() {} }) },
     sync: async () => {},
   }),
