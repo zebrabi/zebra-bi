@@ -95,8 +95,10 @@
         noticeEl = document.createElement('div');
         noticeEl.id = 'zbi-notice';
         noticeEl.textContent = NOTICE;
-        noticeEl.setAttribute('style', 'position:fixed;left:8px;bottom:6px;z-index:10;padding:2px 6px;font:12px/1.4 Segoe UI,Arial,sans-serif;color:#616161;background:#fffc');
-        document.body.appendChild(noticeEl);
+        // First in the page and in the normal flow: the top of the page is what Excel shows on open (a page taller than the
+        // sheet scrolls), and a line in the flow pushes the visuals down instead of covering one of them.
+        noticeEl.setAttribute('style', 'padding:4px 8px;font:12px/1.4 Segoe UI,Arial,sans-serif;color:#424242;background:#f5f5f5;border-bottom:1px solid #e0e0e0');
+        document.body.insertBefore(noticeEl, document.body.firstChild);
       }
       if (noticeEl) noticeEl.style.display = on ? 'block' : 'none';
     }

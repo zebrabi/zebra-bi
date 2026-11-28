@@ -23,7 +23,12 @@ let cells = scenario.cells;
 class MessageEvent {
   constructor(type, data) { this.type = type; Object.assign(this, data || {}); }
 }
-const body = { children: [], appendChild(el) { this.children.push(el); } };
+const body = {
+  children: [],
+  get firstChild() { return this.children[0] || null; },
+  appendChild(el) { this.children.push(el); },
+  insertBefore(el, before) { const i = this.children.indexOf(before); this.children.splice(i < 0 ? this.children.length : i, 0, el); },
+};
 const win = {
   postMessage() {},
   addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
