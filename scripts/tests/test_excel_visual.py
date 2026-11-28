@@ -288,6 +288,25 @@ class Script(unittest.TestCase):
         self.assertEqual(self.format_of(out, "B4"), "#,##0")
         self.assertEqual(self.matrix_format(out), "#,0")
 
+    def test_a_total_row_in_the_selection_stops_instead_of_being_counted_twice(self):
+        for label in ("Total", "grand total ", "Sum"):
+            rows = [["Product", "AC", "PY"], ["Bikes", 500, 450], ["Helmets", 120, 130], [label, 620, 580]]
+            info, _ = self.run_script(rows)
+            self.assertEqual(info["created"], 0, label)
+            self.assertIn("The selection has a total row", info["error"])
+            self.assertIn("Select the rows without it", info["error"])
+
+    def test_a_repeated_category_stops_and_names_it(self):
+        rows = [["Product", "AC", "PY"], ["Bikes", 500, 450], ["Helmets", 120, 130], ["bikes", 80, 70]]
+        info, _ = self.run_script(rows)
+        self.assertEqual(info["created"], 0)
+        self.assertEqual(info["error"], 'The category "bikes" appears more than once. Select one row per category, already aggregated.')
+
+    def test_a_category_that_only_starts_with_total_is_a_category(self):
+        rows = [["Product", "AC", "PY"], ["Total Gym", 500, 450], ["Helmets", 120, 130]]
+        info, _ = self.run_script(rows)
+        self.assertEqual((info["created"], info["error"]), (1, None))
+
 
 if __name__ == "__main__":
     unittest.main()

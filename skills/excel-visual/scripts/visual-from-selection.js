@@ -72,6 +72,22 @@ function cellXml(ref, v, style) {
   return `<c r="${ref}" s="${style ?? 0}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
 }
 
+// ---------- one row per category, no total row ----------
+const TOTAL_LABEL = /^(grand\s+total|total|totals|sum|subtotal|sub-total)$/i;
+
+/** Stops when a category reads as a total or appears twice: a total row would be counted as one more category and
+ *  added again in the table's own total, and repeated categories would be shown as separate rows without a word. */
+function checkCategories(rows) {
+  const seen = new Set();
+  for (const r of rows) {
+    const label = String(r[0]).trim();
+    if (!label) continue;
+    if (TOTAL_LABEL.test(label)) throw new Error(`The selection has a total row ("${label}"). Select the rows without it; a table adds its own total.`);
+    if (seen.has(label.toLowerCase())) throw new Error(`The category "${label}" appears more than once. Select one row per category, already aggregated.`);
+    seen.add(label.toLowerCase());
+  }
+}
+
 // ---------- number format of a scenario column ----------
 /** Decimal places that show a value exactly, up to four. */
 function decimalsOf(v) {
@@ -291,6 +307,7 @@ await Excel.run(async (context) => {
   const values = kept.map((i) => range.values[i].map((v, c) => (c === 0 || i === kept[0] ? String(range.text[i][c]) : v)));
   if (values.length < 2 || values[0].length < 2) throw new Error("Select the data with its header row first (category column plus AC/PY/PL/FC columns).");
   const [header, ...rows] = values;
+  checkCategories(rows);
   // The number format of each column: that of its first number.
   const formats = header.map((_, c) => { const r = rows.findIndex((row) => typeof row[c] === "number"); return r < 0 || !range.numberFormat ? null : range.numberFormat[kept[r + 1]][c]; });
   const { meta, parts } = buildParts(header, rows, { title: TITLE, costs: COSTS, visual: VISUAL, formats });
