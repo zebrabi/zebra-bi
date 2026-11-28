@@ -359,6 +359,26 @@ class Script(unittest.TestCase):
             self.assertEqual(info["created"], 0, bad)
             self.assertEqual(info["error"], "SUMS must be null, true or false.")
 
+    def test_whole_numbers_below_a_thousand_are_labelled_without_decimals(self):
+        rows = [["Month", "AC", "PY"]] + [[m, 412 + i * 15, 398 + i * 14] for i, m in enumerate(MONTHS)]
+        info, out = self.run_script(rows, numberFormat=self.grid(rows, "#,##0"))
+        self.assertEqual(self.stored(out)["decimalPlaces"], 0)
+        self.assertNotIn("labels", info["log"][0])
+        info, out = self.run_script(rows)    # integers in General cells
+        self.assertEqual(self.stored(out)["decimalPlaces"], 0)
+
+    def test_whole_numbers_that_reach_a_thousand_keep_the_abbreviation_of_the_add_in(self):
+        for rows, kind in ((REVENUE, "chart"), (COSTS, "table")):
+            info, out = self.run_script(rows, visual=kind)
+            self.assertNotIn("decimalPlaces", self.stored(out), kind)
+            self.assertNotIn("displayUnits", self.stored(out), kind)
+            self.assertNotIn("labels", info["log"][0])
+        small = [["Product", "AC", "PY"], ["Pens", 400, 380], ["Pads", 350, 360], ["Ink", 300, 290]]
+        info, out = self.run_script(small, visual="table")
+        self.assertNotIn("decimalPlaces", self.stored(out))    # rows below 1,000, total 1,050
+        info, out = self.run_script(small, visual="chart")
+        self.assertEqual(self.stored(out)["decimalPlaces"], 0)    # a chart has no total
+
     def test_whole_numbers_keep_the_thousands_format_the_file_route_writes(self):
         info, out = self.run_script(COSTS, visual="table")
         self.assertEqual(self.format_of(out, "B4"), "#,##0")

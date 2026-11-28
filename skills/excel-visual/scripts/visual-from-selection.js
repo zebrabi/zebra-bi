@@ -173,9 +173,12 @@ function labelSettings(formats, labels) {
     return { settings: s, note: `labels in percent with ${dec} decimal place${dec === 1 ? "" : "s"}` };
   }
   if (pct) return { settings: {}, note: "labels as plain numbers, not percent: the visual takes one number format for all its scenario columns and only some of them are percent" };
-  if (dec <= ADDIN_DECIMALS) return { settings: {}, note: "" };
-  if (labels.some((v) => Math.abs(v) >= ABBREVIATED)) return { settings: {}, note: `labels with ${ADDIN_DECIMALS} decimal place, not ${dec}: the visual abbreviates thousands and takes one decimal setting for all its labels` };
-  return { settings: { decimalPlaces: dec }, note: `labels with ${dec} decimal places` };
+  if (dec === ADDIN_DECIMALS) return { settings: {}, note: "" };
+  // A label from 1,000 on is abbreviated (1.1K) with the same decimal places, so the default stays for those.
+  if (labels.some((v) => Math.abs(v) >= ABBREVIATED)) {
+    return { settings: {}, note: dec ? `labels with ${ADDIN_DECIMALS} decimal place, not ${dec}: the visual abbreviates thousands and takes one decimal setting for all its labels` : "" };
+  }
+  return { settings: { decimalPlaces: dec }, note: dec ? `labels with ${dec} decimal places` : "" };
 }
 
 /** The numbers the visual labels: every value, the variance of the actuals to each other scenario, and with a total
