@@ -115,11 +115,11 @@ const MONTH = "(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust
 const TIME_PATTERNS = [
   new RegExp(`^${MONTH}$`, "i"),                        // Jan, January
   new RegExp(`^${MONTH}[ \\-'/]?\\d{2,4}$`, "i"),       // Jan 2026, Jan-26
-  /^\d{4}$/,                                              // 2026
+  /^(19|20)\d{2}$/,                                      // 2026 (a code such as 4000 is not a year)
   /^\d{4}[ \-/]?(q[1-4]|h[12])$/i,                        // 2026-Q1, 2026 H1
   /^(q[1-4]|h[12])([ \-/]?\d{2,4})?$/i,                   // Q1, H1, Q1 2026
   /^\d{4}-\d{2}(-\d{2})?$/,                               // 2026-01, 2026-01-31
-  /^\d{1,2}\/\d{1,2}\/\d{2,4}$/,                          // 1/31/2026
+  /^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/,                      // 1/31/2026, 31.01.2026
 ];
 const TIME_HEADER = /^(month|quarter|year|date|period|week|day|time|fiscal|fy|semester|half)/i;
 

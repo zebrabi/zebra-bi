@@ -21,8 +21,10 @@ The script gives each column its role from its header. Only when no header reads
 
 Run `scripts/visual-from-selection.js`. It opens a new workbook with one sheet: the title, the selected data at A3, and the Zebra BI visual bound to that data. Before running, tell the user that a new workbook will open holding a copy of the selected figures, with the original workbook unchanged, and run only on their go-ahead or when they asked for this chart or table.
 
-- Time periods (months, quarters, years, dates) get a chart, on a sheet named "Zebra BI chart".
+- Time periods (months, quarters, years from 1900 to 2099, dates) get a chart, on a sheet named "Zebra BI chart".
 - Other categories (products, regions, departments, accounts) get a table with inline variance charts and a total row, on a sheet named "Zebra BI table".
+
+The choice reads the labels as the cells show them. Month names are recognised in English only (Jan, January), so for periods in another language, or when the categories are numeric codes that could read as years, set `VISUAL` to the one the user wants.
 
 Before running, set the three settings at the top of the script when the request says so:
 

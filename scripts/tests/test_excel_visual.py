@@ -335,6 +335,17 @@ class Script(unittest.TestCase):
         self.assertIn('Two columns read as actuals ("AC" and "AC vs PY"). Select one of them.', info["error"])
         self.assertIn("If one is a variance column, leave it out: the visual works out the variances.", info["error"])
 
+    def test_account_codes_get_a_table_and_years_and_dotted_dates_get_a_chart(self):
+        cases = [("Account", ["4000", "5000", "6100"], "tables"), ("Account", ["1999", "2010", "2025"], "charts"),
+                 ("Close", ["31.01.2026", "28.02.2026", "31.03.2026"], "charts"),
+                 ("Close", ["1/31/2026", "2/28/2026", "3/31/2026"], "charts"),
+                 ("Account", ["2100", "2200", "2300"], "tables")]
+        for head, labels, expected in cases:
+            rows = [[head, "AC", "PY"]] + [[label, 100 + i, 90 + i] for i, label in enumerate(labels)]
+            info, out = self.run_script(rows, text=[[head, "AC", "PY"]] + [[label, "1", "1"] for label in labels])
+            self.assertEqual(info["error"], None, labels)
+            self.assertEqual(addin(out)[0], expected, labels)
+
 
 if __name__ == "__main__":
     unittest.main()
