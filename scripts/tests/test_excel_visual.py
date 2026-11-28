@@ -285,6 +285,46 @@ class Script(unittest.TestCase):
         self.assertEqual(self.format_of(out, "B4"), "#,##0.0")
         self.assertEqual(self.format_of(out, "C4"), "0")
 
+    def stored(self, out):
+        """The add-in's stored settings (ChartSettings or ZBITablesSettings)."""
+        props = addin(out)[1]
+        return json.loads(props.get("ChartSettings") or props["ZBITablesSettings"])
+
+    def test_percent_columns_tell_the_add_in_to_label_in_percent(self):
+        rows = [["Region", "AC margin", "PY margin"], ["North", 0.352, 0.338], ["South", 0.297, 0.311], ["East", 0.418, 0.395]]
+        for visual_kind in ("table", "chart"):
+            info, out = self.run_script(rows, visual=visual_kind, numberFormat=self.grid(rows, "0.0%"))
+            self.assertEqual(info["error"], None)
+            settings = self.stored(out)
+            self.assertEqual(settings["displayUnits"], "P", visual_kind)
+            self.assertNotIn("decimalPlaces", settings)    # one place is the add-in's own default
+            self.assertIn("labels in percent with 1 decimal place", info["log"][0])
+        info, out = self.run_script(rows, visual="table", numberFormat=self.grid(rows, "0.00%"))
+        self.assertEqual(self.stored(out)["decimalPlaces"], 2)
+
+    def test_decimals_tell_the_add_in_how_many_places_to_label(self):
+        rows = [["Region", "AC ratio", "PY ratio"], ["North", 1.24, 1.18], ["South", 1.07, 1.12], ["East", 1.36, 1.29]]
+        for visual_kind in ("table", "chart"):
+            info, out = self.run_script(rows, visual=visual_kind, numberFormat=self.grid(rows, "0.00"))
+            settings = self.stored(out)
+            self.assertEqual(settings["decimalPlaces"], 2, visual_kind)
+            self.assertNotIn("displayUnits", settings)
+            self.assertIn("labels with 2 decimal places", info["log"][0])
+
+    def test_decimals_on_labels_that_reach_thousands_keep_the_add_in_default_and_say_so(self):
+        rows = [["Product", "AC", "PY"], ["Pens", 1200.25, 1100.5], ["Pads", 900.75, 950.25]]
+        info, out = self.run_script(rows, numberFormat=self.grid(rows, "#,##0.00"))
+        self.assertNotIn("decimalPlaces", self.stored(out))
+        self.assertIn("labels with 1 decimal place, not 2", info["log"][0])
+        self.assertIn("abbreviates thousands", info["log"][0])
+
+    def test_a_percent_column_beside_a_plain_one_is_labelled_as_numbers_and_says_so(self):
+        rows = [["Region", "AC", "PY"], ["North", 0.352, 0.338], ["South", 0.297, 0.311]]
+        grid = [["General"] * 3] + [["General", "0.0%", "0.0"]] * 2
+        info, out = self.run_script(rows, numberFormat=grid)
+        self.assertNotIn("displayUnits", self.stored(out))
+        self.assertIn("labels as plain numbers, not percent", info["log"][0])
+
     def test_whole_numbers_keep_the_thousands_format_the_file_route_writes(self):
         info, out = self.run_script(COSTS, visual="table")
         self.assertEqual(self.format_of(out, "B4"), "#,##0")

@@ -151,7 +151,40 @@ function formatOf(code, nums) {
   const thousands = placeholders ? first.includes(",") : true;
   const dec = placeholders ? ((first.match(/\.([0#]+)/) || ["", ""])[1].length) : Math.max(0, ...nums.map(decimalsOf));
   const tail = (dec ? "." + "0".repeat(dec) : "") + (percent ? "%" : "");
-  return { excel: (thousands ? "#,##0" : "0") + tail, pbi: (thousands ? "#,0" : "0") + tail };
+  return { excel: (thousands ? "#,##0" : "0") + tail, pbi: (thousands ? "#,0" : "0") + tail, percent, dec };
+}
+
+// ---------- data labels of the visual ----------
+// On open, the Charts and Tables add-ins read the bound cells again and take no number format from them or from the
+// stored data: their labels follow the stored settings displayUnits ("Auto" abbreviates thousands as K, "P" shows
+// percent) and decimalPlaces (one value for every value and variance label, 1 when not set).
+const ADDIN_DECIMALS = 1;
+const ABBREVIATED = 1000; // from this size on, "Auto" labels are shown in thousands (K), millions or billions
+
+/** The label settings that show the columns as their cells do, and a note for the run's result when they cannot.
+ *  `labels` are the numbers the visual draws as labels: values, variances and any total. */
+function labelSettings(formats, labels) {
+  const pct = formats.filter((f) => f.percent).length;
+  const dec = Math.max(0, ...formats.map((f) => f.dec));
+  if (pct && pct === formats.length) {
+    const s = { displayUnits: "P" };
+    if (dec !== ADDIN_DECIMALS) s.decimalPlaces = dec;
+    return { settings: s, note: `labels in percent with ${dec} decimal place${dec === 1 ? "" : "s"}` };
+  }
+  if (pct) return { settings: {}, note: "labels as plain numbers, not percent: the visual takes one number format for all its scenario columns and only some of them are percent" };
+  if (dec <= ADDIN_DECIMALS) return { settings: {}, note: "" };
+  if (labels.some((v) => Math.abs(v) >= ABBREVIATED)) return { settings: {}, note: `labels with ${ADDIN_DECIMALS} decimal place, not ${dec}: the visual abbreviates thousands and takes one decimal setting for all its labels` };
+  return { settings: { decimalPlaces: dec }, note: `labels with ${dec} decimal places` };
+}
+
+/** The numbers the visual labels: every value, the variance of the actuals to each other scenario, and with a total
+ *  row the column totals and their variances. */
+function labelValues(cols, rows, withTotal) {
+  const num = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
+  const lines = rows.map((r) => cols.map((x) => num(r[x.c])));
+  if (withTotal) lines.push(cols.map((_, k) => lines.reduce((s, l) => s + l[k], 0)));
+  const ac = cols.findIndex((x) => x.role === "Values");
+  return lines.flatMap((l) => [...l, ...(ac < 0 ? [] : l.filter((_, k) => k !== ac).map((v) => l[ac] - v))]);
 }
 
 // ---------- chart or table ----------
@@ -257,6 +290,7 @@ function buildParts(header, rows, opts) {
   const formats = cols.map((x) => formatOf(opts.formats && opts.formats[x.c], rows.map((r) => r[x.c]).filter((v) => typeof v === "number")));
   const custom = [...new Set(formats.map((f) => f.excel).filter((f) => f !== "#,##0"))];
   const styleOfCol = [undefined, ...formats.map((f) => (f.excel === "#,##0" ? 3 : 4 + custom.indexOf(f.excel)))];
+  const labels = labelSettings(formats, labelValues(cols, rows, kind === "table"));
 
   let sd = `<row r="1">${cellXml("A1", title, 1)}</row>`;
   out.forEach((row, i) => {
@@ -275,6 +309,7 @@ function buildParts(header, rows, opts) {
     cols.forEach((x, i) => { settings[`measure${i + 1}Role`] = x.role; });
     if (cols.length <= 1) settings.differenceHighlight = false;
     if (opts.costs) settings.invert = true;
+    Object.assign(settings, labels.settings);
     const chooser = { isVisible: false, selectedDimension: "time", selectedChart: "time-comparison-column", areComments: true };
     we = `${XMLH}<we:webextension xmlns:we="http://schemas.microsoft.com/office/webextensions/webextension/2010/11" id="${newId()}"><we:reference id="wa200004688" version="1.0.4.0" store="en-US" storeType="OMEX"/><we:alternateReferences><we:reference id="WA200004688" version="1.0.4.0" store="" storeType="OMEX"/></we:alternateReferences><we:properties>${prop("ZBILicenseSettings", "")}${prop("ChartChooserStore", JSON.stringify(chooser))}${prop("ChartSettings", JSON.stringify(settings))}${prop("SourceData", JSON.stringify(source))}${prop("zebrabi:table-data", "")}</we:properties><we:bindings><we:binding id="chartsRangeChangeEvent" type="matrix" appref="${appref}"/></we:bindings><we:snapshot/></we:webextension>`;
   } else {
@@ -284,7 +319,7 @@ function buildParts(header, rows, opts) {
       return { name: ROLE_KEY[x.role], displayName: String(header[x.c]), role: x.role, data, format: formats[k].pbi,
         total: data.reduce((s, d) => s + (d.value || 0), 0) };
     });
-    const settings = tableSettings(title, vcols, opts.costs);
+    const settings = Object.assign(tableSettings(title, vcols, opts.costs), labels.settings);
     const data = tableData(String(header[0]), rows.map((r) => String(r[0])), vcols, settings);
     const chooser = { isVisible: false, selectedDimension: "comparison", selectedTable: "comparison-table-one", areComments: false };
     we = `${XMLH}<we:webextension xmlns:we="http://schemas.microsoft.com/office/webextensions/webextension/2010/11" id="${newId()}"><we:reference id="wa200004689" version="1.0.0.0" store="en-US" storeType="OMEX"/><we:alternateReferences><we:reference id="WA200004689" version="1.0.0.0" store="omex" storeType="OMEX"/></we:alternateReferences><we:properties>${prop("ZBILicenseSettings", "")}${prop("TableChooserStore", JSON.stringify(chooser))}${prop("ZBITablesSettings", JSON.stringify(settings))}${prop("SourceData", JSON.stringify(source))}${prop("zebrabi:matrix-data", JSON.stringify(JSON.stringify(data)))}</we:properties><we:bindings><we:binding id="tablesRangeChanged" type="matrix" appref="${appref}"/></we:bindings><we:snapshot/></we:webextension>`;
@@ -303,7 +338,7 @@ function buildParts(header, rows, opts) {
   const styles = `${XMLH}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${numFmts}<fonts count="3"><font><sz val="10"/><color rgb="FF242424"/><name val="Segoe UI"/><family val="2"/></font><font><sz val="13"/><color rgb="FF242424"/><name val="Segoe UI Semibold"/><family val="2"/></font><font><b/><sz val="10"/><color rgb="FF242424"/><name val="Segoe UI"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FF242424"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${4 + custom.length}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>${customXfs}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 
   return {
-    meta: { kind, title, roles: cols.map((x) => `${header[x.c]}=${x.role}`), leftOut: plan.leftOut, range: source.range },
+    meta: { kind, title, roles: cols.map((x) => `${header[x.c]}=${x.role}`), leftOut: plan.leftOut, range: source.range, labels: labels.note },
     parts: [
       ["[Content_Types].xml", `${XMLH}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/><Override PartName="/xl/webextensions/webextension1.xml" ContentType="application/vnd.ms-office.webextension+xml"/></Types>`],
       ["_rels/.rels", rels(R("rId1", OD + "/officeDocument", "xl/workbook.xml"))],
@@ -366,6 +401,7 @@ await Excel.run(async (context) => {
   await Excel.createWorkbook(toBase64(zip(parts)));
   await context.sync();
   const left = meta.leftOut.length ? `; left out: ${meta.leftOut.join(", ")}` : "";
-  console.log(`Zebra BI ${meta.kind} workbook opened: "${meta.title}" from ${range.address}; scenarios ${meta.roles.join(", ")}${left}.`);
+  const labels = meta.labels ? `; ${meta.labels}` : "";
+  console.log(`Zebra BI ${meta.kind} workbook opened: "${meta.title}" from ${range.address}; scenarios ${meta.roles.join(", ")}${left}${labels}.`);
   return { opened: true, source: range.address, ...meta };
 });
