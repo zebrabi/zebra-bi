@@ -53,7 +53,7 @@ Give the path of each file and one line for each:
 
 - Each chart is a live Zebra BI for Office visual. It draws from the data in the file when the Zebra BI Charts or Tables add-in is installed and licensed, and can be edited there like any Zebra BI visual.
 - Anyone without the add-in sees a picture of the chart, in PowerPoint, Excel, Keynote or Numbers.
-- With `--canvas`: the Canvas sheet shows the visuals as built, without the add-in, a sign-in or a licence check. It never follows edits to the cells (only the data sheet of the first visual, or the one named, raises a notice), so new figures mean building the story again. Tried in Excel on the web on 26 Nov 2026 with sample data, including hover and click to filter; not yet seen in Excel desktop or after a cell edit.
+- With `--canvas`: the Canvas sheet shows the visuals as built, without the add-in, a sign-in or a licence check. It never follows edits to the cells (only the data sheet of the first visual, or the one named, raises a notice), so new figures mean building the story again. Seen in Excel on the web on 28 Nov 2026 with sample data, including the notice at the top of the sheet after a cell edit. A click on a column or row does not filter the other visuals there. Not yet seen in Excel desktop.
 
 Note that the files contain the aggregated numbers of the story (not the raw data), so they go only where the data may go. On macOS, `open -R <file>` shows the file in Finder. Do not paste the story again in chat.
 
