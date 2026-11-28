@@ -5,9 +5,14 @@ Hand-written SpreadsheetML (no openpyxl). The add-in part follows the Zebra AI a
 SourceData property with the range and worksheet id, and a matrix binding, so the add-in reads the cells
 when the workbook opens. Here the sheet name in the range is always quoted and the add-in carries the
 snapshot image.
+
+With `canvas` (opt-in, see canvas.py: the story's visuals as one dashboard, or one visual) the workbook also gets one Excel
+Canvas chartsheet bound to the cells of one visual's sheet, after every worksheet, so
+the add-in sheets keep their positions and worksheet ids. Without it the output is unchanged.
 """
 import math, os, re
 
+from . import canvas as CV
 from . import ooxml as X
 from . import visual as V
 
@@ -155,10 +160,30 @@ def sheet_names(story):
     return out
 
 
-def build(story, visuals, snapshots, out, footer, brand):
+def canvas_sheet_name(names):
+    """'Canvas', or 'Canvas 2' and so on when a visual's sheet already has that name."""
+    used = {n.lower() for n in names.values()} | {"story"}
+    name, n = "Canvas", 2
+    while name.lower() in used:
+        name, n = "Canvas %d" % n, n + 1
+    return name
+
+
+def build(story, visuals, snapshots, out, footer, brand, canvas=None):
+    """canvas: None, or {"visual": id of the visual the canvas binds to (and draws alone, unless "content" is a dashboard),
+    "renderer_html": the renderer's page, and optionally "content" (what the page draws: a dashboard from canvas.dashboard) and
+    "page" (the canvas page already built)}. A ValueError (the visual is not in the story, the renderer is not the one the
+    canvas page was written for, or the page is over the size limit) leaves no file."""
     pkg = X.Package()
     names = sheet_names(story)
     sheets = []  # (name, xml)
+    canvas_html = None
+    if canvas:
+        vid = canvas["visual"]
+        if vid not in names:
+            raise ValueError("canvas: %r is not a visual of a section in this story" % vid)
+        canvas_html = canvas.get("page") or CV.page(canvas["renderer_html"], canvas.get("content") or visuals[vid])
+    ranges = {}  # visual id -> (sheet name, SourceData range)
 
     # Story sheet: key message, subtitle, KPIs, one linked line per supporting message.
     kick = (str(story.get("kicker") or "").strip() or str(brand.get("kicker") or "").strip())[:60]  # story first, as story.kicker
@@ -199,6 +224,7 @@ def build(story, visuals, snapshots, out, footer, brand):
         appref = "{00000000-0001-0000-%02d00-000000000000}" % sheet_index
         last = "%s%d" % (col_letter(ncols), DATA_TOP + nrows - 1)
         source = {"range": "'%s'!A%d:%s" % (name.replace("'", "''"), DATA_TOP, last), "worksheetId": appref}
+        ranges[vid] = (name, source["range"])
         kind = "tables" if V.is_table(v) else "charts"
         if kind == "charts":
             props = {"ZBILicenseSettings": "", "ChartSettings": X.compact(V.chart_settings(v)), "SourceData": X.compact(source),
@@ -234,10 +260,18 @@ def build(story, visuals, snapshots, out, footer, brand):
                     X.rels([("rIdDrawing", R + "drawing", "../drawings/drawing%d.xml" % sh[2])]))
         wb_sheets.append('<sheet name=%s sheetId="%d" r:id="rId%d"/>' % (X.attr(name), i, i))
         wb_rels.append(("rId%d" % i, R + "worksheet", "worksheets/sheet%d.xml" % i))
+    defined = ""
+    if canvas_html is not None:
+        data_sheet, data_range = ranges[canvas["visual"]]
+        for path, data, ctype in CV.parts(canvas_html, data_sheet, drawing_no=len(names) + 1):
+            pkg.add(path, data, ctype)
+        wb_sheets.append('<sheet name=%s sheetId="%d" r:id="rIdCanvas"/>' % (X.attr(canvas_sheet_name(names)), len(sheets) + 1))
+        wb_rels.append(("rIdCanvas", CV.REL_CHARTSHEET, CV.chartsheet_path(0)[3:]))
+        defined = "<definedNames>%s</definedNames>" % CV.defined_name(0, data_range)
     wb_rels.append(("rIdStyles", R + "styles", "styles.xml"))
     pkg.add("xl/workbook.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-            '<workbook xmlns="%s" xmlns:r="%s"><bookViews><workbookView activeTab="0"/></bookViews><sheets>%s</sheets></workbook>'
-            % (NS_MAIN, R[:-1], "".join(wb_sheets)), CT["workbook"])
+            '<workbook xmlns="%s" xmlns:r="%s"><bookViews><workbookView activeTab="0"/></bookViews><sheets>%s</sheets>%s</workbook>'
+            % (NS_MAIN, R[:-1], "".join(wb_sheets), defined), CT["workbook"])
     pkg.add("xl/_rels/workbook.xml.rels", X.rels(wb_rels))
     pkg.add("xl/styles.xml", styles(brand), CT["styles"])
     pkg.add("_rels/.rels", X.rels([("rId1", R + "officeDocument", "xl/workbook.xml"),
