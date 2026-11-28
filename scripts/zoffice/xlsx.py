@@ -182,7 +182,7 @@ def build(story, visuals, snapshots, out, footer, brand, canvas=None):
         vid = canvas["visual"]
         if vid not in names:
             raise ValueError("canvas: %r is not a visual of a section in this story" % vid)
-        canvas_html = canvas.get("page") or CV.page(canvas["renderer_html"], canvas.get("content") or visuals[vid])
+        canvas_html = canvas.get("page") or CV.page(canvas["renderer_html"], canvas.get("content") or visuals[vid], sheet=names[vid])
     ranges = {}  # visual id -> (sheet name, SourceData range)
 
     # Story sheet: key message, subtitle, KPIs, one linked line per supporting message.

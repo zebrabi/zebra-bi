@@ -18,7 +18,8 @@ from zoffice import canvas as CV, check as C, ooxml as X, visual as V, xlsx as X
 
 PARENT = "window.parent"
 NODE = shutil.which("node")
-NOTICE = "This chart shows the figures it was built from, not the current cells. Rebuild the workbook to redraw it."
+SHEET = "Revenue by month"
+NOTICE = CV.notice(MONTH, SHEET)
 
 
 def stand_in(parents=5, extra=""):
@@ -29,14 +30,14 @@ def stand_in(parents=5, extra=""):
             '<script>%s;var a=1<2&&3>2;var h=["ui/initialize","ui/notifications/tool-result"];%s</script></body></html>' % (uses, extra))
 
 
-def not_additive():
+def unsummed_total():
     v = copy.deepcopy(MONTH)
     v["grand_total"]["ac"] += 5000.0   # a ratio or a stock measure: the total is not the sum of the rows
     return v
 
 
 def small(ac, py=None):
-    """A flat, additive chart of len(ac) rows with these values (a few under 1,000, some with decimals)."""
+    """A flat chart of len(ac) rows with these values (a few under 1,000, some with decimals)."""
     v = copy.deepcopy(MONTH)
     n = len(ac)
     py = py or [x + 1 for x in ac]
@@ -186,6 +187,13 @@ class Page(unittest.TestCase):
             CV.page(stand_in(extra="//" + noise), CV.dashboard("T", [(MONTH, True)]))
         self.assertIn("over the 2 MB limit", str(cm.exception))
 
+    def test_the_shim_holds_no_path_that_draws_from_cells(self):
+        text = X.read(CV.SHIM)
+        for word in ("__COLUMNS__", "__ADDITIVE__", "patched", "ADDITIVE", "COLUMNS"):
+            self.assertNotIn(word, text)
+        self.assertFalse(hasattr(CV, "additive") or hasattr(CV, "columns"))
+        self.assertIsNone(re.search(r"\b__[A-Z]+__\b", CV.shim(MONTH, version="1")))   # every placeholder is filled
+
     def test_a_packing_is_repeatable(self):
         self.assertEqual(CV.page(stand_in(), MONTH, version="1"), CV.page(stand_in(), MONTH, version="1"))
 
@@ -259,7 +267,8 @@ class Writer(Base):
         self.assertEqual(data.find(cx + "strDim").find(cx + "f").text, "_xlchart.v7.0")
         art = tree.find(cx + "dashboard").find(cx + "artifacts").find(cx + "artifact")
         self.assertEqual((art.get("name"), art.get("type"), tree.find(cx + "dashboard").get("entrypoint")), ("index", "html", "index"))
-        self.assertEqual(art.text, CV.page(stand_in(), MONTH))   # & < > and the carriage return come back exactly
+        self.assertEqual(art.text, CV.page(stand_in(), MONTH, sheet="Eight months of twelve grew"))   # & < > and the carriage return come back exactly
+        self.assertIn('the sheet \\"Eight months of twelve grew\\"', art.text)                          # the notice names the bound data sheet
         self.assertIn("\r", art.text)
 
     def test_no_canvas_means_the_workbook_of_today(self):
@@ -571,8 +580,8 @@ class Cli(unittest.TestCase):
         line = next(l for l in err.splitlines() if l.startswith("canvas: this workbook carries the Zebra BI renderer"))
         self.assertIn("sha256 " + hashlib.sha256(stand_in().encode()).hexdigest()[:12], line)
         self.assertIn("without the add-in, a Zebra BI sign-in or a licence check", line)
-        self.assertIn("2 visuals as one dashboard", line)
-        self.assertIn("redraws only the first visual (months) from edited cells (values and labels) when its totals are sums", line)
+        self.assertIn("draws 2 visuals as one dashboard as built, without the add-in", line)
+        self.assertNotIn("redraw", line)
         self.assertIn(", packed into a ", line)
         self.assertIn("MB page (limit 2 MB)", line)
         self.assertGreater(xlsx["canvas"]["page_bytes"], 0)
@@ -582,6 +591,9 @@ class Cli(unittest.TestCase):
         self.assertEqual(list(sc), ["dashboard"])
         self.assertEqual(sc["dashboard"]["title"], "T")
         self.assertEqual([(i["width"], i["visual"]) for i in sc["dashboard"]["items"]], [(6, MONTH), (6, REGION)])
+        with open(os.path.join(self.dir, "story.json")) as f:
+            sheet = XL.sheet_names(json.load(f))["months"]
+        self.assertIn(json.dumps(CV.notice(sc, sheet))[1:-1].replace("<", "\\u003c"), page)   # the notice names the bound visual's sheet
         errors, _, summary = C.check(os.path.join(self.dir, "sample-co.xlsx"))
         self.assertEqual((errors, summary["canvas"]), ([], 1))
 
@@ -603,8 +615,8 @@ class Cli(unittest.TestCase):
         _, sc = self.page_of()
         self.assertEqual(sc, {"visual": MONTH})
         line = next(l for l in err.splitlines() if l.startswith("canvas: this workbook carries"))
-        self.assertIn("draws one visual without the add-in", line)
-        self.assertIn("redraws that visual from edited cells", line)
+        self.assertIn("draws one visual as built, without the add-in", line)
+        self.assertNotIn("redraw", line)
         code, out, err = self.run_build("--canvas=regions", "--xlsx")
         self.assertIsNone(code, err)
         _, sc = self.page_of()
@@ -718,7 +730,7 @@ class ShimRunner(Base):
         shim = os.path.join(self.tmp, "shim.js")
         scenario = os.path.join(self.tmp, "scenario.json")
         with open(shim, "w") as f:
-            f.write(CV.shim(v, version="9.9.9"))
+            f.write(CV.shim(v, version="9.9.9", sheet=SHEET))
         with open(scenario, "w") as f:
             json.dump({"cells": cells, "steps": list(steps)}, f)
         done = subprocess.run([NODE, os.path.join(HERE, "canvas_host.mjs"), shim, scenario], capture_output=True, text=True, timeout=60)
@@ -740,7 +752,7 @@ class ShimInAPage(ShimRunner):
         self.assertEqual(res["counts"], [1])
 
     def test_unchanged_cells_draw_the_built_result_so_the_servers_totals_stand(self):
-        v = not_additive()
+        v = unsummed_total()
         step = {"key": "zebra", "cells": excel_cells(v)}
         res = self.run_shim(v, excel_cells(v), [step])
         self.assertEqual(res["counts"], [1, 1])
@@ -754,25 +766,38 @@ class ShimInAPage(ShimRunner):
         self.assertEqual(self.visual(res), MONTH)
         self.assertFalse(res["notice"]["shown"])
 
-    def test_an_edited_cell_on_a_sum_chart_patches_the_row_and_sums_the_total(self):
+    def test_an_edited_value_keeps_the_built_drawing_and_shows_the_notice(self):
         edited = excel_cells(MONTH, {(1, 1): "43576"})   # January AC: 43,476 -> 43,576
         res = self.run_shim(MONTH, excel_cells(MONTH), [{"key": "zebra", "cells": edited}])
-        self.assertEqual(res["counts"], [1, 2])
-        v = self.visual(res)
-        self.assertEqual(v["ycol_ac"][0]["value"], 43576.0)
-        self.assertEqual(v["grand_total"]["ac"], MONTH["grand_total"]["ac"] + 100)
-        self.assertEqual(v["grand_total"]["py"], MONTH["grand_total"]["py"])
-        self.assertEqual(v["ycol_py"], MONTH["ycol_py"])
-        self.assertFalse(res["notice"]["shown"])
+        self.assertEqual(res["counts"], [1, 1])                 # nothing is sent again: the drawing and its state stay
+        self.assertEqual(self.visual(res), MONTH)
+        self.assertEqual(res["notice"], {"shown": True, "text": NOTICE})
 
-    def test_cells_shown_in_any_grouping_are_unchanged_and_never_patched(self):
+    def test_an_edited_label_keeps_the_built_drawing_and_shows_the_notice(self):
+        edited = excel_cells(MONTH, {(1, 0): "Start"})
+        res = self.run_shim(MONTH, excel_cells(MONTH), [{"key": "zebra", "cells": edited}])
+        self.assertEqual(res["counts"], [1, 1])
+        self.assertEqual(self.visual(res), MONTH)
+        self.assertEqual(res["notice"], {"shown": True, "text": NOTICE})
+
+    def test_no_content_of_an_edited_cell_reaches_the_drawing(self):
+        edited = excel_cells(MONTH, {(1, 0): "ZZ-EDITED", (1, 1): "987654321", (2, 1): "ZZ-TEXT"})
+        for cells, steps in ((edited, []), (excel_cells(MONTH), [{"key": "zebra", "cells": edited}])):
+            res = self.run_shim(MONTH, cells, steps)
+            sent = json.dumps(res["results"])
+            for token in ("ZZ-EDITED", "987654321", "ZZ-TEXT"):
+                self.assertNotIn(token, sent)
+            self.assertEqual(self.visual(res), MONTH)
+            self.assertTrue(res["notice"]["shown"])
+
+    def test_cells_shown_in_any_grouping_are_unchanged_and_an_edit_shows_the_notice(self):
         for sep in (",", ".", "\u00a0", "\u202f", "'", " "):
             shown = excel_cells(MONTH, shown=sep)
             res = self.run_shim(MONTH, shown, [{"key": "zebra", "cells": shown}])
             self.assertEqual(res["counts"], [1, 1], repr(sep))
             self.assertEqual(self.visual(res), MONTH, repr(sep))
             self.assertFalse(res["notice"]["shown"], repr(sep))
-            # an edit in the same mode reads as a grouped number: nothing is patched, the note is shown
+            # an edit in the same mode reads as a grouped number: the drawing stays, the notice is shown
             edited = excel_cells(MONTH, {(1, 1): format(43576, ",").replace(",", sep)}, shown=sep)
             res = self.run_shim(MONTH, shown, [{"key": "zebra", "cells": edited}])
             self.assertEqual(res["counts"], [1, 1], repr(sep))
@@ -786,16 +811,10 @@ class ShimInAPage(ShimRunner):
             self.assertEqual(self.visual(res), MONTH, cell)
             self.assertEqual(res["notice"], {"shown": True, "text": NOTICE}, cell)
 
-    def test_cells_changed_before_the_page_opens_draw_the_patched_result_at_once(self):
+    def test_cells_changed_before_the_page_opens_draw_the_built_result_at_once_with_the_notice(self):
         res = self.run_shim(MONTH, excel_cells(MONTH, {(1, 1): "43576"}))
         self.assertEqual(res["counts"], [1])
-        self.assertEqual(self.visual(res)["ycol_ac"][0]["value"], 43576.0)
-
-    def test_an_edit_on_a_chart_whose_totals_are_not_sums_keeps_the_drawing_and_shows_the_notice(self):
-        v = not_additive()
-        res = self.run_shim(v, excel_cells(v), [{"key": "zebra", "cells": excel_cells(v, {(1, 1): "43576"})}])
-        self.assertEqual(res["counts"], [1, 1])
-        self.assertEqual(self.visual(res), v)
+        self.assertEqual(self.visual(res), MONTH)
         self.assertEqual(res["notice"], {"shown": True, "text": NOTICE})
 
     def test_a_cell_that_is_not_a_plain_number_shows_the_notice_and_sends_nothing_new(self):
@@ -812,7 +831,8 @@ class ShimInAPage(ShimRunner):
         for cells in (fewer, renamed):
             res = self.run_shim(MONTH, excel_cells(MONTH), [{"key": "zebra", "cells": cells}])
             self.assertEqual(res["counts"], [1, 1])
-            self.assertTrue(res["notice"]["shown"])
+            self.assertEqual(self.visual(res), MONTH)
+            self.assertEqual(res["notice"], {"shown": True, "text": NOTICE})
 
     def test_the_notice_goes_when_the_cells_are_put_back(self):
         res = self.run_shim(MONTH, excel_cells(MONTH), [{"key": "zebra", "cells": excel_cells(MONTH, {(1, 1): "abc"})},
@@ -820,11 +840,12 @@ class ShimInAPage(ShimRunner):
         self.assertEqual(res["counts"], [1, 1, 1])
         self.assertFalse(res["notice"]["shown"])
 
-    def test_a_patched_drawing_goes_back_to_the_built_one_when_the_cells_are_put_back(self):
+    def test_the_drawing_is_the_built_one_before_during_and_after_an_edit(self):
         res = self.run_shim(MONTH, excel_cells(MONTH), [{"key": "zebra", "cells": excel_cells(MONTH, {(1, 1): "1"})},
                                                        {"key": "zebra", "cells": excel_cells(MONTH)}])
-        self.assertEqual(res["counts"], [1, 2, 3])
-        self.assertEqual(self.visual(res), MONTH)
+        self.assertEqual(res["counts"], [1, 1, 1])
+        self.assertTrue(all(r["structuredContent"]["visual"] == MONTH for r in res["results"]))
+        self.assertFalse(res["notice"]["shown"])
 
     def test_a_change_event_for_another_binding_is_ignored(self):
         res = self.run_shim(MONTH, excel_cells(MONTH), [{"key": "other", "cells": excel_cells(MONTH, {(1, 1): "1"})}])
@@ -837,9 +858,43 @@ class ShimInAPage(ShimRunner):
         self.assertEqual(self.visual(res), MONTH)
         self.assertFalse(res["notice"]["shown"])
 
-    def test_a_display_text_read_with_one_edit_never_draws_rounded_numbers(self):
+    UNREADABLE = ([], {"throws": True}, {"raw": "#REF!"}, {"raw": "null"}, {"raw": "{}"}, {"raw": "\"#REF!\""}, {"missing": True})
+
+    def test_a_binding_that_cannot_be_read_keeps_a_notice_that_was_showing(self):
+        for bad in self.UNREADABLE:
+            edited = excel_cells(MONTH, {(1, 1): "43576"})
+            res = self.run_shim(MONTH, excel_cells(MONTH), [{"key": "zebra", "cells": edited}, {"key": "zebra", "cells": bad}])
+            self.assertEqual(res["counts"], [1, 1, 1], bad)
+            self.assertEqual(self.visual(res), MONTH, bad)
+            self.assertEqual(res["notice"], {"shown": True, "text": NOTICE}, bad)
+
+    def test_a_binding_that_cannot_be_read_is_a_change_after_an_unedited_open(self):
+        for bad in self.UNREADABLE:
+            res = self.run_shim(MONTH, excel_cells(MONTH), [{"key": "zebra", "cells": bad}])
+            self.assertEqual(res["counts"], [1, 1], bad)
+            self.assertEqual(self.visual(res), MONTH, bad)
+            self.assertEqual(res["notice"], {"shown": True, "text": NOTICE}, bad)
+
+    def test_a_first_read_that_cannot_be_read_draws_the_built_result_once_with_the_notice(self):
+        for bad in self.UNREADABLE:
+            res = self.run_shim(MONTH, bad)
+            self.assertEqual(res["counts"], [1], bad)
+            self.assertEqual(self.visual(res), MONTH, bad)
+            self.assertEqual(res["notice"], {"shown": True, "text": NOTICE}, bad)
+
+    def test_the_notice_names_the_sheet_and_the_kind_of_visual_and_says_to_build_again(self):
+        dash = CV.dashboard("T", [(MONTH, False), (REGION, False)])
+        self.assertEqual(CV.notice(MONTH, SHEET),
+                         'The cells on the sheet "Revenue by month" changed after this chart was built. It still shows the figures it '
+                         'was built from. To show new figures, build the story again from the updated data.')
+        self.assertIn("this table was built", CV.notice(REGION, "Regions"))
+        self.assertIn("this dashboard was built", CV.notice(dash, SHEET))
+        for text in (CV.notice(MONTH, SHEET), CV.notice(dash, SHEET), CV.notice(MONTH)):
+            self.assertNotIn("Rebuild", text)
+        self.assertIn("its data sheet", CV.notice(MONTH))
+
+    def test_a_display_text_read_with_one_edit_shows_the_notice_and_never_draws_rounded_numbers(self):
         v = small([4.3, 2.0, 5.9, 3.6], [3.1, 2.2, 4.8, 3.9])
-        self.assertTrue(CV.additive(v))
         shown = excel_cells(v, shown=",")                       # the text a #,##0 cell shows: 4 2 6 4
         res = self.run_shim(v, excel_cells(v), [{"key": "zebra", "cells": excel_cells(v, {(1, 1): "9"}, shown=",")}])
         self.assertEqual(shown[1][1], "4")
@@ -847,18 +902,18 @@ class ShimInAPage(ShimRunner):
         self.assertEqual(self.visual(res), v)
         self.assertEqual(res["notice"], {"shown": True, "text": NOTICE})
 
-    def test_a_raw_read_keeps_unchanged_decimals_and_sums_the_total_from_them(self):
+    def test_a_raw_read_with_decimals_is_unchanged_and_one_edited_decimal_shows_the_notice(self):
         v = small([4.3, 2.0, 5.9, 3.6], [3.1, 2.2, 4.8, 3.9])
-        res = self.run_shim(v, excel_cells(v), [{"key": "zebra", "cells": excel_cells(v, {(1, 1): "9"})}])
-        self.assertEqual(res["counts"], [1, 2])
-        out = self.visual(res)
-        self.assertEqual([n["value"] for n in out["ycol_ac"]], [9.0, 2.0, 5.9, 3.6])
-        self.assertEqual(out["grand_total"]["ac"], 20.5)
-        self.assertEqual(out["ycol_py"], v["ycol_py"])
+        res = self.run_shim(v, excel_cells(v), [{"key": "zebra", "cells": excel_cells(v)}])
+        self.assertEqual(res["counts"], [1, 1])
         self.assertFalse(res["notice"]["shown"])
+        res = self.run_shim(v, excel_cells(v), [{"key": "zebra", "cells": excel_cells(v, {(1, 1): "9"})}])
+        self.assertEqual(res["counts"], [1, 1])
+        self.assertEqual(self.visual(res), v)
+        self.assertTrue(res["notice"]["shown"])
 
-    def test_a_read_with_nothing_to_tell_raw_from_shown_text_does_not_patch(self):
-        v = small([4, 2, 6, 4], [5, 3, 7, 5])      # whole numbers under 1,000 read the same either way
+    def test_a_whole_number_edit_under_a_thousand_shows_the_notice(self):
+        v = small([4, 2, 6, 4], [5, 3, 7, 5])      # whole numbers under 1,000 read the same raw or shown
         res = self.run_shim(v, excel_cells(v), [{"key": "zebra", "cells": excel_cells(v, {(1, 1): "9"})}])
         self.assertEqual(res["counts"], [1, 1])
         self.assertEqual(self.visual(res), v)
@@ -877,7 +932,7 @@ class ShimInAPage(ShimRunner):
         self.assertFalse(res["notice"]["shown"])
 
     def test_a_label_with_spaces_around_it_is_not_a_change(self):
-        v = not_additive()
+        v = unsummed_total()
         v["xcol"][0]["name"] = "2018-01 "
         v["xcol_name"] = [" Month"]
         res = self.run_shim(v, excel_cells(v))
@@ -889,19 +944,20 @@ class ShimInAPage(ShimRunner):
         shim = os.path.join(self.tmp, "shim.js")
         scenario = os.path.join(self.tmp, "scenario.json")
         with open(shim, "w") as f:
-            f.write(CV.shim(MONTH, version="1"))
+            f.write(CV.shim(MONTH, version="1", sheet=SHEET))
         with open(scenario, "w") as f:
             json.dump({"cells": edited, "delay": 150, "wait": 400}, f)
         done = subprocess.run([NODE, os.path.join(HERE, "canvas_host.mjs"), shim, scenario], capture_output=True, text=True, timeout=60)
         res = json.loads(done.stdout)
         self.assertEqual(res["counts"], [1])
-        self.assertEqual(self.visual(res)["ycol_ac"][0]["value"], 43576.0)
+        self.assertEqual(self.visual(res), MONTH)
+        self.assertEqual(res["notice"], {"shown": True, "text": NOTICE})
 
     def test_a_read_that_never_answers_still_draws_the_built_result_once(self):
         shim = os.path.join(self.tmp, "shim.js")
         scenario = os.path.join(self.tmp, "scenario.json")
         with open(shim, "w") as f:
-            f.write(CV.shim(MONTH, version="1"))
+            f.write(CV.shim(MONTH, version="1", sheet=SHEET))
         with open(scenario, "w") as f:
             json.dump({"cells": excel_cells(MONTH), "delay": "never", "wait": 2000}, f)
         done = subprocess.run([NODE, os.path.join(HERE, "canvas_host.mjs"), shim, scenario], capture_output=True, text=True, timeout=60)
@@ -928,7 +984,7 @@ if __name__ == "__main__":
 
 @unittest.skipUnless(NODE, "node is not on the PATH")
 class DashboardShimInAPage(ShimRunner):
-    """The same shim for a dashboard: the binding reads the first visual, and only that visual is ever patched."""
+    """The same shim for a dashboard: the binding reads the first visual; the dashboard always draws as built."""
 
     DASH = CV.dashboard("T", [(MONTH, False), (REGION, False), (SUBCAT, False), (small([5, 6, 7]), True)])
 
@@ -943,33 +999,12 @@ class DashboardShimInAPage(ShimRunner):
         self.assertFalse(res["notice"]["shown"])
         self.assertEqual(self.run_shim(MONTH, excel_cells(MONTH))["init"]["hostContext"]["toolInfo"]["tool"]["name"], "render_visual")
 
-    def test_an_edit_in_the_bound_cells_patches_the_first_visual_only(self):
-        edited = excel_cells(MONTH, {(1, 1): "43576"})
-        res = self.run_shim(self.DASH, excel_cells(MONTH), [{"key": "zebra", "cells": edited}])
-        self.assertEqual(res["counts"], [1, 2])
-        items = self.items(res)
-        built = self.DASH["dashboard"]["items"]
-        self.assertEqual(items[0]["visual"]["ycol_ac"][0]["value"], 43576.0)
-        self.assertEqual(items[0]["visual"]["grand_total"]["ac"], MONTH["grand_total"]["ac"] + 100)
-        self.assertEqual(items[1:], built[1:])                                  # the others draw as built
-        self.assertEqual([i["width"] for i in items], [i["width"] for i in built])
-        self.assertEqual(res["results"][1]["structuredContent"]["dashboard"]["title"], "T")
-        self.assertFalse(res["notice"]["shown"])
-
-    def test_a_label_edit_renames_the_row_of_the_first_visual_only(self):
-        edited = excel_cells(MONTH, {(1, 0): "Start"})
-        res = self.run_shim(self.DASH, excel_cells(MONTH), [{"key": "zebra", "cells": edited}])
-        items = self.items(res)
-        self.assertEqual(items[0]["visual"]["xcol"][0]["name"], "Start")
-        self.assertEqual(items[1:], self.DASH["dashboard"]["items"][1:])
-
-    def test_a_bound_chart_whose_totals_are_not_sums_keeps_the_dashboard_and_shows_the_dashboard_notice(self):
-        v = not_additive()
-        dash = CV.dashboard("T", [(v, False), (REGION, False)])
-        res = self.run_shim(dash, excel_cells(v), [{"key": "zebra", "cells": excel_cells(v, {(1, 1): "43576"})}])
-        self.assertEqual(res["counts"], [1, 1])
-        self.assertEqual(res["results"][-1]["structuredContent"], dash)
-        self.assertEqual(res["notice"], {"shown": True, "text": CV.DASHBOARD_NOTICE})
+    def test_an_edit_in_the_bound_cells_keeps_the_built_dashboard_and_shows_the_dashboard_notice(self):
+        for edits in ({(1, 1): "43576"}, {(1, 0): "Start"}):
+            res = self.run_shim(self.DASH, excel_cells(MONTH), [{"key": "zebra", "cells": excel_cells(MONTH, edits)}])
+            self.assertEqual(res["counts"], [1, 1])
+            self.assertEqual(res["results"][-1]["structuredContent"], self.DASH)
+            self.assertEqual(res["notice"], {"shown": True, "text": CV.notice(self.DASH, SHEET)})
 
     def test_a_table_as_the_bound_visual_draws_as_built_and_an_edit_shows_the_notice(self):
         dash = CV.dashboard("T", [(REGION, False), (MONTH, False)])

@@ -4,7 +4,8 @@
 //   node canvas_host.mjs <filled-shim.js> <scenario.json>
 //
 // scenario.json: {"cells": rows or null, "steps": [{"key": "zebra", "cells": rows or null}], "delay": ms, "wait": ms}.
-// `cells` is what window.getDataBindingValue answers with (null: the page has no such function, as outside Excel),
+// `cells` is what window.getDataBindingValue answers with (null: the page has no such function, as outside Excel;
+// {"throws": true}: the read rejects; {"raw": text}: the read answers with exactly that text; {"missing": true}: it answers with nothing),
 // after `delay` ms (default 0; "never" does not answer). `wait` is how long to let the page settle after the start
 // (default 25 ms). Each step sets the cells and fires dataBindingKeyChanged for its key. Prints JSON: the answer to ui/initialize, every tool-result the
 // renderer received, how many it had after the start and after each step, and the notice line as the page shows it.
@@ -34,6 +35,9 @@ const setCells = (value) => {
   else win.getDataBindingValue = async () => {
     if (scenario.delay === "never") return new Promise(() => {});
     if (scenario.delay) await new Promise((resolve) => setTimeout(resolve, scenario.delay));
+    if (cells && cells.throws) throw new Error("the binding cannot be read");
+    if (cells && cells.missing) return undefined;
+    if (cells && typeof cells.raw === "string") return cells.raw;
     return JSON.stringify(cells);
   };
 };

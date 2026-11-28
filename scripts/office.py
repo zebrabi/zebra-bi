@@ -12,9 +12,9 @@ The page around each visual follows the brand (brand.py: .zebra/brand/, else the
 the charts themselves never change. Every written file passes `check` before its path is printed.
 With --canvas the workbook also gets one Excel Canvas sheet after the other sheets, drawing the story's visuals (up to 6, in section
 order) as one Zebra BI dashboard, or with --canvas=<visual-id> that one visual, with the Zebra BI renderer packed (gzip) into a page
-under 2 MB, so it draws without the add-in, a sign-in or a licence check. The sheet's cells bind to the first visual (or the named one),
-which redraws from edited cells when its totals are sums; the other visuals draw as built. It is off unless asked for, and a build
-prints what the workbook carries.
+under 2 MB, so it draws without the add-in, a sign-in or a licence check. It always draws the visuals as built: the sheet's cells bind to
+the first visual (or the named one) only so that the page can show a notice when those cells no longer match the build. It is off unless
+asked for, and a build prints what the workbook carries.
 <story-dir> may also be a report builder folder (report.zbreport): it builds as a PowerPoint deck, a cover
 with the key message and KPI tiles, then a slide per chart in the report's reading order with its message as
 the title and its note beside it, each chart drawn at the width the slide gives it. A report whose text holds
@@ -116,7 +116,7 @@ def build(story_dir, formats, brand_dir=None, canvas=None):
         canvas_arg = {"visual": ids[0], "ids": ids, "left_out": left_out, "renderer_html": read_text(renderer_path),
                       "content": canvas_content(canvas, ids, story, visuals)}
         try:  # before any file is written, the deck included: the renderer guard and the page size limit
-            canvas_arg["page"] = CV.page(canvas_arg["renderer_html"], canvas_arg["content"])
+            canvas_arg["page"] = CV.page(canvas_arg["renderer_html"], canvas_arg["content"], sheet=XL.sheet_names(story)[ids[0]])
         except ValueError as e:
             sys.exit("%s. No file was written." % e)
         if left_out:
@@ -156,11 +156,9 @@ def build(story_dir, formats, brand_dir=None, canvas=None):
                                "bytes": len(canvas_arg["renderer_html"].encode("utf-8")), "page_bytes": page_bytes}
             dash = CV.is_dashboard(canvas_arg["content"])
             print("canvas: this workbook carries the Zebra BI renderer (%.1f MB, sha256 %s), packed into a %.2f MB page (limit %.0f MB); the "
-                  "canvas sheet draws %s without the add-in, a Zebra BI sign-in or a licence check, and redraws %s from edited cells "
-                  "(values and labels) when its totals are sums."
+                  "canvas sheet draws %s as built, without the add-in, a Zebra BI sign-in or a licence check."
                   % (meta["bytes"] / 1e6, meta["sha256"][:12], page_bytes / 1e6, CV.MAX_PAGE_BYTES / 1048576,
-                     "%d visuals as one dashboard" % len(canvas_arg["ids"]) if dash else "one visual",
-                     "only the first visual (%s)" % canvas_arg["visual"] if dash else "that visual"), file=sys.stderr)
+                     "%d visuals as one dashboard" % len(canvas_arg["ids"]) if dash else "one visual"), file=sys.stderr)
         written.append(entry)
     print(json.dumps({"files": written, "brand": brand.get("name"), "snapshots": "chrome" if chrome else "placeholder",
                       "renderer_sha256": meta["sha256"][:12]}, indent=2))

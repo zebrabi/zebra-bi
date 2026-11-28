@@ -1,8 +1,7 @@
 // MCP Apps host for an Excel Canvas page, filled by scripts/zoffice/canvas.py and placed before the Zebra BI renderer.
 //
 // The page draws one tool result: {visual} (render_visual) or {dashboard: {title, items: [{width, visual}]}} (render_dashboard).
-// The binding reads the cells of one visual, the bound one: the visual itself, or the first item of a dashboard. The other
-// visuals of a dashboard draw as built.
+// The binding reads the cells of one visual, the bound one: the visual itself, or the first item of a dashboard.
 //
 // The canvas page runs the renderer itself (a canvas page cannot hold an iframe), so the renderer's transport is
 // pointed at window.__zbiHost, which is this page, and window.postMessage hands its JSON-RPC to this host. The host
@@ -10,23 +9,22 @@
 // bound cells have been read once, so an open sends one result.
 //
 // The double-underscore names in the var statement below are placeholders, each replaced by one JSON value: the
-// binding name, the tool result the build drew, the cells the build wrote (a header row, then rows of text;
-// a number is the list of strings the cell may read as: its plain value first, then the way a #,##0 cell shows it),
-// where each scenario sits in the cells, whether the totals of the bound visual are the sum of its rows, the line shown
-// when the data cannot be redrawn, and the plugin version (cells, columns and totals are those of the bound visual).
+// binding name, the tool result the build drew, the cells the build wrote for the bound visual (a header row, then rows of
+// text; a number is the list of strings the cell may read as: its plain value first, then the way a #,##0 cell shows it),
+// the line shown when the cells differ from the build (it names the data sheet), and the plugin version.
 //
-// The data rule: the page draws the result the build drew whenever the bound cells still hold what the build wrote,
-// so the server's totals stand. When cells changed and the totals are sums, it keeps every cell that still matches the
-// build, takes the changed cells as numbers and sums the totals. In every other case it keeps the drawing and shows
-// the notice; it never sends a total it had to invent. Whether Excel hands the page raw values or the text a cell
-// shows is not settled, so a built number matches in either form (any thousands grouping). A changed cell is used as
-// a number only when the read is shown to be raw (a built value that differs from the way it shows matched in its
-// plain form) and the cell is a plain number.
+// The data rule: the page always draws the result the build embedded. No content of a worksheet cell becomes chart or
+// table data, a label or a total. The cells are read only to compare them with what the build wrote; when they differ,
+// the page keeps the drawing and shows the notice. To draw new data, build again or render the visual again through the
+// Zebra BI MCP server.
+//
+// Whether Excel hands the page raw values or the text a cell shows is not settled, so a built number matches in either
+// form (any thousands grouping), and a regional number format does not raise the notice. A read that mixes the two forms
+// is not what the build wrote.
 (function () {
-  var KEY = __KEY__, BUILT = __RESULT__, CELLS = __CELLS__, COLUMNS = __COLUMNS__, ADDITIVE = __ADDITIVE__,
-      NOTICE = __NOTICE__, VERSION = __VERSION__;
+  var KEY = __KEY__, BUILT = __RESULT__, CELLS = __CELLS__, NOTICE = __NOTICE__, VERSION = __VERSION__;
   var realPost = window.postMessage.bind(window);
-  var current = BUILT, connected = false, ready = false, ticket = 0, noticeEl = null;
+  var connected = false, ready = false, ticket = 0, noticeEl = null;
   window.__zbiHost = window;
   window.postMessage = function (msg, target, transfer) {
     if (msg && msg.jsonrpc === '2.0') { setTimeout(function () { onRendererMessage(msg); }, 0); return; }
@@ -49,7 +47,7 @@
   function send() {
     if (!connected || !ready) return;
     toRenderer({ jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: {} });
-    toRenderer({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: current });
+    toRenderer({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: BUILT });
   }
   // The first send waits for the first read of the cells, so an open sends one result; a read that never answers
   // does not hold the drawing back for more than a moment.
@@ -57,7 +55,7 @@
   setTimeout(markReady, 1500);
 
   var PLAIN = /^-?\d+(\.\d+)?$/;
-  var GROUPED = /^-?\d{1,3}([.,'\u00a0\u202f ]\d{3})+$/;   // 43,476 or 43.476 or 43 476: display text, not a number to trust
+  var GROUPED = /^-?\d{1,3}([.,'\u00a0\u202f ]\d{3})+$/;   // 43,476 or 43.476 or 43 476: the way a number shows
   function text(c) { return c == null ? '' : String(c).trim(); }
   function digits(s) { return s.replace(/[.,'\u00a0\u202f ]/g, ''); }
   // How a cell matches the number the build wrote: 'raw' (its plain value, which differs from the way it shows),
@@ -70,56 +68,26 @@
     if (asRaw && asShown) return 'any';
     return asRaw ? 'raw' : asShown ? 'shown' : null;
   }
-  // The number a changed cell holds, or null. Grouped numbers are display text and are never read as numbers.
-  function number(cell) {
-    var s = text(cell);
-    return PLAIN.test(s) && !GROUPED.test(s) ? Number(s) : null;
-  }
-  // Compares the cells with what the build wrote. Null when the shape differs (row count, width, header). Otherwise
-  // the numeric cells that changed, whether a label changed, and which forms the matching numbers were read in.
-  function inspect(rows) {
-    if (rows.length !== CELLS.length) return null;
-    var out = { changed: [], labels: false, raw: false, shown: false };
+  // True when the cells are not what the build wrote: a read that gave no rows, a different row count, a cell range narrower
+  // than the build's, a changed header, label or number, or a read that mixes raw values with shown text.
+  function differs(rows) {
+    if (!Array.isArray(rows) || rows.length !== CELLS.length) return true;
+    var raw = false, shown = false;
     for (var r = 0; r < CELLS.length; r++) {
-      if (!Array.isArray(rows[r]) || rows[r].length < CELLS[r].length) return null;
+      if (!Array.isArray(rows[r]) || rows[r].length < CELLS[r].length) return true;
       for (var c = 0; c < CELLS[r].length; c++) {
         var want = CELLS[r][c];
         if (typeof want === 'string') {
-          if (text(rows[r][c]) !== want.trim()) { if (r === 0) return null; out.labels = true; }
+          if (text(rows[r][c]) !== want.trim()) return true;
           continue;
         }
         var kind = match(rows[r][c], want);
-        if (kind === null) out.changed.push([r, c]);
-        else if (kind === 'raw') out.raw = true;
-        else if (kind === 'shown') out.shown = true;
+        if (kind === null) return true;
+        if (kind === 'raw') raw = true;
+        else if (kind === 'shown') shown = true;
       }
     }
-    return out;
-  }
-  // The built drawing with the changed labels and numbers of the bound visual taken from the cells, and each of its totals
-  // summed from the rows; the other visuals stay as built. Null when a changed cell cannot be read as a number.
-  function bound(sc) { return sc.dashboard ? sc.dashboard.items[0].visual : sc.visual; }
-  function patched(rows, info) {
-    var sc = JSON.parse(JSON.stringify(BUILT.structuredContent)), visual = bound(sc), sums = {}, r, k;
-    for (r = 1; r < CELLS.length; r++) {
-      var name = text(rows[r][0]);
-      if (name === '') return null;
-      if (name !== CELLS[r][0].trim()) visual.xcol[r - 1].name = name;
-    }
-    for (var i = 0; i < info.changed.length; i++) {
-      r = info.changed[i][0];
-      var col = null, n = number(rows[r][info.changed[i][1]]);
-      for (k = 0; k < COLUMNS.length; k++) if (COLUMNS[k].col === info.changed[i][1]) col = COLUMNS[k];
-      if (col === null || n === null) return null;
-      visual[col.field][r - 1].value = n;
-    }
-    for (k = 0; k < COLUMNS.length; k++) {
-      var sum = 0;
-      for (r = 0; r < visual[COLUMNS[k].field].length; r++) sum += visual[COLUMNS[k].field][r].value;
-      sums[COLUMNS[k].total] = Number(sum.toFixed(9));
-    }
-    for (var key in sums) if (visual.grand_total && visual.grand_total[key] != null) visual.grand_total[key] = sums[key];
-    return { content: BUILT.content, structuredContent: sc, isError: false };
+    return raw && shown;
   }
   function showNotice(on) {
     function apply() {
@@ -134,27 +102,20 @@
     }
     if (document.body) apply(); else document.addEventListener('DOMContentLoaded', apply);
   }
+  // null: the page has no getDataBindingValue (it is not in Excel), so there is nothing to compare. Otherwise {rows}, whatever
+  // the read gave. A read that throws, does not parse, is empty or is not a list of rows (what Excel gives for a deleted data
+  // sheet is not known) counts as changed, so a notice is never cleared by a binding that cannot be read.
   async function readCells() {
     if (typeof window.getDataBindingValue !== 'function') return null;
     try {
       var raw = await window.getDataBindingValue(KEY);
-      var rows = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      return Array.isArray(rows) && rows.length ? rows : null;
-    } catch (e) { return null; }
+      return { rows: typeof raw === 'string' ? JSON.parse(raw) : raw };
+    } catch (e) { return { rows: null }; }
   }
-  function use(result) { if (current !== result) { current = result; send(); } }
   async function refresh() {
-    var mine = ++ticket, rows = await readCells();
+    var mine = ++ticket, read = await readCells();
     if (mine !== ticket) return;
-    var info = rows === null ? { changed: [], labels: false, raw: false, shown: false } : inspect(rows);
-    if (info === null) { use(BUILT); showNotice(true); markReady(); return; }
-    if (!info.changed.length && !info.labels && !(info.raw && info.shown)) { use(BUILT); showNotice(false); markReady(); return; }
-    // A changed number is trusted only when this read is shown to be raw values and does not mix in shown text.
-    var proven = !(info.raw && info.shown) && (info.changed.length === 0 || info.raw);
-    var next = ADDITIVE && proven ? patched(rows, info) : null;
-    if (next === null) { use(BUILT); showNotice(true); markReady(); return; }
-    use(next);
-    showNotice(false);
+    showNotice(read !== null && differs(read.rows));
     markReady();
   }
   window.addEventListener('dataBindingKeyChanged', function (e) { if (e.detail && e.detail.key === KEY) refresh(); });

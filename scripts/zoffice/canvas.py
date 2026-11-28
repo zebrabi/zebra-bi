@@ -12,7 +12,8 @@ the MCP Apps transport; they are pointed at the page itself.
 
 The page draws one tool result: {"visual": v} (what render_visual returns) or {"dashboard": {"title", "items": [{"width": 3..12,
 "visual": v}]}} (what render_dashboard returns), which the same renderer lays out on a 12-column grid, 1 to MAX_ITEMS items.
-The binding stays on the cells of one visual, the bound one, which is the first item of a dashboard; the other visuals draw as built.
+The binding stays on the cells of one visual, the bound one, which is the first item of a dashboard; the page compares those cells
+with what the build wrote and shows a notice when they differ. It never draws from the cells.
 
 Excel's canvas host does not load a large page in an ordinary workbook (tried on Excel on the web, 26 Nov 2026: in one
 workbook of several sheets a tiny page loaded, the same page padded with a 4.4 MB comment did not, and a page of 1.5 MB
@@ -21,9 +22,8 @@ string (window.__zbiGz) and a small loader in the page unpacks it with Decompres
 <app-mcp-visual> element stay as they are, and the shim stays first in the head. The canvas host drops script blocks that
 are not JavaScript (type="application/octet-stream" or "application/json" come back null), so the data rides in a JS string,
 never in a typed script element. The page is about 1.5 MB; MAX_PAGE_BYTES is the limit the build and the check enforce. check_renderer stops the build when the fetched renderer
-no longer has exactly those five uses. The page embeds the result the build drew, so totals that do not sum (ratios,
-stock measures) stay as the server drew them; when the totals are sums the page also redraws from edited cells.
-Standard library only.
+no longer has exactly those five uses. The page always draws the result the build embedded, so totals that do not sum (ratios,
+stock measures) stay as the server drew them. Standard library only.
 """
 import base64, gzip, json, os, re, zlib
 from decimal import Decimal, ROUND_HALF_UP
@@ -38,8 +38,6 @@ SEEN_PAGE_BYTES = 1490000      # the largest canvas page seen to load in a workb
 FAILED_PAGE_BYTES = 4400000    # a page of this size did not load in the same workbook
 MAX_PAGE_BYTES = 2 << 20       # the build and the check refuse a page above this
 MAX_ITEMS = 6                  # render_dashboard's own cap
-NOTICE = "This chart shows the figures it was built from, not the current cells. Rebuild the workbook to redraw it."
-DASHBOARD_NOTICE = "The first visual shows the figures it was built from, not the current cells. Rebuild the workbook to redraw it."
 SHIM = os.path.join(X.HERE, "..", "..", "assets", "canvas-shim.js")
 
 PARENT = "window.parent"
@@ -57,8 +55,6 @@ LOADER = ("<script>(async function(){var b=atob(window.__zbiGz);window.__zbiGz=n
           ".pipeThrough(new DecompressionStream('gzip'))).text();var s=document.createElement('script');"
           "s.textContent=js;document.body.appendChild(s);})();</script>")
 SCRIPT_SRC = re.compile(r"<script[^>]*\ssrc\s*=", re.I)
-# scenario name in chart_value_columns -> (field in the visual, key in grand_total)
-FIELDS = {"Val": ("ycol_ac", "ac"), "FC": ("ycol_fc", "fc"), "PL": ("ycol_pl", "pl"), "PY": ("ycol_py", "py")}
 
 NS_CX = "http://schemas.microsoft.com/office/drawing/2014/chartex"
 R = X.NS_R + "/"
@@ -104,51 +100,6 @@ def check_renderer(html):
 
 def _number(x):
     return isinstance(x, (int, float)) and not isinstance(x, bool) and x == x and abs(x) != float("inf")
-
-
-def _decimals(x):
-    exp = Decimal(repr(x)).normalize().as_tuple().exponent
-    return min(6, max(0, -exp)) if isinstance(exp, int) else 0
-
-
-def additive(v):
-    """True when every total the visual shows is the sum of its rows, so a changed cell can be redrawn with a new total."""
-    if V.is_table(v) or v.get("visual_type") not in (None, "Chart"):
-        return False
-    xcol = v.get("xcol") or []
-    if not xcol or any(n.get("children") for n in xcol):
-        return False
-    if v.get("top_n") not in (None, -1) or v.get("additional_measures") or v.get("measure_aggregations"):
-        return False
-    if v.get("group_col_names") or v.get("group_columns"):
-        return False
-    cols = V.chart_value_columns(v)
-    if not cols:
-        return False
-    gt = v.get("grand_total") or {}
-    for c in cols:
-        vals = [n.get("value") for n in c["data"]]
-        if len(vals) != len(xcol) or not all(_number(x) for x in vals):
-            return False
-        total = gt.get(FIELDS[c["name"]][1])
-        if total is None:
-            continue
-        if not _number(total):
-            return False
-        places = max(_decimals(x) for x in vals)
-        if abs(sum(vals) - total) > 0.5 * len(vals) * 10 ** -places + 1e-9 * abs(total):
-            return False
-    return True
-
-
-def columns(v):
-    """Where each scenario sits in the cells of the data sheet: [{field, total, col}], from chart_value_columns (none for a table,
-    which is never redrawn from its cells)."""
-    if V.is_table(v):
-        return []
-    first = max(1, len(v.get("xcol_name") or []))
-    return [{"field": FIELDS[c["name"]][0], "total": FIELDS[c["name"]][1], "col": first + i}
-            for i, c in enumerate(V.chart_value_columns(v))]
 
 
 def _accepted(x):
@@ -231,16 +182,29 @@ def result(content):
     return {"content": [{"type": "text", "text": ""}], "structuredContent": structured(content), "isError": False}
 
 
-def shim(content, key=KEY, version=None):
-    """assets/canvas-shim.js with its placeholders filled for one visual, or for a dashboard (bound to its first visual)."""
+def notice(content, sheet=None):
+    """The line the page shows when the bound cells differ from what the build wrote. It names the sheet that changed and says
+    what stays true (the page still shows the built figures) and what to do (build the story again): the page never follows
+    the cells, and only the bound visual's sheet is watched."""
+    where = 'the sheet "%s"' % sheet if sheet else "its data sheet"
+    if is_dashboard(content):
+        what = "dashboard"
+    else:
+        what = "table" if V.is_table(content) else "chart"
+    return ("The cells on %s changed after this %s was built. It still shows the figures it was built from. "
+            "To show new figures, build the story again from the updated data." % (where, what))
+
+
+def shim(content, key=KEY, version=None, sheet=None):
+    """assets/canvas-shim.js with its placeholders filled for one visual, or for a dashboard (bound to its first visual).
+    sheet: the name of the data sheet the binding reads, for the notice."""
     if version is None:
         import story  # scripts/, which holds zoffice, is on the path wherever zoffice imports
         version = story.version()
     v = bound_visual(content)
     text = X.read(SHIM)
-    fill = {"__KEY__": key, "__RESULT__": result(content), "__CELLS__": cells(v), "__COLUMNS__": columns(v),
-            "__ADDITIVE__": additive(v), "__NOTICE__": DASHBOARD_NOTICE if is_dashboard(content) else NOTICE,
-            "__VERSION__": version}
+    fill = {"__KEY__": key, "__RESULT__": result(content), "__CELLS__": cells(v),
+            "__NOTICE__": notice(content, sheet), "__VERSION__": version}
     for token in fill:
         if text.count(token) != 1:
             raise ValueError("canvas-shim.js must hold the placeholder %s exactly once" % token)
@@ -309,8 +273,8 @@ def size_error(n):
             % (n / 1048576, MAX_PAGE_BYTES / 1048576, FAILED_PAGE_BYTES / 1e6, SEEN_PAGE_BYTES / 1e6))
 
 
-def page(renderer_html, content, key=KEY, version=None):
-    """content: a visual, or a dashboard from dashboard(). The canvas page: the host shim first in the head, the renderer's parent-window uses pointed at the page, and the
+def page(renderer_html, content, key=KEY, version=None, sheet=None):
+    """content: a visual, or a dashboard from dashboard(). sheet: the data sheet the binding reads, named in the notice. The canvas page: the host shim first in the head, the renderer's parent-window uses pointed at the page, and the
     renderer's one inline script packed (gzip + base64 in a JavaScript string) with a loader that unpacks it in place."""
     check_renderer(renderer_html)
     head = HEAD.search(renderer_html[:65536]).end()
@@ -318,7 +282,7 @@ def page(renderer_html, content, key=KEY, version=None):
     start = SCRIPT_TAG.search(rest)
     end = SCRIPT_END.search(rest, start.end())
     packed = '<script>window.__zbiGz="' + pack(rest[start.end():end.start()]) + '";</script>'
-    out = (renderer_html[:head] + "<script>" + shim(content, key, version) + "</script>"
+    out = (renderer_html[:head] + "<script>" + shim(content, key, version, sheet) + "</script>"
            + rest[:start.start()] + packed + LOADER + rest[end.end():])
     size = len(out.encode("utf-8"))
     if size > MAX_PAGE_BYTES:
